@@ -1,7 +1,8 @@
 ---
 description: Draft a DFD or threats for one system into the registry as pending review, following the guide's framework
 argument-hint: <slug> [--trial] [element IDs, e.g. P7,F18,F19]
-allowed-tools: Read, Grep, Glob, Write, Edit, Bash(./tmreg list:*), Bash(./tmreg show:*), Bash(./tmreg history:*), Bash(./tmreg report:*), Bash(./tmreg verify:*), Bash(./tmreg runs:*), Bash(./tmreg dfd status:*), Bash(./tmreg run start:*), Bash(./tmreg add:*), Bash(./tmreg edit:*)
+allowed-tools: Read, Grep, Glob, Write, Edit, Bash(./tmreg list:*), Bash(./tmreg show:*), Bash(./tmreg history:*), Bash(./tmreg report:*), Bash(./tmreg verify:*), Bash(./tmreg runs:*), Bash(./tmreg dfd status:*), Bash(./tmreg dfd check:*), Bash(./tmreg run start:*), Bash(./tmreg add:*), Bash(./tmreg edit:*), Bash(git log:*)
+disallowed-tools: WebFetch, WebSearch, NotebookEdit
 ---
 # Threat model run: $ARGUMENTS
 
@@ -91,6 +92,18 @@ both directions. Take only its shape.
      or `TB` plus digits, and is unique. Each Flows `From` and `To` cell starts with an E, P, or D
      ID defined in the file. Every table row starts with `|`, every table has a header and a
      separator row, and a literal pipe in a cell is written `\|`.
+   - **Parse check.** `dfd check` runs the approval's parser read-only, so run it after writing
+     `dfd.md`. It takes no `--trial`, because a trial run never drafts the DFD. It passes when its
+     last line is `ok`; on a parse error it prints `tmreg:` and the problem. If it fails, fix
+     `dfd.md` and run it again, at most twice. Then, whatever the result, finish the gate with
+     items 3 to 5 and stop there. Quote the last check output in full in `dfd-check.md`. A
+     `warning:` line names a live risk that cites an ID the draft no longer has; list it among the
+     open questions.
+
+     ```bash
+     ./tmreg dfd check <slug>
+     ```
+
 3. **Self-check as a separate pass.** After writing, read `dfd.md` again from disk next to the
    checklist.
    - Answer each item of the checklist's copy-paste version on its own: `pass`, `fail`, or

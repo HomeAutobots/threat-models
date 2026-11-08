@@ -14,7 +14,7 @@ modeling run.
 ## Commands Claude may run
 `--trial` goes after the subcommand and uses `registry/trial.db`.
 - Read: `./tmreg list <slug>`, `show <slug> <id>`, `history <slug> [id]`, `report <slug>`,
-  `verify <slug>`, `runs <slug>`, `dfd status <slug>`. Example: `./tmreg list ordering-platform --trial`.
+  `verify <slug>`, `runs <slug>`, `dfd status <slug>`, `dfd check <slug>`. Example: `./tmreg list ordering-platform --trial`.
 - Start a run: `./tmreg run start <slug>`.
 - Write risks: `./tmreg add <slug> --run <run-id> --json systems/<slug>/runs/<run-id>/candidates/<nn>.json`
   and `./tmreg edit <slug> <id> --run <run-id> --json systems/<slug>/runs/<run-id>/candidates/<nn>.json`.

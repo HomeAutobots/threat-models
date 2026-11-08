@@ -1,0 +1,75 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Read(~/Developer/threat-model-framework/**)",
+      "Bash(./tmreg list:*)",
+      "Bash(./tmreg show:*)",
+      "Bash(./tmreg history:*)",
+      "Bash(./tmreg report:*)",
+      "Bash(./tmreg verify:*)",
+      "Bash(./tmreg runs:*)",
+      "Bash(./tmreg dfd status:*)",
+      "Bash(./tmreg dfd check:*)",
+      "Bash(./tmreg run start:*)",
+      "Bash(./tmreg add:*)",
+      "Bash(./tmreg edit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)",
+      "Edit(/systems/*/dfd.md)",
+      "Edit(/systems/*/runs/**)"
+    ],
+    "deny": [
+      "Bash(./tmreg review:*)",
+      "Bash(./tmreg approve:*)",
+      "Bash(./tmreg reject:*)",
+      "Bash(./tmreg merge:*)",
+      "Bash(./tmreg retire:*)",
+      "Bash(./tmreg import-legacy:*)",
+      "Bash(./tmreg dfd approve:*)",
+      "Bash(tmreg:*)",
+      "Bash(python3 -m tmreg:*)",
+      "Bash(python3 ./tmreg:*)",
+      "Bash(python3 tmreg:*)",
+      "Bash(script:*)",
+      "Bash(expect:*)",
+      "Bash(unbuffer:*)",
+      "Bash(python3 -c:*)",
+      "Bash(python3 -:*)",
+      "Bash(python -c:*)",
+      "Bash(sqlite3:*)",
+      "Bash(git checkout:*)",
+      "Bash(git restore:*)",
+      "Bash(git reset:*)",
+      "Bash(git stash:*)",
+      "Edit(/registry/**)",
+      "Edit(/.claude/**)",
+      "Edit(/systems/*/register.md)",
+      "Edit(/tmreg)",
+      "Edit(/project.toml)",
+      "Edit(/CLAUDE.md)"
+    ],
+    "additionalDirectories": [
+      "/Users/tylerstandish/Developer/threat-model-framework"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Monitor|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.py"],
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}

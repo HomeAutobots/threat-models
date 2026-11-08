@@ -258,6 +258,36 @@ class CliTest(TmpTestCase):
         self.assertIn(lines[0], self.run_cli("runs", "demo")[1])
         self.assertEqual(self.run_cli("history", "demo")[0], 0)
 
+    def test_dfd_check_prints_preview_and_ok_without_writing(self):
+        code, out, err = self.run_cli("dfd", "check", "demo")
+        self.assertEqual((code, err), (0, ""))
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "version: 1.0")
+        self.assertRegex(lines[1], r"^sha256: [0-9a-f]{64}$")
+        self.assertEqual(lines[2:], ["ids: E=1 P=2 D=1 F=3 TB=1", "added: none", "removed: none", "ok"])
+        self.ai_add()  # T-01 cites P2 and F2
+        path = self.root / "systems/demo/dfd.md"
+        path.write_text(path.read_text().replace("| F2 | P1 | P2 (via CDN) | REST |\n", "")
+                        .replace("| D1 | DB | Data store |\n", "| D1 | DB | Data store |\n| D2 | Cache | Data store |\n"))
+        before = len(self.reg.history("demo"))
+        code, out, _ = self.run_cli("dfd", "check", "demo")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines()[2:], [
+            "ids: E=1 P=2 D=2 F=2 TB=1", "added: D2", "removed: F2",
+            "warning: T-01 cites F2, which this DFD no longer has", "ok"])
+        self.assertEqual(len(self.reg.history("demo")), before)  # read-only
+        fresh = make_registry(self.tmp / "fresh", approve=False)
+        self.root = fresh.root
+        code, out, _ = self.run_cli("dfd", "check", "demo")
+        self.assertEqual(out.splitlines()[3:], ["added: (no approved DFD yet)", "removed: none", "ok"])
+
+    def test_dfd_check_parse_error_exits_1(self):
+        (self.root / "systems/demo/dfd.md").write_text(
+            "| ID | Element | Type |\n|---|---|---|\n| E1 | Customer | External entity |\n")
+        code, out, err = self.run_cli("dfd", "check", "demo")
+        self.assertEqual((code, out), (1, ""))
+        self.assertEqual(err, "tmreg: dfd.md has no '| DFD version | x.y |' row\n")
+
     def test_usage_error_exits_2(self):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as cm:

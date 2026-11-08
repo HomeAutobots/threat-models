@@ -297,6 +297,24 @@ def cmd_dfd_status(args, reg, root) -> int:
     return 0
 
 
+def cmd_dfd_check(args, reg, root) -> int:
+    """Read-only: parse dfd.md and show what an approval would record. Prints ok last."""
+    preview = reg.dfd_preview(args.slug)
+    parsed = preview["dfd"]
+    print(f"version: {parsed.version}")
+    print(f"sha256: {parsed.sha256}")
+    print("ids: " + " ".join(f"{k}={len(v)}" for k, v in parsed.ids.items()))
+    if reg.dfd_status(args.slug).latest is None:
+        print("added: (no approved DFD yet)")
+    else:
+        print(f"added: {', '.join(preview['added']) or 'none'}")
+    print(f"removed: {', '.join(preview['removed']) or 'none'}")
+    for w in preview["warnings"]:
+        print(f"warning: {w}")
+    print("ok")
+    return 0
+
+
 def cmd_dfd_approve(args, reg, root) -> int:
     session = human_session(reg, "dfd approve")
     slug = args.slug
@@ -466,6 +484,9 @@ def build_parser() -> argparse.ArgumentParser:
                                                                      metavar="subcommand")
     sp = dfd.add_parser("status", parents=[common])
     sp.set_defaults(func=cmd_dfd_status, human=False)
+    slug(sp)
+    sp = dfd.add_parser("check", parents=[common], help="parse dfd.md and preview an approval")
+    sp.set_defaults(func=cmd_dfd_check, human=False)
     slug(sp)
     sp = dfd.add_parser("approve", parents=[common], help="human-only")
     sp.set_defaults(func=cmd_dfd_approve, human=True, human_name="dfd approve")
