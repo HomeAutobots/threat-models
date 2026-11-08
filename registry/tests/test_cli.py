@@ -101,27 +101,52 @@ class CliTest(TmpTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "approved")
 
-    def test_review_refuses_edit_between_display_and_confirm(self):
+    def test_review_redisplays_fresh_record_after_stale_refusal(self):
         run, _ = self.ai_add()
-        calls = []
+        state = {"edited": False, "answers": iter(["a", "a"])}
 
         def hook(prompt):
-            calls.append(prompt)
             if prompt.startswith("[a]pprove"):
-                return "a" if len(calls) == 1 else "q"
+                return next(state["answers"], "q")
             if prompt.startswith("Review note"):
-                self.reg.edit_risk("demo", "T-01", {"notes": "sneaky"}, run_id=run)
+                if not state["edited"]:
+                    state["edited"] = True
+                    self.reg.edit_risk("demo", "T-01", {"notes": "edited-by-ai"}, run_id=run)
                 return NOTE
-            if prompt.startswith("Type"):
-                return "T-01"
-            return "q"
+            return "T-01"
         out, err = io.StringIO(), io.StringIO()
         with mock.patch("tmreg.core._has_tty", return_value=True), \
                 mock.patch("builtins.input", side_effect=hook), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             cli.main(["review", "demo"], project_root=self.root)
-        self.assertIn("changed since it was shown", err.getvalue())
-        self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "pending")
+        text = out.getvalue()
+        self.assertIn("T-01 changed since it was shown; showing the current version.", text)
+        self.assertIn("edited-by-ai", text.split("showing the current version.")[1])
+        self.assertIn("1 reviewed, 0 skipped, 0 still pending", text)
+        r = self.reg.get_risk("demo", "T-01")
+        self.assertEqual((r["review_state"], r["notes"]), ("approved", "edited-by-ai"))
+
+    def test_review_approved_elsewhere_between_display_and_confirm(self):
+        self.ai_add()
+        state = {"done": False}
+
+        def hook(prompt):
+            if prompt.startswith("[a]pprove"):
+                return "a"
+            if prompt.startswith("Review note"):
+                if not state["done"]:
+                    state["done"] = True
+                    from helpers import session
+                    self.reg.approve(session(), "demo", "T-01", NOTE)
+                return NOTE
+            return "T-01"
+        out = io.StringIO()
+        with mock.patch("tmreg.core._has_tty", return_value=True), \
+                mock.patch("builtins.input", side_effect=hook), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            cli.main(["review", "demo"], project_root=self.root)
+        self.assertIn("T-01 is no longer pending; skipped.", out.getvalue())
+        self.assertIn("0 reviewed, 0 skipped, 0 still pending, 1 no longer pending", out.getvalue())
 
     def test_review_skips_item_approved_elsewhere(self):
         self.ai_add()
@@ -129,25 +154,26 @@ class CliTest(TmpTestCase):
         state = {"done": False}
 
         def hook(prompt):
-            if prompt.startswith("[a]pprove"):
-                return "s"
-            return ""
-        out = io.StringIO()
-        real = self.reg.approve
-        # approve T-02 behind the reviewer's back once T-01 is on screen
-        orig_input = hook
-
-        def hook2(prompt):
             if not state["done"]:
                 state["done"] = True
                 from helpers import session
                 self.reg.approve(session(), "demo", "T-02", NOTE)
-            return orig_input(prompt)
+            return "s" if prompt.startswith("[a]pprove") else ""
+        out = io.StringIO()
         with mock.patch("tmreg.core._has_tty", return_value=True), \
-                mock.patch("builtins.input", side_effect=hook2), \
+                mock.patch("builtins.input", side_effect=hook), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             cli.main(["review", "demo"], project_root=self.root)
         self.assertIn("T-02 is no longer pending; skipped.", out.getvalue())
+
+    def test_merge_and_retire_prechecks_precede_prompts(self):
+        self.ai_add()
+        code, _, err = self.run_cli("merge", "demo", "T-01", "--into", "T-01", tty=True)
+        self.assertEqual((code, "itself" in err), (1, True))
+        self.run_cli("approve", "demo", "T-01", tty=True, inputs=[NOTE, "T-01"])
+        self.run_cli("retire", "demo", "T-01", "--reason", NOTE, tty=True, inputs=["T-01"])
+        code, _, err = self.run_cli("retire", "demo", "T-01", "--reason", NOTE, tty=True)
+        self.assertEqual((code, "already retired" in err), (1, True))
 
     def test_reject_merge_retire_dfd_import(self):
         self.ai_add()

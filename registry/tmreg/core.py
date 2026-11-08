@@ -51,6 +51,10 @@ class RegistryError(Exception):
     """A rule violation, with a message meant for the user."""
 
 
+class StaleRecord(RegistryError):
+    """The row is not what the reviewer was shown."""
+
+
 def _has_tty() -> bool:
     """The only terminal check in the codebase. Tests patch it."""
     try:
@@ -570,7 +574,7 @@ class Registry:
     def _check_seen(seen, cur: dict) -> None:
         """Refuse when the row is not what the reviewer was shown. Runs under the write lock."""
         if seen is not None and any(seen.get(f) != cur.get(f) for f in RISK_FIELDS):
-            raise RegistryError(f"{cur['id']} changed since it was shown; review it again")
+            raise StaleRecord(f"{cur['id']} changed since it was shown; review it again")
 
     def _require_pending(self, slug: str, risk_id, verb: str) -> dict:
         cur = self._risk(slug, risk_id)
@@ -584,7 +588,8 @@ class Registry:
         note = _require_note(note)
         self._require(slug)
         with self._write():
-            self._check_seen(seen, self._require_pending(slug, risk_id, "approved"))
+            self._check_seen(seen, self._risk(slug, risk_id))
+            self._require_pending(slug, risk_id, "approved")
             ledger.write_row(self.conn, slug, "risks", risk_id, {
                 "review_state": "approved", **self._review_fields(session, note),
                 "last_approved": None,
@@ -597,8 +602,8 @@ class Registry:
         note = _require_note(note)
         self._require(slug)
         with self._write():
+            self._check_seen(seen, self._risk(slug, risk_id))
             cur = self._require_pending(slug, risk_id, "rejected")
-            self._check_seen(seen, cur)
             snap = cur["last_approved"]
             if snap is None:
                 update = {"review_state": "rejected", **self._review_fields(session, note)}
@@ -617,8 +622,8 @@ class Registry:
         note = _require_note(note)
         self._require(slug)
         with self._write():
+            self._check_seen(seen, self._risk(slug, pending_id))
             cur = self._require_pending(slug, pending_id, "merged")
-            self._check_seen(seen, cur)
             if cur["last_approved"] is not None:
                 raise RegistryError(f"{pending_id} is a re-review of an approved risk; approve or "
                                     "reject the re-review instead of merging it")

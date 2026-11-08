@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from . import config, core
-from .core import Registry, RegistryError, ReviewerSession
+from .core import Registry, RegistryError, ReviewerSession, StaleRecord
 from .model import EDITABLE_FIELDS, LABELS, NOTE_MIN, REVIEW_STATES, RISK_FIELDS
 
 STATES = ("all",) + tuple(REVIEW_STATES)
@@ -146,6 +146,11 @@ def _reject(reg, session, slug, seen) -> None:
 def _merge(reg, session, slug, seen, into) -> None:
     rid = seen["id"]
     _need_pending(seen, "merged")
+    if into == rid:
+        raise RegistryError("a risk cannot be merged into itself")
+    if seen["last_approved"] is not None:
+        raise RegistryError(f"{rid} is a re-review of an approved risk; approve or reject the "
+                            "re-review instead of merging it")
     if reg.get_risk(slug, into)["review_state"] == "rejected":
         raise RegistryError(f"{into} is rejected; merge into a live risk")
     note = ask_note("Review note: ")
@@ -158,6 +163,8 @@ def _retire(reg, session, slug, seen, reason) -> None:
     rid = seen["id"]
     if seen["review_state"] != "approved":
         raise RegistryError(f"only an approved risk can be retired; {rid} is {seen['review_state']}")
+    if seen["status"] == "retired":
+        raise RegistryError(f"{rid} is already retired")
     if reason is not None and len(reason.strip()) < NOTE_MIN:
         raise RegistryError(f"the reason must be at least {NOTE_MIN} characters")
     if reason is None:
@@ -194,6 +201,13 @@ def review_prompt(reg, session, slug, risk) -> str:
             return "reviewed"
         except Abort:
             print("Not changed.")
+        except StaleRecord:
+            risk = reg.get_risk(slug, rid)
+            if risk["review_state"] != "pending":
+                print(f"{rid} is no longer pending; skipped.")
+                return "gone"
+            print(f"{rid} changed since it was shown; showing the current version.")
+            print(format_risk(reg, slug, risk))
         except RegistryError as e:
             print(f"tmreg: {e}", file=sys.stderr)
 
@@ -204,20 +218,24 @@ def cmd_review(args, reg, root) -> int:
     pending = sorted(reg.list_risks(slug, "pending"),
                      key=lambda r: (r["created_at"] or "", core.id_sort_key(r["id"])))
     reviewed = skipped = 0
+    gone = 0
     for i, listed in enumerate(pending):
         risk = reg.get_risk(slug, listed["id"])  # fresh: it may have changed since the list
         if i:
             print()
         if risk["review_state"] != "pending":
             print(f"{risk['id']} is no longer pending; skipped.")
+            gone += 1
             continue
         outcome = review_prompt(reg, session, slug, risk)
         if outcome == "quit":
             break
         reviewed += outcome == "reviewed"
         skipped += outcome == "skipped"
+        gone += outcome == "gone"
     still = len(reg.list_risks(slug, "pending"))
-    print(f"{reviewed} reviewed, {skipped} skipped, {still} still pending")
+    extra = f", {gone} no longer pending" if gone else ""
+    print(f"{reviewed} reviewed, {skipped} skipped, {still} still pending{extra}")
     return 0
 
 

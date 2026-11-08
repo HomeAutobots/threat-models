@@ -4,7 +4,7 @@ from unittest import mock
 
 from helpers import SAMPLE_CATALOG, SAMPLE_DFD, TmpTestCase, ai_fields, make_registry, session, start
 from tmreg import core, model
-from tmreg.core import RegistryError
+from tmreg.core import RegistryError, StaleRecord
 
 NOTE = "Confirmed on F2 against the design doc."
 
@@ -73,6 +73,22 @@ class ReviewTest(TmpTestCase):
                 call()
         self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "pending")
         self.assertEqual(len(self.reg.history("demo")), before)
+
+    def test_seen_stale_merge_and_retire_raise_stale_record(self):
+        self.add()
+        self.add()
+        self.reg.approve(session(), "demo", "T-01", NOTE)
+        seen_new = self.reg.get_risk("demo", "T-02")
+        seen_old = self.reg.get_risk("demo", "T-01")
+        self.reg.edit_risk("demo", "T-02", {"notes": "x"}, run_id=self.run)
+        self.reg.edit_risk("demo", "T-01", {"notes": "y"}, run_id=self.run)
+        with self.assertRaises(StaleRecord):
+            self.reg.merge(session(), "demo", "T-02", "T-01", NOTE, seen=seen_new)
+        self.reg.approve(session(), "demo", "T-01", NOTE)
+        with self.assertRaises(StaleRecord):
+            self.reg.retire(session(), "demo", "T-01", NOTE, seen=seen_old)
+        with self.assertRaises(StaleRecord):  # no longer pending counts as stale too
+            self.reg.approve(session(), "demo", "T-01", NOTE, seen=seen_old)
 
     def test_seen_current_succeeds(self):
         self.add()
