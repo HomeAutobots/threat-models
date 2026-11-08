@@ -6,9 +6,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-ID_RE = r"^(E|P|D|F|TB)\d+$"
+ID_RE = r"^(E|P|D|F|TB)[0-9]+$"
 KINDS = ("E", "P", "D", "F", "TB")
-_ENDPOINT_RE = re.compile(r"^(E|P|D)\d+")
+_ENDPOINT_RE = re.compile(r"^(E|P|D)[0-9]+\b")
+_SEP_RE = re.compile(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
+_FENCE_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
 
 
 class DfdError(ValueError):
@@ -37,64 +39,116 @@ def _is_separator(cells: list[str]) -> bool:
 
 
 def _num(i: str) -> int:
-    return int(re.search(r"\d+", i).group())
+    return int(re.search(r"[0-9]+", i).group())
+
+
+def _live_lines(text: str) -> list[tuple[int, str | None]]:
+    """(line number, text) per line; text is None for fenced, indented, or comment-only lines."""
+    out: list[tuple[int, str | None]] = []
+    fence: tuple[str, int, int] | None = None  # (char, length, opening line)
+    in_comment = False
+    for n, line in enumerate(text.splitlines(), 1):
+        if fence is not None:
+            m = _FENCE_RE.match(line)
+            if m and m.group(2)[0] == fence[0] and len(m.group(2)) >= fence[1] \
+                    and not m.group(3).strip():
+                fence = None
+            out.append((n, None))
+            continue
+        if not in_comment:
+            m = _FENCE_RE.match(line)
+            if m:
+                fence = (m.group(2)[0], len(m.group(2)), n)
+                out.append((n, None))
+                continue
+            if re.match(r"^( {4,}|\t)", line):
+                out.append((n, None))
+                continue
+        had_comment = in_comment
+        rest = line
+        kept = ""
+        while rest:
+            if in_comment:
+                end = rest.find("-->")
+                if end < 0:
+                    rest = ""
+                else:
+                    rest = rest[end + 3:]
+                    in_comment = False
+            else:
+                start = rest.find("<!--")
+                if start < 0:
+                    kept += rest
+                    rest = ""
+                else:
+                    kept += rest[:start]
+                    rest = rest[start + 4:]
+                    in_comment = True
+                    had_comment = True
+        out.append((n, None if had_comment and not kept.strip() else kept))
+    if fence is not None:
+        raise DfdError(f"unclosed code fence opened at line {fence[2]}")
+    return out
 
 
 def parse(data: bytes) -> Dfd:
     sha = hashlib.sha256(data).hexdigest()
-    text = data.decode("utf-8")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise DfdError("dfd.md is not UTF-8") from None
+    lines = _live_lines(text)
     version = None
     ids: dict[str, list[str]] = {k: [] for k in KINDS}
     seen: set[str] = set()
     flows: list[tuple[str, str, str]] = []  # (flow id, from cell, to cell)
-    header: list[str] | None = None
-    fence: str | None = None
+    header: list[str] | None = None  # normalized header of the current table, None outside
 
-    for line in text.splitlines():
-        stripped = line.strip()
-        m = re.match(r"^(`{3,}|~{3,})", stripped)
-        if m:
-            marker = m.group(1)
-            if fence is None:
-                fence = marker[0]
-            elif marker[0] == fence:
-                fence = None
-            header = None
+    skip = -1
+    for idx, (n, line) in enumerate(lines):
+        if idx == skip:
             continue
-        if fence is not None:
-            continue
+        stripped = (line or "").strip()
         if not stripped.startswith("|"):
+            if header is not None and stripped and "|" in stripped:
+                raise DfdError(f"line {n}: table row without a leading pipe")
             header = None
             continue
         cells = _cells(stripped)
-        if _is_separator(cells):
-            continue
         if header is None:
-            header = cells
-            continue
+            nxt = lines[idx + 1][1] if idx + 1 < len(lines) else None
+            if nxt is not None and _SEP_RE.match(nxt.strip()) and not _is_separator(cells):
+                header = [c.lower() for c in cells]
+                skip = idx + 1
+                continue
+            raise DfdError(f"line {n}: table row outside a table "
+                           "(missing header or separator row?)")
         if cells[0] == "DFD version" and len(cells) > 1:
             version = cells[1]
             continue
-        if not header or header[0] != "ID":
+        if header[0] != "id":
             continue
         rid = cells[0]
         if not re.match(ID_RE, rid):
-            raise DfdError(f"invalid ID cell {rid!r}: must match {ID_RE}")
+            raise DfdError(f"line {n}: invalid ID cell {rid!r}: must match {ID_RE}")
         if rid in seen:
             raise DfdError(f"duplicate ID {rid}")
         seen.add(rid)
         kind = re.match(r"[A-Z]+", rid).group()
         ids[kind].append(rid)
-        if "From" in header and "To" in header:
-            def cell(name: str) -> str:
-                idx = header.index(name)
-                return cells[idx] if idx < len(cells) else ""
-            flows.append((rid, cell("From"), cell("To")))
+        if kind == "F":
+            if "from" not in header or "to" not in header:
+                raise DfdError("flows table needs From and To columns")
+            fi, ti = header.index("from"), header.index("to")
+            flows.append((rid, cells[fi] if fi < len(cells) else "",
+                          cells[ti] if ti < len(cells) else ""))
 
-    if version is None:
+    if not version:
         raise DfdError("dfd.md has no '| DFD version | x.y |' row")
 
     endpoints = {i for k in "EPD" for i in ids[k]}
+    if not endpoints:
+        raise DfdError("dfd.md defines no elements")
     for fid, *ends in flows:
         for end in ends:
             m = _ENDPOINT_RE.match(end)
