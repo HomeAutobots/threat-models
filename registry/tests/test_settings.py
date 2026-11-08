@@ -14,9 +14,12 @@ SETTINGS = ROOT / ".claude" / "settings.json"
 MATCHER = "Bash|Monitor|Edit|Write|MultiEdit|NotebookEdit"
 GUARD_ARG_SUFFIX = ".claude/hooks/guard.py"
 HUMAN_ONLY = ("review", "approve", "reject", "merge", "retire", "import-legacy", "dfd approve")
+ALLOWED = ("list", "show", "history", "report", "verify", "runs", "dfd status", "dfd check",
+           "run start", "add", "edit")
 INVOCATIONS = ("./tmreg", "tmreg", "python3 -m tmreg", "python3 ./tmreg", "python3 tmreg")
 REQUIRED_DENY = [f"Bash(./tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
-    "Bash(tmreg:*)", "Bash(python3 -m tmreg:*)", "Bash(python3 ./tmreg:*)", "Bash(python3 tmreg:*)",
+    f"Bash(tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
+    "Bash(python3 -m tmreg:*)", "Bash(python3 ./tmreg:*)", "Bash(python3 tmreg:*)",
     "Bash(script:*)", "Bash(expect:*)", "Bash(unbuffer:*)",
     "Bash(python3 -c:*)", "Bash(python3 -:*)", "Bash(python -c:*)", "Bash(sqlite3:*)",
     "Bash(git checkout:*)", "Bash(git restore:*)", "Bash(git reset:*)", "Bash(git stash:*)",
@@ -26,11 +29,13 @@ REQUIRED_DENY = [f"Bash(./tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
 
 
 def _denied(command: str, deny: list) -> bool:
-    """True if a Bash(prefix:*) deny rule covers command."""
+    """True if a Bash(prefix:*) deny rule covers command. Claude Code ignores a leading ./ when
+    matching deny rules (observed 2026-11-08: Bash(tmreg:*) denied ./tmreg verify)."""
+    forms = {command, command[2:] if command.startswith("./") else command}
     for rule in deny:
         if rule.startswith("Bash(") and rule.endswith(":*)"):
             prefix = rule[len("Bash("):-len(":*)")]
-            if command == prefix or command.startswith(prefix + " "):
+            if any(c == prefix or c.startswith(prefix + " ") for c in forms):
                 return True
     return False
 
@@ -53,6 +58,8 @@ def problems(settings: dict) -> list:
     out += [f"missing deny rule {r}" for r in REQUIRED_DENY if r not in deny]
     out += [f"{inv} {sub} is not denied" for inv in INVOCATIONS for sub in HUMAN_ONLY
             if not _denied(f"{inv} {sub} ordering-platform", deny)]
+    out += [f"./tmreg {sub} is denied, so Claude cannot run it" for sub in ALLOWED
+            if _denied(f"./tmreg {sub} ordering-platform", deny)]
     rules = [r for key in ("allow", "deny", "ask") for r in perms.get(key) or []]
     out += [f"Write rule with a path: {r}" for r in rules if r.startswith("Write(")]
     return out
@@ -102,6 +109,14 @@ class SettingsTest(unittest.TestCase):
         weak["hooks"]["PreToolUse"][0]["matcher"] = "Bash|Edit|Write"
         self.assertTrue(problems(weak))
         self.assertTrue(problems({**GOOD, "disableAllHooks": True}))
+
+    def test_a_deny_rule_that_blocks_allowed_commands_is_caught(self):
+        broad = copy.deepcopy(GOOD)
+        broad["permissions"]["deny"].append("Bash(tmreg:*)")
+        found = "\n".join(problems(broad))
+        for sub in ("verify", "dfd status", "add"):
+            with self.subTest(sub=sub):
+                self.assertIn(f"./tmreg {sub} is denied", found)
 
 
 if __name__ == "__main__":
