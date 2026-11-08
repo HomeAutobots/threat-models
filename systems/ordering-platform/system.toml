@@ -1,0 +1,6 @@
+name = "Ordering platform"
+owner = "<set by the owner>"
+methods = ["stride-per-element"]
+personal_data_classes = ["PII"]
+legacy_catalog = "docs/reference/reference-system.md"
+inputs_policy = "no secrets, credentials, or customer data"

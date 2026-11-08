@@ -1,0 +1,8 @@
+# Local file. Never send it, or the email in it, anywhere.
+# OWNER: set reviewer_name and reviewer_email to your own name and email before
+# approving anything. The values below were copied from git config at scaffold time
+# (git's user.name is "HomeAutobots"); they are the identity recorded on every review.
+framework_path = "../threat-model-framework"
+reviewer_name = "HomeAutobots"
+reviewer_email = "52093587+HomeAutobots@users.noreply.github.com"
+origins = ["design-review", "threat-model", "testing", "vulnerability", "incident", "ad-hoc"]
