@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 import subprocess
 import sys
 import tomllib
@@ -13,8 +14,8 @@ from pathlib import Path
 
 from . import catalog, config, db, dfd, ledger
 from .model import (
-    AI_REQUIRED, CONFIDENCE, EDITABLE_FIELDS, HUMAN_REQUIRED, KEY_COLUMNS, LINDDUN, MIN_LENGTHS,
-    NOTE_MIN, REVIEW_STATES, RISK_FIELDS, SNAPSHOT_FIELDS, STATUSES, STRIDE, SUPERSEDED_RE,
+    AI_REQUIRED, CONFIDENCE, EDITABLE_FIELDS, HUMAN_REQUIRED, JSON_COLUMNS, KEY_COLUMNS, LINDDUN,
+    MIN_LENGTHS, NOTE_MIN, REVIEW_STATES, RISK_FIELDS, SNAPSHOT_FIELDS, STATUSES, STRIDE, SUPERSEDED_RE,
     TREATMENTS,
 )
 
@@ -700,6 +701,82 @@ class Registry:
             for prefix, n in top.items():
                 self.conn.execute(f"UPDATE {seq} SET next = ? WHERE prefix = ?", (n + 1, prefix))
         return [r.id for r, _ in prepared]
+
+    # ---- verification -----------------------------------------------------------------------
+
+    def _table_rows(self, slug: str, tbl: str, problems: list[str]) -> dict[str, dict]:
+        """Rows keyed by key column, JSON cells decoded; an undecodable cell is reported and left out."""
+        keycol = KEY_COLUMNS[tbl]
+        out = {}
+        for r in self.conn.execute(f"SELECT * FROM {db.table(slug, tbl)} ORDER BY rowid"):
+            row = dict(r)
+            for col in JSON_COLUMNS[tbl]:
+                if row.get(col) is None:
+                    continue
+                try:
+                    row[col] = json.loads(row[col])
+                except (TypeError, ValueError):
+                    problems.append(f"{tbl} {row[keycol]}: {col} is not valid JSON")
+                    del row[col]
+            out[row[keycol]] = row
+        return out
+
+    def verify(self, slug) -> list[str]:
+        """Check the registry against its own change log. Returns problems; empty means clean."""
+        self._require(slug)
+        problems: list[str] = []
+        try:
+            row = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+            found = row["value"] if row else None
+            if found != str(db.SCHEMA_VERSION):
+                problems.append(f"schema_version is {found}, expected {db.SCHEMA_VERSION}")
+            present = {r[0] for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+            problems += [f"trigger {t} is missing" for t in db.trigger_names(slug) if t not in present]
+            problems += ledger.verify_chain(self.conn, slug)
+            logged = ledger.replay(self.conn, slug)
+            tables = {tbl: self._table_rows(slug, tbl, problems) for tbl in KEY_COLUMNS}
+            for tbl in KEY_COLUMNS:
+                rows = tables[tbl]
+                keys = {k for (t, k) in logged if t == tbl}
+                for key in sorted(set(rows) | keys, key=str):
+                    if key not in keys:
+                        problems.append(f"{tbl} {key} is in the table but not in the change log")
+                    elif key not in rows:
+                        problems.append(f"{tbl} {key} is in the change log but not in the table")
+                    else:
+                        want, have = logged[(tbl, key)], rows[key]
+                        for field in want:
+                            if field in have and want[field] != have[field]:
+                                problems.append(f"{tbl} {key}: {field} differs "
+                                                f"(log: {want[field]!r}, table: {have[field]!r})")
+            problems += self._verify_sequences(slug, tables, logged)
+        except sqlite3.Error as e:
+            problems.append(f"the database could not be read: {e}")
+        return problems
+
+    def _verify_sequences(self, slug: str, tables: dict, logged: dict) -> list[str]:
+        top = {"T": 0, "PT": 0, "DFD": 0}
+        topid: dict[str, str] = {}
+        ids = [(t, k) for t in ("risks", "dfd_approvals") for k in tables[t]] + list(logged)
+        for tbl, key in ids:
+            m = (_RISK_ID_RE if tbl == "risks" else _DFD_APPROVAL_RE).fullmatch(key) if isinstance(key, str) else None
+            if m is None or tbl == "runs":
+                continue
+            prefix, n = (m.group(1), int(m.group(2))) if tbl == "risks" else ("DFD", int(m.group(1)))
+            if prefix not in topid or n > top[prefix]:
+                top[prefix], topid[prefix] = n, key
+        problems = []
+        seqs = {r["prefix"]: r["next"] for r in
+                self.conn.execute(f"SELECT prefix, next FROM {db.table(slug, 'sequences')}")}
+        for prefix in ("T", "PT", "DFD"):
+            nxt = seqs.get(prefix)
+            if prefix not in seqs:
+                problems.append(f"sequence {prefix} is missing")
+            elif not isinstance(nxt, int):
+                problems.append(f"sequence {prefix} has a non-numeric value {nxt!r}")
+            elif prefix in topid and nxt <= top[prefix]:
+                problems.append(f"sequence {prefix} is behind {topid[prefix]}")
+        return problems
 
     # ---- reading ----------------------------------------------------------------------------
 

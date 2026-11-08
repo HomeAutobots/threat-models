@@ -103,28 +103,61 @@ def changes(conn, slug, key: str | None = None) -> list[dict]:
     return out
 
 
+def _diff_problem(ch: dict) -> str | None:
+    """Why a change row's decoded diff cannot be replayed, or None when it can."""
+    diff = ch["diff"]
+    if ch["tbl"] not in KEY_COLUMNS:
+        return f"change #{ch['seq']}: table {ch['tbl']!r} is not one the registry writes"
+    if not isinstance(diff, dict) or not all(isinstance(v, list) and len(v) == 2 for v in diff.values()):
+        return f"change #{ch['seq']}: diff is not a map of field changes"
+    return None
+
+
+def changes_tolerant(conn, slug) -> list[dict]:
+    """Like changes(), but a diff that is not valid JSON comes back as None instead of raising."""
+    out = []
+    for r in conn.execute(f"SELECT * FROM {db.table(slug, 'changes')} ORDER BY seq"):
+        d = dict(r)
+        try:
+            d["diff"] = json.loads(d["diff"])
+            d["diff_valid"] = True
+        except (TypeError, ValueError):
+            d["diff"], d["diff_valid"] = None, False
+        out.append(d)
+    return out
+
+
 def verify_chain(conn, slug) -> list[str]:
     problems = []
     prev = GENESIS
     expected_seq = 1
-    for ch in changes(conn, slug):
+    for ch in changes_tolerant(conn, slug):
         n = ch["seq"]
         if n != expected_seq:
             problems.append(f"change #{n}: expected sequence number {expected_seq} (missing or reordered rows)")
-        expected_seq = n + 1
+        expected_seq = n + 1 if isinstance(n, int) else expected_seq + 1
         if ch["prev_hash"] != prev:
             problems.append(f"change #{n}: prev_hash does not match the previous change")
-        record = {k: ch[k] for k in _RECORD_KEYS}
-        if ch["hash"] != content_hash(ch["prev_hash"], record):
-            problems.append(f"change #{n}: hash does not match its contents")
+        if not ch["diff_valid"]:
+            problems.append(f"change #{n}: diff is not valid JSON")
+        else:
+            record = {k: ch[k] for k in _RECORD_KEYS}
+            if ch["hash"] != content_hash(ch["prev_hash"], record):
+                problems.append(f"change #{n}: hash does not match its contents")
+            shape = _diff_problem(ch)
+            if shape:
+                problems.append(shape)
         prev = ch["hash"]
     return problems
 
 
 def replay(conn, slug) -> dict[tuple[str, str], dict]:
+    """Rebuild rows from the log. Changes whose diff cannot be read are skipped (verify_chain reports them)."""
     blank = {tbl: {c: None for c in _columns(conn, slug, tbl)} for tbl in KEY_COLUMNS}
     rows: dict[tuple[str, str], dict] = {}
-    for ch in changes(conn, slug):
+    for ch in changes_tolerant(conn, slug):
+        if not ch["diff_valid"] or _diff_problem(ch):
+            continue
         tbl, key = ch["tbl"], ch["row_key"]
         row = rows.setdefault((tbl, key), {**blank[tbl], KEY_COLUMNS[tbl]: key})
         for field, (_, new) in ch["diff"].items():
