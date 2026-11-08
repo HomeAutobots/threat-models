@@ -100,8 +100,9 @@ gets past them.
      the call. If the guard cannot run at all, `"onFailure": "block"` in the settings blocks the
      call instead.
 3. **Permission rules** (`.claude/settings.json`) are a second layer behind the hook.
-   - The allow rules pre-approve exactly the commands and writes above, so Claude is not slowed by
-     prompts.
+   - The allow rules pre-approve command prefixes and paths, so Claude is not slowed by prompts.
+     They are broader than the forms above: `Bash(./tmreg add:*)` matches any `add` command, for
+     example. The hook narrows them to exactly those forms.
    - The deny rules cover the human-only subcommands, the other ways of invoking tmreg, terminal
      wrappers, inline interpreters, `sqlite3`, and git `checkout`, `restore`, `reset`, and `stash`.
      They also deny edits to `registry/`, `.claude/`, `systems/*/register.md`, `tmreg`,
@@ -119,8 +120,10 @@ gets past them.
 - They are not proof against a model actively looking for a new way around them, for example after
   a prompt injection in `inputs/`.
 - They are not a defense against a malicious local user.
-- The hook checks only the tools named above. A tool it does not name, such as an MCP server tool
-  that writes local files, is not checked, so do not enable such a server for this project.
+- The hook checks only the tools named above. A tool it does not name is not checked. That
+  includes MCP tools that write local files or send data out, for example browser, mail, or drive
+  connectors, so keep such servers off for this project. `/tm-model` disallows the built-in web
+  tools (WebFetch and WebSearch) for its run, but not MCP tools.
 - The upgrade path, which is not built, is signed approvals: each approval is signed with the
   reviewer's SSH key, and the registry rejects an approved row without a valid signature.
   `webapp/DESIGN.md` section 5 describes it.
@@ -132,19 +135,38 @@ itself, even in a session you start for that purpose. A deny rule cannot be over
 rule anywhere, so lifting the guard means editing the settings file by hand. Use this flow for any
 change to `registry/`, the guard, or the settings:
 
-1. Start from a clean working tree (`git status`).
+1. Start from a clean working tree with passing tests, and record the commit you start from:
+
+   ```bash
+   git status
+   make test
+   git rev-parse HEAD
+   ```
+
+   Write the printed sha down; step 4 restores from it.
 2. In your own editor, edit `.claude/settings.json`: remove the `hooks` entry and the
    `Edit(/registry/**)` and `Edit(/.claude/**)` deny rules. Remove only what the change needs.
 3. Start `claude` and make the change. Keep the session to that change.
-4. When the session ends, restore the guard in your own terminal:
+   - Never stage or commit `.claude/settings.json` during the session, and do not let Claude do
+     it. A plain `git checkout .claude/settings.json` restores from the index, so a staged lifted
+     file would survive it, and a committed one would sit in `HEAD`.
+   - Stage files by name, not with `git add -A`.
+4. When the session ends, restore the guard in your own terminal from the recorded sha, and check
+   the restore:
 
    ```bash
-   git checkout .claude/settings.json
+   git checkout <sha> -- .claude/settings.json
+   git diff <sha> -- .claude/settings.json
+   make test
    ```
 
-   Only you run this, because the deny rules block `git checkout` for Claude. If the change needs
-   a new rule in the settings, add it by hand after restoring.
-5. Run `make test` and `./tmreg verify <slug>` for each system, review the diff, and commit.
+   - The `git diff` must print nothing.
+   - `make test` must pass. Its `test_settings.py` fails if the hook, `onFailure: block`, or a
+     required deny rule is missing.
+   - Only you run these, because the deny rules block `git checkout` for Claude.
+   - If the change needs a new rule in the settings, add it by hand after the restore, then run
+     `make test` again.
+5. Run `./tmreg verify <slug>` for each system, review the diff, and commit.
 
 There is also a one-session switch that writes no file: `claude --settings '{"disableAllHooks": true}'`
 turns off every hook for that session only. It also turns off any status line, and it cannot turn
