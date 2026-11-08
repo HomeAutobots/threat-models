@@ -373,6 +373,18 @@ class CliTest(TmpTestCase):
         self.assertEqual((code, out), (1, ""))
         self.assertEqual(err, "tmreg: dfd.md has no '| DFD version | x.y |' row\n")
 
+    def test_dfd_gate_never_prints_raw_escape_codes(self):
+        path = self.root / "systems/demo/dfd.md"
+        path.write_text(path.read_text().replace("| DFD version | 1.0 |",
+                                                 "| DFD version | 1.1\x1b[8m |"))
+        code, out, err = self.run_cli("dfd", "check", "demo")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("DFD version must be", err)
+        self.assertNotIn("\x1b", err)
+        code, out, err = self.run_cli("dfd", "approve", "demo", tty=True)
+        self.assertEqual((code, out), (1, ""))
+        self.assertNotIn("\x1b", err)
+
     def test_busy_database_is_reported(self):  # M7
         for target in ("tmreg.cli.Registry.list_risks", "tmreg.cli.open_registry"):
             with self.subTest(target=target), \

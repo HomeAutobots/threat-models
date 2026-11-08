@@ -125,6 +125,31 @@ class HardeningTest(unittest.TestCase):
     def test_empty_version(self):
         self.raises(HEAD.replace(b"1.0", b"") + ELEMS, "DFD version")
 
+    def test_version_must_be_plain(self):
+        # The version cell is AI-writable and printed at the DFD gate; escape codes there could
+        # hide the sha256 and added/removed lines from the owner, so only a plain token parses.
+        # U+2028 splits the line, so the row is refused earlier, as a row without a leading pipe.
+        with self.assertRaises(dfd.DfdError) as cm:
+            dfd.parse(HEAD.replace(b"1.0", "1.0 x".encode()) + ELEMS)
+        self.assertTrue(str(cm.exception).isascii())
+        for bad in ("1.1\x1b[8m", "1.0‮", "1.0​", "1.0 beta", "-1.0"):
+            with self.subTest(version=bad):
+                data = HEAD.replace(b"1.0", bad.encode()) + ELEMS
+                with self.assertRaisesRegex(dfd.DfdError, "DFD version must be") as cm:
+                    dfd.parse(data)
+                self.assertTrue(str(cm.exception).isascii())
+                self.assertNotIn("\x1b", str(cm.exception))
+        for good in ("1.0", "2.13", "v3", "2026-11-07", "1.0-rc1", "1.0+b2"):
+            with self.subTest(version=good):
+                self.assertEqual(dfd.parse(HEAD.replace(b"1.0", good.encode()) + ELEMS).version, good)
+
+    def test_error_messages_escape_cell_text(self):
+        data = HEAD + ELEMS + "\n| ID | From | To |\n|---|---|---|\n| F1 | E1 | X9\x1b[2K |\n".encode()
+        with self.assertRaises(dfd.DfdError) as cm:
+            dfd.parse(data)
+        self.assertNotIn("\x1b", str(cm.exception))
+        self.assertIn("F1: unknown endpoint", str(cm.exception))
+
     def test_bom_and_non_utf8(self):
         data = b"\xef\xbb\xbf" + HEAD + ELEMS
         d = dfd.parse(data)

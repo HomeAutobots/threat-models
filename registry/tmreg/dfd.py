@@ -11,6 +11,15 @@ KINDS = ("E", "P", "D", "F", "TB")
 _ENDPOINT_RE = re.compile(r"^(E|P|D)[0-9]+\b")
 _SEP_RE = re.compile(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
 _FENCE_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
+# The version cell is AI-writable and shown at the DFD gate, so only a plain token parses:
+# escape codes or bidi controls there could hide the preview's other lines from the owner.
+_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,31}")
+
+
+def _escaped(text: str) -> str:
+    """Cell text for an error message, with non-printable characters shown as escapes."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii")
+                   for c in text)
 
 
 class DfdError(ValueError):
@@ -149,6 +158,9 @@ def parse(data: bytes) -> Dfd:
 
     if not version:
         raise DfdError("dfd.md has no '| DFD version | x.y |' row")
+    if not _VERSION_RE.fullmatch(version):
+        raise DfdError("DFD version must be letters, digits, '.', '-', '_' or '+', starting with "
+                       f"a letter or digit (got {version!a})")
 
     endpoints = {i for k in "EPD" for i in ids[k]}
     if not endpoints:
@@ -158,7 +170,7 @@ def parse(data: bytes) -> Dfd:
             m = _ENDPOINT_RE.match(end)
             if not m or m.group() not in endpoints:
                 token = m.group() if m else (end.split()[0] if end.split() else "")
-                raise DfdError(f"{fid}: unknown endpoint {token}")
+                raise DfdError(f"{fid}: unknown endpoint {_escaped(token)}")
 
     for lst in ids.values():
         lst.sort(key=_num)

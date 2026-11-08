@@ -311,7 +311,7 @@ def cmd_dfd_status(args, reg, root) -> int:
     status = reg.dfd_status(args.slug)
     print(f"state: {status.state}")
     if status.latest:
-        print(f"latest: {status.latest['id']} (version {status.latest['version']})")
+        print(f"latest: {status.latest['id']} (version {visible(status.latest['version'])})")
     return 0
 
 
@@ -319,7 +319,7 @@ def cmd_dfd_check(args, reg, root) -> int:
     """Read-only: parse dfd.md and show what an approval would record. Prints ok last."""
     preview = reg.dfd_preview(args.slug)
     parsed = preview["dfd"]
-    print(f"version: {parsed.version}")
+    print(f"version: {visible(parsed.version)}")
     print(f"sha256: {parsed.sha256}")
     print("ids: " + " ".join(f"{k}={len(v)}" for k, v in parsed.ids.items()))
     if reg.dfd_status(args.slug).latest is None:
@@ -328,7 +328,7 @@ def cmd_dfd_check(args, reg, root) -> int:
         print(f"added: {', '.join(preview['added']) or 'none'}")
     print(f"removed: {', '.join(preview['removed']) or 'none'}")
     for w in preview["warnings"]:
-        print(f"warning: {w}")
+        print(f"warning: {visible(w)}")
     print("ok")
     return 0
 
@@ -341,7 +341,7 @@ def cmd_dfd_approve(args, reg, root) -> int:
     latest = reg.dfd_status(slug).latest
     if latest is not None and latest["sha256"] == parsed.sha256:  # before any prompt
         raise RegistryError(f"already approved as {latest['id']}")
-    print(f"version: {parsed.version}")
+    print(f"version: {visible(parsed.version)}")
     print(f"sha256: {parsed.sha256}")
     print(f"If an AI run drafted this DFD, check that this sha256 matches the one quoted in "
           f"systems/{slug}/runs/<run-id>/dfd-check.md.")
@@ -349,7 +349,7 @@ def cmd_dfd_approve(args, reg, root) -> int:
     print(f"added: {', '.join(preview['added']) or EMPTY}")
     print(f"removed: {', '.join(preview['removed']) or EMPTY}")
     for w in preview["warnings"]:
-        print(f"warning: {w}")
+        print(f"warning: {visible(w)}")
     note = ask_note("Approval note: ")
     confirm(slug, "approve")
     # The approval records only the file previewed above; a file changed since is refused.
