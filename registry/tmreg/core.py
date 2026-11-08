@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, db, dfd, ledger
+from . import catalog, config, db, dfd, ledger
 from .model import (
     AI_REQUIRED, CONFIDENCE, EDITABLE_FIELDS, HUMAN_REQUIRED, KEY_COLUMNS, LINDDUN, MIN_LENGTHS,
     NOTE_MIN, REVIEW_STATES, RISK_FIELDS, SNAPSHOT_FIELDS, STATUSES, STRIDE, SUPERSEDED_RE,
@@ -554,6 +554,134 @@ class Registry:
             update["updated_at"] = db.now()
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op="edit", actor=actor)
         return self.get_risk(slug, risk_id)
+
+    # ---- human review -----------------------------------------------------------------------
+
+    def _review_fields(self, session: ReviewerSession, note: str) -> dict:
+        return {"reviewed_by": session.name, "reviewed_at": db.now(), "review_note": note}
+
+    def _require_pending(self, slug: str, risk_id, verb: str) -> dict:
+        cur = self._risk(slug, risk_id)
+        if cur["review_state"] != "pending":
+            raise RegistryError(f"only a pending risk can be {verb}; {risk_id} is "
+                                f"{cur['review_state']}")
+        return cur
+
+    def approve(self, session, slug, risk_id, note) -> dict:
+        _require_session(session)
+        note = _require_note(note)
+        self._require(slug)
+        with self._write():
+            self._require_pending(slug, risk_id, "approved")
+            ledger.write_row(self.conn, slug, "risks", risk_id, {
+                "review_state": "approved", **self._review_fields(session, note),
+                "last_approved": None,
+            }, op="approve", actor=f"human:{session.name}")
+        return self._risk(slug, risk_id)
+
+    def reject(self, session, slug, risk_id, note) -> dict:
+        _require_session(session)
+        note = _require_note(note)
+        self._require(slug)
+        with self._write():
+            cur = self._require_pending(slug, risk_id, "rejected")
+            snap = cur["last_approved"]
+            if snap is None:
+                update = {"review_state": "rejected", **self._review_fields(session, note)}
+                op, log_note = "reject", ""
+            else:  # a re-review: put back what the last human approval covered
+                update = {f: snap[f] for f in SNAPSHOT_FIELDS}
+                update.update(review_state="approved", last_approved=None)
+                op, log_note = "revert", note
+            ledger.write_row(self.conn, slug, "risks", risk_id, update, op=op,
+                             actor=f"human:{session.name}", note=log_note)
+        return self._risk(slug, risk_id)
+
+    def merge(self, session, slug, pending_id, into_id, note) -> dict:
+        _require_session(session)
+        note = _require_note(note)
+        self._require(slug)
+        with self._write():
+            cur = self._require_pending(slug, pending_id, "merged")
+            if cur["last_approved"] is not None:
+                raise RegistryError(f"{pending_id} is a re-review of an approved risk; approve or "
+                                    "reject the re-review instead of merging it")
+            if into_id == pending_id:
+                raise RegistryError("a risk cannot be merged into itself")
+            target = self._risk(slug, into_id)
+            if target["review_state"] == "rejected":
+                raise RegistryError(f"{into_id} is rejected; merge into a live risk")
+            ledger.write_row(self.conn, slug, "risks", pending_id, {
+                "review_state": "rejected", "merged_into": into_id,
+                **self._review_fields(session, note),
+            }, op="merge", actor=f"human:{session.name}")
+        return self._risk(slug, pending_id)
+
+    def retire(self, session, slug, risk_id, reason) -> dict:
+        _require_session(session)
+        reason = _require_note(reason, "reason")
+        self._require(slug)
+        with self._write():
+            cur = self._risk(slug, risk_id)
+            if cur["review_state"] != "approved":
+                raise RegistryError(f"only an approved risk can be retired; {risk_id} is "
+                                    f"{cur['review_state']}")
+            if cur["status"] == "retired":
+                raise RegistryError(f"{risk_id} is already retired")
+            ledger.write_row(self.conn, slug, "risks", risk_id, {
+                "status": "retired", "status_reason": reason, "updated_at": db.now(),
+            }, op="retire", actor=f"human:{session.name}")
+        return self._risk(slug, risk_id)
+
+    def import_legacy(self, session, slug) -> list[str]:
+        _require_session(session)
+        self._require(slug)
+        legacy = self.system(slug).legacy_catalog
+        if not legacy:
+            raise RegistryError("no legacy_catalog in system.toml")
+        path = self.config.framework_path / legacy
+        try:
+            rows = catalog.parse(path.read_text(encoding="utf-8"))
+        except OSError as e:
+            raise RegistryError(f"cannot read {path}: {e.strerror}") from None
+        except (catalog.CatalogError, UnicodeDecodeError) as e:
+            raise RegistryError(f"{path}: {e}") from None
+        commit = framework_commit(self.config.framework_path)  # before taking the write lock
+        with self._write():
+            if ledger.read_rows(self.conn, slug, "risks"):
+                raise RegistryError("import-legacy runs once, into an empty register")
+            latest = self._require_dfd(slug)
+            if not rows:
+                raise RegistryError(f"{path} has no catalog rows to import")
+            prepared = []
+            for r in rows:
+                _check_elements(r.elements, latest)
+                category = _category(r.category)
+                is_t = r.id.startswith("T-")
+                if (category in STRIDE) != is_t:
+                    raise RegistryError(f"{r.id}: category {r.category!r} does not fit its ID")
+                prepared.append((r, category))
+            at = db.now()
+            actor = f"human:{session.name}"
+            note = f"Imported from the guide's reference catalog at commit {commit}"
+            top = {"T": 0, "PT": 0}
+            for r, category in prepared:
+                prefix, num = r.id.rsplit("-", 1)
+                top[prefix] = max(top[prefix], int(num))
+                ledger.write_row(self.conn, slug, "risks", r.id, {
+                    "title": catalog.title_for(r.text), "description": r.text,
+                    "elements": r.elements or None, "category": category,
+                    "method": "STRIDE" if r.id.startswith("T-") else "LINDDUN",
+                    "origin": "threat-model", "origin_ref": "reference catalog",
+                    "status": "open", "review_state": "approved",
+                    "drafted_by": "human:catalog-import", "detail_complete": 0,
+                    "dfd_approval_id": latest["id"], "reviewed_by": session.name,
+                    "reviewed_at": at, "review_note": note, "created_at": at, "updated_at": at,
+                }, op="import", actor=actor)
+            seq = db.table(slug, "sequences")
+            for prefix, n in top.items():
+                self.conn.execute(f"UPDATE {seq} SET next = ? WHERE prefix = ?", (n + 1, prefix))
+        return [r.id for r, _ in prepared]
 
     # ---- reading ----------------------------------------------------------------------------
 
