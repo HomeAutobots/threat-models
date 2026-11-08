@@ -3,9 +3,16 @@ __pycache__/
 .DS_Store
 # Local reviewer identity; the tracked template is project.example.toml.
 project.toml
-registry/trial.db
-registry/*.db-journal
-registry/*.db-wal
-registry/*.db-shm
-systems/*/register.trial.md
-systems/*/runs/trial-*/
+# Risk data stays local; tmreg creates it. .githooks/ refuses it even when forced.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+systems/*/register*.md
+systems/*/runs/
+systems/*/inputs/
+systems/*/threat-model.md
+systems/*/dfd.md
+!systems/ordering-platform/dfd.md

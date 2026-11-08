@@ -51,7 +51,9 @@
       "Edit(/systems/*/register.md)",
       "Edit(/tmreg)",
       "Edit(/project.toml)",
-      "Edit(/CLAUDE.md)"
+      "Edit(/CLAUDE.md)",
+      "Edit(/.githooks/**)",
+      "Edit(/.gitignore)"
     ],
     "additionalDirectories": [
       "/Users/tylerstandish/Developer/threat-model-framework"

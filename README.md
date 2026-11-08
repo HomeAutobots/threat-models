@@ -12,14 +12,38 @@ guide's pages. Without the guide you can still read the code and run `make test`
 that reads the guide's catalog is skipped. `systems/ordering-platform/dfd.md` is built from the
 guide's reference system.
 
+## Risk data stays out of git
+
+The repository holds the tool and the reference system's DFD, never the risks. These are
+created locally by tmreg and never committed:
+
+- the databases (`registry/registry.db`, `registry/trial.db`, and any `*.db` or `*.sqlite`);
+- generated registers (`systems/*/register.md`, `register.trial.md`) and anything you export;
+- run records (`systems/*/runs/`), threat model documents (`systems/*/threat-model.md`), and
+  inputs (`systems/*/inputs/`);
+- every system's `dfd.md` except `systems/ordering-platform/dfd.md`.
+
+Three layers keep them out:
+- `.gitignore` covers them.
+- `.githooks/pre-commit` refuses them even when forced with `git add -f`.
+- `.githooks/pre-push` refuses any pushed commit that adds them, including one made with
+  `--no-verify`.
+
+`make test` installs the hooks (`make hooks` does it alone) and checks that nothing like this is
+tracked. Keep exported reports (`./tmreg report … --out`) outside the repository.
+
+The database lives only on your machine, so back it up, for example with Time Machine. To copy
+it, copy `registry/registry.db` while no tmreg command is running. Run `./tmreg verify <slug>`
+on any restored copy.
+
 ## Quick start
 
-Requires Python 3.11 or newer (`python3 --version`).
+Requires Python 3.11 or newer (`python3 --version`), and the guide checked out beside this repo.
 
 ```bash
 cp project.example.toml project.toml   # then set reviewer_name and reviewer_email
-./tmreg --help
-make test                  # run the unit tests
+make test                              # installs the git hooks, runs the unit tests
+./tmreg init-system ordering-platform --name "Ordering platform"   # creates registry/registry.db
 ./tmreg verify ordering-platform
 ```
 
@@ -31,13 +55,15 @@ tmreg refuses them otherwise. Do these steps in this order, in your own terminal
 says otherwise.
 
 1. Copy `project.example.toml` to `project.toml` (git-ignored) and set `reviewer_name` and
-   `reviewer_email` to your own. Every review is recorded under that name, and registers you
-   commit show it.
-2. Read `systems/ordering-platform/dfd.md`, then run `./tmreg dfd approve ordering-platform`.
-3. Run `./tmreg import-legacy ordering-platform`. Do this only after the guide's branch is merged
+   `reviewer_email` to your own. Every review is recorded under that name.
+2. Create the local register: `./tmreg init-system ordering-platform --name "Ordering platform"`.
+   This writes `registry/registry.db`, `register.md`, and the `threat-model.md` skeleton, all
+   git-ignored. Skip this step if `./tmreg verify ordering-platform` already prints `ok`.
+3. Read `systems/ordering-platform/dfd.md`, then run `./tmreg dfd approve ordering-platform`.
+4. Run `./tmreg import-legacy ordering-platform`. Do this only after the guide's branch is merged
    to `main` with a merge commit, so the guide commit cited in the import note stays reachable.
-4. Run `./tmreg verify ordering-platform`.
-5. Set up the trial register (`registry/trial.db`, git-ignored):
+5. Run `./tmreg verify ordering-platform`.
+6. Set up the trial register (`registry/trial.db`, git-ignored):
 
    ```bash
    ./tmreg init-system ordering-platform --name "Ordering platform" --trial
@@ -47,8 +73,8 @@ says otherwise.
 
    Without the trial import, the trial register is empty and the catalog is withheld, so the run
    shows what the model re-derives on its own. `run start` prints a note saying so.
-6. In Claude Code, started in this folder: `/tm-model ordering-platform --trial <element IDs>`.
-7. In your own terminal: `./tmreg review ordering-platform --trial`.
+7. In Claude Code, started in this folder: `/tm-model ordering-platform --trial <element IDs>`.
+8. In your own terminal: `./tmreg review ordering-platform --trial`.
 
 ## Commands
 
@@ -89,7 +115,8 @@ Run these in your own terminal.
    `./tmreg add <slug> --json c.json`.
 3. `./tmreg review <slug>` walks the pending risks one at a time. For each one, you approve,
    reject, merge, skip, or quit. To change a risk, use `./tmreg edit`, which is a separate command.
-4. `register.md` is regenerated after every write. Never hand-edit it; commit it with the database.
+4. `register.md` is regenerated after every write. Never hand-edit it. Like the database, it stays
+   local and is never committed.
 5. Existing risks change through `edit` (which sends an approved risk back to review), `merge`, or `retire`.
 
 ## Reports, verify, and trial runs

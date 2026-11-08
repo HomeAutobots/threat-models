@@ -13,6 +13,9 @@ else, such as the sibling guide repo, is not guarded. The rules in this file app
 - `registry/registry.db` is the database. Never write it, and never open it with anything but `./tmreg`.
 - `systems/<slug>/`: `system.toml`, `dfd.md`, `inputs/`, `threat-model.md` (human-owned),
   `register.md` (generated, never hand-edited), `runs/<run-id>/` (per-run record).
+- Risk data never enters git. The databases, `register*.md`, `runs/`, `inputs/`,
+  `threat-model.md`, and every `dfd.md` except `systems/ordering-platform/dfd.md` are git-ignored,
+  and `.githooks/` refuses them in commits and pushes. Never suggest committing them.
 - `../threat-model-framework` is the guide, read-only. Cite its method pages; do not restate or alter them.
 
 ## Commands Claude may run

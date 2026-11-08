@@ -141,8 +141,8 @@ both directions. Take only its shape.
    > Review dfd.md, then run `./tmreg dfd approve <slug>` in your own terminal. I will not draft
    > threats until it is approved.
 
-   If this run changed `dfd.md`, say that `git diff systems/<slug>/dfd.md` shows the change. Do
-   not go on to step 3.
+   If this run changed `dfd.md`, say which tables and rows changed. Only the reference system's
+   `dfd.md` is tracked in git, so `git diff` shows nothing for other systems. Do not go on to step 3.
 
 ## 3. Threats
 
