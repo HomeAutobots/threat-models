@@ -1,4 +1,5 @@
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -28,6 +29,24 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg.origins, config.DEFAULT_ORIGINS)
         self.assertEqual(cfg.reviewer_name, "R")
         self.assertEqual(cfg.reviewer_email, "")
+
+    def test_missing_project_toml_points_to_example(self):
+        with self.assertRaisesRegex(config.ConfigError, "copy project.example.toml"):
+            config.load_project(self.root)
+
+    def test_tracked_example_is_a_safe_template(self):
+        # project.toml is git-ignored; the tracked example must not carry anyone's identity, and
+        # a copy left unedited must be refused rather than recorded as a reviewer.
+        root = Path(__file__).resolve().parents[2]
+        with open(root / "project.example.toml", "rb") as f:
+            raw = tomllib.load(f)
+        self.assertEqual(raw["framework_path"], "../threat-model-framework")
+        self.assertEqual((raw["reviewer_name"], raw["reviewer_email"]), ("", ""))
+        self.assertEqual(tuple(raw["origins"]), config.DEFAULT_ORIGINS)
+        self.project((root / "project.example.toml").read_text().replace(
+            '"../threat-model-framework"', '"fw"'))
+        with self.assertRaisesRegex(config.ConfigError, "reviewer_name"):
+            config.load_project(self.root)
 
     def test_project_errors(self):
         self.project('framework_path = "fw"\nreviewer_name = "R"\n', fw=False)

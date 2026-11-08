@@ -2,13 +2,22 @@
 
 A local risk registry for threat models, built on the standard library only. No AI is needed to use
 it. Every system has a DFD, a register of risks, and a threat model document under `systems/<slug>/`.
-Methods come from the sibling [threat-model-framework](../threat-model-framework) guide.
+Methods come from the threat-model-framework guide, cloned beside this repo as
+`../threat-model-framework`.
+
+The guide ([HomeAutobots/threat-model-framework](https://github.com/HomeAutobots/threat-model-framework))
+is private for now. `./tmreg` refuses to start until `framework_path` in `project.toml` points at a
+checkout of it, because `import-legacy`, the `threat-model.md` skeleton, and `/tm-model` read the
+guide's pages. Without the guide you can still read the code and run `make test`; the one test
+that reads the guide's catalog is skipped. `systems/ordering-platform/dfd.md` is built from the
+guide's reference system.
 
 ## Quick start
 
 Requires Python 3.11 or newer (`python3 --version`).
 
 ```bash
+cp project.example.toml project.toml   # then set reviewer_name and reviewer_email
 ./tmreg --help
 make test                  # run the unit tests
 ./tmreg verify ordering-platform
@@ -21,8 +30,9 @@ threat catalog (`legacy_catalog` in its `system.toml`), so `/tm-model` runs on i
 tmreg refuses them otherwise. Do these steps in this order, in your own terminal unless a step
 says otherwise.
 
-1. Set `reviewer_name` and `reviewer_email` in `project.toml` to your own. Every review is
-   recorded under that identity.
+1. Copy `project.example.toml` to `project.toml` (git-ignored) and set `reviewer_name` and
+   `reviewer_email` to your own. Every review is recorded under that name, and registers you
+   commit show it.
 2. Read `systems/ordering-platform/dfd.md`, then run `./tmreg dfd approve ordering-platform`.
 3. Run `./tmreg import-legacy ordering-platform`. Do this only after the guide's branch is merged
    to `main` with a merge commit, so the guide commit cited in the import note stays reachable.
@@ -210,3 +220,7 @@ There is also a one-session switch that writes no file: `claude --settings '{"di
 turns off every hook for that session only. It also turns off any status line, and it cannot turn
 off one hook alone. It leaves the deny rules in force, so it is not enough to change `registry/` or
 `.claude/`. Use the hand-edit-and-restore flow above for tmreg maintenance.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

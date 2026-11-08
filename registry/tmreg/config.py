@@ -64,6 +64,9 @@ def _str_list(raw: dict, key: str, default: tuple[str, ...]) -> tuple[str, ...]:
 
 def load_project(root: Path) -> ProjectConfig:
     root = Path(root)
+    if not (root / "project.toml").exists():
+        raise ConfigError(f"{root / 'project.toml'} not found: copy project.example.toml to "
+                          "project.toml and set reviewer_name and reviewer_email")
     raw = _read(root / "project.toml")
     name = raw.get("reviewer_name", "")
     if not isinstance(name, str) or not name.strip():

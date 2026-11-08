@@ -1,0 +1,7 @@
+# Copy this file to project.toml, which is git-ignored, and fill in your own reviewer identity.
+# reviewer_name is recorded on every review and DFD approval; tmreg refuses to run while it is
+# empty. The email stays in your local project.toml.
+framework_path = "../threat-model-framework"
+reviewer_name = ""
+reviewer_email = ""
+origins = ["design-review", "threat-model", "testing", "vulnerability", "incident", "ad-hoc"]

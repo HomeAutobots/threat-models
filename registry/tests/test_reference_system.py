@@ -17,7 +17,12 @@ class ReferenceSystemTest(unittest.TestCase):
         self.assertEqual(d.all_ids(), EXPECTED)
 
     def test_every_catalog_threat_cites_known_ids(self):
-        cfg = config.load_project(ROOT)
+        # Needs a local project.toml and the threat-model-framework guide beside this repo;
+        # a fresh clone without them skips rather than fails.
+        try:
+            cfg = config.load_project(ROOT)
+        except config.ConfigError as e:
+            self.skipTest(f"needs project.toml and the threat-model-framework guide: {e}")
         rows = catalog.parse(
             (cfg.framework_path / "docs/reference/reference-system.md").read_text())
         self.assertEqual(len(rows), 44)  # T-01..T-36, PT-01..PT-08

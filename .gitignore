@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 .DS_Store
+# Local reviewer identity; the tracked template is project.example.toml.
+project.toml
 registry/trial.db
 registry/*.db-journal
 registry/*.db-wal
