@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tmreg - Register</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2128;--mut:#5b6572;--line:#d8dde3;--acc:#1f5fbf;--accfg:#fff;--warn:#fff4d6;--warnl:#d9a400;--bad:#b3261e;--ok:#1d7a3a;--add:#e3f5e8;--del:#fde8e6;--tag:#eaeef3}
+@media (prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2127;--fg:#e6e9ee;--mut:#9aa4b0;--line:#323943;--acc:#6ea4f2;--accfg:#0d1117;--warn:#3a3112;--warnl:#b38f00;--bad:#f2766e;--ok:#5cc47b;--add:#17321f;--del:#3b1b19;--tag:#2a3038}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+header b{font-size:16px}
+nav a{color:var(--mut);text-decoration:none;margin-right:12px}
+nav a.on{color:var(--fg);font-weight:600}
+select,input,textarea,button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px;max-width:100%}
+main{max-width:1000px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}h2{font-size:16px;margin:20px 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs a{padding:8px 12px;color:var(--mut);text-decoration:none;border-bottom:2px solid transparent}
+.tabs a.on{color:var(--fg);border-color:var(--acc);font-weight:600}
+.n{background:var(--tag);border-radius:10px;padding:0 7px;font-size:12px;margin-left:4px}
+.filters,.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.bar .sp{flex:1}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+tr:last-child td{border-bottom:0}
+.tag{display:inline-block;background:var(--tag);border-radius:4px;padding:0 6px;font-size:12px;white-space:nowrap}
+.btn{background:var(--acc);color:var(--accfg);border-color:var(--acc);cursor:pointer;text-decoration:none;display:inline-block}
+.btn.sec{background:var(--card);color:var(--fg);border-color:var(--line)}
+.btn.bad{background:var(--card);color:var(--bad);border-color:var(--bad)}
+button[disabled]{opacity:.45;cursor:not-allowed}
+.banner{background:var(--warn);border:1px solid var(--warnl);border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.ill{border:1px dashed var(--mut);color:var(--mut);border-radius:4px;padding:0 6px;font-size:12px}
+.mut{color:var(--mut)}
+dl{display:grid;grid-template-columns:minmax(120px,200px) 1fr;gap:6px 14px;margin:0}
+dt{color:var(--mut)}dd{margin:0;overflow-wrap:anywhere}
+@media(max-width:560px){dl{grid-template-columns:1fr}dt{margin-top:6px}}
+.add{background:var(--add)}.del{background:var(--del)}
+.pager{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}
+textarea{width:100%;min-height:80px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.note{font-size:13px;color:var(--mut);margin-top:4px}
+</style></head><body>
+<header><b>tmreg</b>
+<label>System <select aria-label="System"><option>ordering-platform</option><option>(other systems)</option></select></label>
+<nav><a href="register.html" class="on">Register</a><a href="review-queue.html" class="">Review queue <span class="n">2</span></a><a href="#">History</a><a href="#">DFD approvals</a><a href="#">Reports</a></nav></header>
+<main>
+<h1>Register: ordering-platform</h1>
+<p class="mut">Mockup with sample rows from the reference catalog. The register is read-only here; edits go through the forms, and approval happens only in the review queue.</p>
+<div class="tabs"><a class="on" href="#">Approved <span class="n">5</span></a><a href="review-queue.html">Pending review <span class="n">2</span></a><a href="#">Rejected <span class="n">0</span></a><a href="#">Retired <span class="n">0</span></a></div>
+<form class="filters">
+<label>Status <select><option>any</option><option>open</option><option>planned</option><option>mitigated</option><option>accepted</option></select></label>
+<label>Element <select><option>any</option><option>P2</option><option>P3</option><option>D1</option></select></label>
+<label>Category <select><option>any</option><option>Spoofing</option><option>Tampering</option><option>Repudiation</option><option>Information disclosure</option></select></label>
+<label>Origin <select><option>any</option><option>threat-model</option><option>design-review</option><option>testing</option><option>incident</option></select></label>
+</form>
+<div class="bar"><a class="btn" href="#">Add risk</a><a class="btn sec" href="#">Report</a><span class="sp"></span><span class="mut">5 approved risks</span></div>
+<div class="scroll"><table>
+<thead><tr><th>ID</th><th>Title</th><th>Elements</th><th>Category</th><th>Status</th><th>Origin</th><th></th></tr></thead>
+<tbody>
+<tr><td><a href="risk-detail.html">T-01</a></td><td>Credential stuffing against customer login on F1</td><td>E1, F1</td><td>Spoofing</td><td><span class="tag">open</span></td><td>threat-model</td><td><a href="#">Edit</a> <a href="#">Retire</a></td></tr>
+<tr><td><a href="#">T-02</a></td><td>Forged or replayed payment-result body to P2 webhook</td><td>F10, P2</td><td>Tampering</td><td><span class="tag">planned</span></td><td>threat-model</td><td><a href="#">Edit</a> <a href="#">Retire</a></td></tr>
+<tr><td><a href="#">T-03</a></td><td>Admin refund later denied; F12 audit append fails open</td><td>P6, F12, D5</td><td>Repudiation</td><td><span class="tag">open</span></td><td>design-review</td><td><a href="#">Edit</a> <a href="#">Retire</a></td></tr>
+<tr><td><a href="#">T-04</a></td><td>Long-lived or predictable receipt signed URLs</td><td>D2, F11</td><td>Information disclosure</td><td><span class="tag">mitigated</span></td><td>testing</td><td><a href="#">Edit</a> <a href="#">Retire</a></td></tr>
+<tr><td><a href="#">T-05</a></td><td>Unauthenticated order flood exhausts P3 and D1 pools</td><td>P2, P3, D1</td><td>Denial of service</td><td><span class="tag">in-progress</span></td><td>threat-model</td><td><a href="#">Edit</a> <a href="#">Retire</a></td></tr>
+</tbody></table></div>
+<p class="note">There is no checkbox column and no bulk action. Pending rows are opened one at a time in the review queue.</p>
+</main></body></html>

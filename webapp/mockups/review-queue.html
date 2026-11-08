@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tmreg - Review queue</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2128;--mut:#5b6572;--line:#d8dde3;--acc:#1f5fbf;--accfg:#fff;--warn:#fff4d6;--warnl:#d9a400;--bad:#b3261e;--ok:#1d7a3a;--add:#e3f5e8;--del:#fde8e6;--tag:#eaeef3}
+@media (prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d2127;--fg:#e6e9ee;--mut:#9aa4b0;--line:#323943;--acc:#6ea4f2;--accfg:#0d1117;--warn:#3a3112;--warnl:#b38f00;--bad:#f2766e;--ok:#5cc47b;--add:#17321f;--del:#3b1b19;--tag:#2a3038}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+header b{font-size:16px}
+nav a{color:var(--mut);text-decoration:none;margin-right:12px}
+nav a.on{color:var(--fg);font-weight:600}
+select,input,textarea,button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px;max-width:100%}
+main{max-width:1000px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}h2{font-size:16px;margin:20px 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs a{padding:8px 12px;color:var(--mut);text-decoration:none;border-bottom:2px solid transparent}
+.tabs a.on{color:var(--fg);border-color:var(--acc);font-weight:600}
+.n{background:var(--tag);border-radius:10px;padding:0 7px;font-size:12px;margin-left:4px}
+.filters,.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.bar .sp{flex:1}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+tr:last-child td{border-bottom:0}
+.tag{display:inline-block;background:var(--tag);border-radius:4px;padding:0 6px;font-size:12px;white-space:nowrap}
+.btn{background:var(--acc);color:var(--accfg);border-color:var(--acc);cursor:pointer;text-decoration:none;display:inline-block}
+.btn.sec{background:var(--card);color:var(--fg);border-color:var(--line)}
+.btn.bad{background:var(--card);color:var(--bad);border-color:var(--bad)}
+button[disabled]{opacity:.45;cursor:not-allowed}
+.banner{background:var(--warn);border:1px solid var(--warnl);border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.ill{border:1px dashed var(--mut);color:var(--mut);border-radius:4px;padding:0 6px;font-size:12px}
+.mut{color:var(--mut)}
+dl{display:grid;grid-template-columns:minmax(120px,200px) 1fr;gap:6px 14px;margin:0}
+dt{color:var(--mut)}dd{margin:0;overflow-wrap:anywhere}
+@media(max-width:560px){dl{grid-template-columns:1fr}dt{margin-top:6px}}
+.add{background:var(--add)}.del{background:var(--del)}
+.pager{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}
+textarea{width:100%;min-height:80px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.note{font-size:13px;color:var(--mut);margin-top:4px}
+</style></head><body>
+<header><b>tmreg</b>
+<label>System <select aria-label="System"><option>ordering-platform</option><option>(other systems)</option></select></label>
+<nav><a href="register.html" class="">Register</a><a href="review-queue.html" class="on">Review queue <span class="n">2</span></a><a href="#">History</a><a href="#">DFD approvals</a><a href="#">Reports</a></nav></header>
+<main>
+<div class="banner" role="status"><b>DFD has moved on.</b> This draft was written against DFD-1, and <code>dfd.md</code> has changed since. Element IDs may be out of date. <a href="#">Review DFD approvals</a>. Review is not blocked.</div>
+<div class="pager"><a class="btn sec" href="#">&larr; Previous</a><span><b>1 of 2</b> pending</span><a class="btn sec" href="#">Next &rarr;</a></div>
+
+<div class="card">
+<h1 style="margin-top:0">T-34 &middot; Assistant issues refunds without the P6 approval step <span class="tag">re-review</span></h1>
+<p class="mut">Elements P7, F21, P6 &middot; Elevation of privilege &middot; origin threat-model &middot; edited after approval</p>
+<h2>Changes since last approved</h2>
+<div class="scroll"><table><thead><tr><th>Field</th><th>Last approved</th><th>Proposed</th></tr></thead><tbody>
+<tr><td>recommended_controls</td><td class="del">P7 submits refund drafts only; P6 issues the refund.</td><td class="add">P7 submits refund drafts only; P6 issues the refund after a named admin approves each one.</td></tr>
+<tr><td colspan="3" class="mut">All other fields unchanged (collapsed).</td></tr>
+</tbody></table></div>
+<p class="note">Reject restores the last approved version of this risk.</p>
+</div>
+
+<form class="card">
+<label for="note"><b>Review note</b> (required, 20 characters or more)</label>
+<textarea id="note" placeholder="Why you are approving or rejecting this version"></textarea>
+<input type="hidden" name="seen" value="(the record exactly as displayed above, passed back as seen=)">
+<div class="actions">
+<button class="btn" disabled>Approve</button>
+<button class="btn bad" disabled>Reject and restore last approved</button>
+</div>
+<p class="note">Both buttons stay disabled until the note has text. If the risk changes while you read, the server shows the new version and nothing is written until you decide again.</p>
+</form>
+
+<div class="card">
+<h2 style="margin-top:0">Next in queue (shown as it would appear)</h2>
+<h1 style="font-size:17px">T-37 &middot; Retrieval cache serves one customer's order summary to another <span class="ill">illustrative</span> <span class="tag">new draft</span></h1>
+<div class="banner" style="margin-top:8px"><b>Possible duplicate of T-33.</b> Same category, overlapping elements P7 and F19.</div>
+<div class="scroll"><table><thead><tr><th>Field</th><th>This draft</th><th>T-33 (approved)</th></tr></thead><tbody>
+<tr><td>Elements</td><td>P7, F19</td><td>P7, F19, F18</td></tr>
+<tr><td>Category</td><td>Information disclosure</td><td>Information disclosure</td></tr>
+<tr><td>Summary</td><td>A shared retrieval cache keyed by conversation returns another customer's summary.</td><td>Retrieval scoped by conversation, not by authenticated customer.</td></tr>
+</tbody></table></div>
+<div class="actions"><button class="btn sec" disabled>Merge into T-33</button><a class="btn sec" href="#">Keep separate</a><button class="btn" disabled>Approve</button><button class="btn bad" disabled>Reject</button></div>
+<p class="note">Same note field applies. Drafts by AI are marked, and nothing here is real data.</p>
+</div>
+</main></body></html>
