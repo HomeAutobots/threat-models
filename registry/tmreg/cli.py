@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -46,15 +47,24 @@ def confirm(expected: str, verb: str) -> None:
 
 # ---- formatting ---------------------------------------------------------------------------------
 
+def visible(text: str) -> str:
+    """Render non-printable characters as escapes (ESC as \\x1b), keeping newlines and tabs, so
+    stored text cannot move the cursor, hide itself, or rewrite what the reviewer sees."""
+    return "".join(c if c in "\n\t" or c.isprintable() else c.encode("unicode_escape").decode("ascii")
+                   for c in text)
+
+
 def _fmt(value) -> str:
     if value is None or value == "" or value == []:
         return EMPTY
     if isinstance(value, list):
-        return ", ".join(str(v) for v in value)
-    return str(value)
+        return visible(", ".join(str(v) for v in value))
+    return visible(str(value))
 
 
-def format_risk(reg: Registry, slug: str, risk: dict) -> str:
+def format_risk(reg: Registry, slug: str, risk: dict, editors=()) -> str:
+    """The record as the reviewer sees it. editors: who edited it since its last approval (the
+    caller reads them from the change log; see show_risk)."""
     lines = []
     for f in RISK_FIELDS:
         if f == "last_approved":
@@ -66,6 +76,8 @@ def format_risk(reg: Registry, slug: str, risk: dict) -> str:
             except RegistryError:
                 pass
         lines.append(f"{LABELS[f]}: {_fmt(value)}")
+        if f == "drafted_by" and editors:
+            lines.append(f"Edited by (since last approval): {_fmt(list(editors))}")
     snap = risk.get("last_approved")
     if snap:
         lines.append("")
@@ -77,8 +89,12 @@ def format_risk(reg: Registry, slug: str, risk: dict) -> str:
     drafted = risk.get("dfd_approval_id")
     if latest and drafted and drafted != latest["id"]:
         lines.append("")
-        lines.append(f"DFD has moved on: drafted against {drafted}, latest is {latest['id']}")
+        lines.append(f"DFD has moved on: drafted against {_fmt(drafted)}, latest is {latest['id']}")
     return "\n".join(lines)
+
+
+def show_risk(reg: Registry, slug: str, risk: dict) -> str:
+    return format_risk(reg, slug, risk, reg.editors(slug, risk["id"], since_last_approval=True))
 
 
 # ---- registry access ----------------------------------------------------------------------------
@@ -177,7 +193,7 @@ def _retire(reg, session, slug, seen, reason) -> None:
 def review_prompt(reg, session, slug, risk) -> str:
     """Show one pending risk and act on it. Returns reviewed, skipped, or quit."""
     rid = risk["id"]
-    print(format_risk(reg, slug, risk))
+    print(show_risk(reg, slug, risk))
     while True:
         choice = _ask("[a]pprove  [r]eject  [m]erge  [s]kip  [q]uit: ").lower()[:1]
         try:
@@ -207,7 +223,7 @@ def review_prompt(reg, session, slug, risk) -> str:
                 print(f"{rid} is no longer pending; skipped.")
                 return "gone"
             print(f"{rid} changed since it was shown; showing the current version.")
-            print(format_risk(reg, slug, risk))
+            print(show_risk(reg, slug, risk))
         except RegistryError as e:
             print(f"tmreg: {e}", file=sys.stderr)
 
@@ -253,13 +269,13 @@ def cmd_list(args, reg, root) -> int:
         print(json.dumps(risks, indent=2, default=str))
     else:
         for r in risks:
-            print(f"{r['id']}  {r['review_state']}  {r['status']}  {r['title']}")
+            print(visible(f"{r['id']}  {r['review_state']}  {r['status']}  {r['title']}"))
     return 0
 
 
 def cmd_show(args, reg, root) -> int:
     risk = reg.get_risk(args.slug, args.id)
-    print(json.dumps(risk, indent=2, default=str) if args.json else format_risk(reg, args.slug, risk))
+    print(json.dumps(risk, indent=2, default=str) if args.json else show_risk(reg, args.slug, risk))
     return 0
 
 
@@ -286,6 +302,8 @@ def cmd_run_start(args, reg, root) -> int:
     print(run["run_id"])
     print(f"methods: {run['methods']}")
     print(f"dfd: {dfd_line}")
+    if run["evaluation"]:
+        print("note: trial register is empty; the catalog is withheld (evaluation mode)")
     return 0
 
 
@@ -320,8 +338,13 @@ def cmd_dfd_approve(args, reg, root) -> int:
     slug = args.slug
     preview = reg.dfd_preview(slug)
     parsed = preview["dfd"]
+    latest = reg.dfd_status(slug).latest
+    if latest is not None and latest["sha256"] == parsed.sha256:  # before any prompt
+        raise RegistryError(f"already approved as {latest['id']}")
     print(f"version: {parsed.version}")
     print(f"sha256: {parsed.sha256}")
+    print(f"If an AI run drafted this DFD, check that this sha256 matches the one quoted in "
+          f"systems/{slug}/runs/<run-id>/dfd-check.md.")
     print("counts: " + ", ".join(f"{k} {len(v)}" for k, v in parsed.ids.items()))
     print(f"added: {', '.join(preview['added']) or EMPTY}")
     print(f"removed: {', '.join(preview['removed']) or EMPTY}")
@@ -329,7 +352,8 @@ def cmd_dfd_approve(args, reg, root) -> int:
         print(f"warning: {w}")
     note = ask_note("Approval note: ")
     confirm(slug, "approve")
-    approval = reg.dfd_approve(session, slug, note)
+    # The approval records only the file previewed above; a file changed since is refused.
+    approval = reg.dfd_approve(session, slug, note, expected_sha256=parsed.sha256)
     print(f"{approval['id']} approved")
     return 0
 
@@ -340,11 +364,11 @@ def cmd_add(args, reg, root) -> int:
     print(f"{risk['id']} pending")
     if risk.get("possible_duplicate_of"):
         dup = risk["possible_duplicate_of"]
-        print(f"possible duplicate of {dup}: {reg.get_risk(args.slug, dup)['title']}")
+        print(visible(f"possible duplicate of {dup}: {reg.get_risk(args.slug, dup)['title']}"))
     if args.run is None and core._has_tty():
         session = human_session(reg, "add")
         print()
-        print(format_risk(reg, args.slug, risk))
+        print(show_risk(reg, args.slug, risk))
         if _ask("[a]pprove  [s]kip (stays pending): ").lower()[:1] == "a":
             try:
                 _approve(reg, session, args.slug, risk)
@@ -363,7 +387,7 @@ def cmd_edit(args, reg, root) -> int:
 def cmd_approve(args, reg, root) -> int:
     session = human_session(reg, "approve")
     seen = reg.get_risk(args.slug, args.id)
-    print(format_risk(reg, args.slug, seen))
+    print(show_risk(reg, args.slug, seen))
     _approve(reg, session, args.slug, seen)
     return 0
 
@@ -371,7 +395,7 @@ def cmd_approve(args, reg, root) -> int:
 def cmd_reject(args, reg, root) -> int:
     session = human_session(reg, "reject")
     seen = reg.get_risk(args.slug, args.id)
-    print(format_risk(reg, args.slug, seen))
+    print(show_risk(reg, args.slug, seen))
     _reject(reg, session, args.slug, seen)
     return 0
 
@@ -379,7 +403,7 @@ def cmd_reject(args, reg, root) -> int:
 def cmd_merge(args, reg, root) -> int:
     session = human_session(reg, "merge")
     seen = reg.get_risk(args.slug, args.id)
-    print(format_risk(reg, args.slug, seen))
+    print(show_risk(reg, args.slug, seen))
     _merge(reg, session, args.slug, seen, args.into)
     return 0
 
@@ -387,7 +411,7 @@ def cmd_merge(args, reg, root) -> int:
 def cmd_retire(args, reg, root) -> int:
     session = human_session(reg, "retire")
     seen = reg.get_risk(args.slug, args.id)
-    print(format_risk(reg, args.slug, seen))
+    print(show_risk(reg, args.slug, seen))
     _retire(reg, session, args.slug, seen, args.reason)
     return 0
 
@@ -556,6 +580,9 @@ def main(argv: list[str] | None = None, *, project_root: Path | None = None) -> 
         return 1
     except (RegistryError, config.ConfigError) as e:
         print(f"tmreg: {e}", file=sys.stderr)
+        return 1
+    except sqlite3.OperationalError as e:  # locked by another tmreg, or the file cannot be opened
+        print(f"tmreg: database is busy or unavailable: {e}", file=sys.stderr)
         return 1
     finally:
         if reg is not None:

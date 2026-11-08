@@ -63,9 +63,21 @@ def _has_tty() -> bool:
         return False
 
 
+CLAUDE_SHELL_NOTE = " (this shell was started by Claude Code)"
+
+
+def _claude_shell() -> bool:
+    """Claude Code exports CLAUDECODE to every Bash child, and the variable survives pty wrappers."""
+    return bool(os.environ.get("CLAUDECODE"))
+
+
 def require_interactive(command: str) -> None:
+    """Refuse without a terminal, and refuse a shell Claude Code started even when it has one.
+    The second check is one more refusal, never a bypass: an unset CLAUDECODE still needs a terminal."""
     if not _has_tty():
         raise RegistryError(HUMAN_ONLY_MSG.format(command=command))
+    if _claude_shell():
+        raise RegistryError(HUMAN_ONLY_MSG.format(command=command) + CLAUDE_SHELL_NOTE)
 
 
 @dataclass(frozen=True)
@@ -130,12 +142,23 @@ def _slug(slug) -> str:
         raise RegistryError(str(e)) from None
 
 
+# C0 and C1 control characters, except tab and newline. CRLF is normalized to LF first.
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _no_controls(field: str, text: str) -> str:
+    text = text.replace("\r\n", "\n")
+    if _CONTROL_RE.search(text):
+        raise RegistryError(f"{field} contains control characters")
+    return text
+
+
 def _text(field: str, value) -> str | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         raise RegistryError(f"{field} must be text, not {type(value).__name__}")
-    return str(value).strip() or None
+    return _no_controls(field, str(value)).strip() or None
 
 
 def _str_list(field: str, value) -> list[str] | None:
@@ -147,7 +170,7 @@ def _str_list(field: str, value) -> list[str] | None:
         items = value
     else:
         raise RegistryError(f"{field} must be a list of strings or a ';'-separated string")
-    out = list(dict.fromkeys(v.strip() for v in items if v.strip()))
+    out = list(dict.fromkeys(_no_controls(field, v).strip() for v in items if v.strip()))
     return out or None
 
 
@@ -244,6 +267,17 @@ def _possible_duplicate(risks, category: str, elements: list[str]) -> str | None
             if best is None or key < best[0]:
                 best = (key, r["id"])
     return best[1] if best else None
+
+
+_APPROVAL_OPS = ("approve", "revert", "import")
+
+
+def _editors(changes: list[dict], since_last_approval: bool) -> list[str]:
+    """Distinct actors of the edit ops in one risk's changes, in order of first edit."""
+    if since_last_approval:
+        last = max((i for i, c in enumerate(changes) if c["op"] in _APPROVAL_OPS), default=-1)
+        changes = changes[last + 1:]
+    return list(dict.fromkeys(c["actor"] for c in changes if c["op"] == "edit"))
 
 
 def _is_stride_id(risk_id: str) -> bool:
@@ -368,9 +402,21 @@ class Registry:
         return body.rstrip("\n") + "\n"
 
     def start_run(self, slug) -> dict:
-        methods = ",".join(self.system(slug).effective_methods)
+        """Record a run. The result is the run row plus `evaluation`: true for a trial run on an
+        empty trial register of a catalog mirror, where every catalog threat is withheld.
+
+        A system with legacy_catalog mirrors the guide's catalog (spec 5.3), so AI runs on it use
+        a trial database: an AI write in the real register would take catalog IDs and block the
+        import, which runs only into an empty register."""
+        system = self.system(slug)
+        if system.legacy_catalog and not self.is_trial:
+            raise RegistryError(f"{slug} mirrors the guide's catalog (legacy_catalog in system.toml); "
+                                "AI runs on it use --trial. Add new catalog threats to the guide "
+                                "first, then to the registry yourself.")
+        methods = ",".join(system.effective_methods)
         commit = framework_commit(self.config.framework_path)  # before taking the write lock
         with self._write():
+            evaluation = bool(system.legacy_catalog) and not ledger.read_rows(self.conn, slug, "risks")
             at = db.now()
             prefix = ("trial-" if self.is_trial else "") + at[:10].replace("-", "") + "-"
             used = [int(k[len(prefix):]) for k in ledger.read_rows(self.conn, slug, "runs")
@@ -382,7 +428,7 @@ class Registry:
                 "dfd_approval_id": latest["id"] if latest else None,
                 "methods": methods, "actor": f"ai:{run_id}",
             }, op="run-start", actor="tmreg")
-        return ledger.read_rows(self.conn, slug, "runs")[run_id]
+        return {**ledger.read_rows(self.conn, slug, "runs")[run_id], "evaluation": evaluation}
 
     def runs(self, slug) -> list[dict]:
         self._require(slug)
@@ -447,12 +493,16 @@ class Registry:
         return {"dfd": parsed, "added": sorted(new - old, key=_dfd_id_key), "removed": removed,
                 "warnings": warnings}
 
-    def dfd_approve(self, session, slug, note) -> dict:
+    def dfd_approve(self, session, slug, note, *, expected_sha256: str | None = None) -> dict:
+        """Record an approval of dfd.md. With expected_sha256 (the hash the reviewer was shown),
+        refuse when the file under the write lock is not that file."""
         _require_session(session)
         note = _require_note(note)
         self._require(slug)
-        parsed = self._parse_dfd(slug)
         with self._write():
+            parsed = self._parse_dfd(slug)  # under the write lock: this is the file recorded
+            if expected_sha256 is not None and parsed.sha256 != expected_sha256:
+                raise StaleRecord("dfd.md changed since it was shown; review it again")
             latest = self._latest_dfd(slug)
             if latest is not None and latest["sha256"] == parsed.sha256:
                 raise RegistryError(f"already approved as {latest['id']}")
@@ -483,9 +533,11 @@ class Registry:
         return new_id
 
     def _actor(self, slug: str, run_id) -> str:
-        if run_id is None:
+        if run_id is None:  # attributed to the reviewer, so only from the reviewer's own terminal
             if not _has_tty():
                 raise RegistryError(NO_RUN_MSG)
+            if _claude_shell():
+                raise RegistryError(NO_RUN_MSG + CLAUDE_SHELL_NOTE)
             return f"human:{self.config.reviewer_name}"
         t = db.table(slug, "runs")
         if not isinstance(run_id, str) or self.conn.execute(
@@ -589,11 +641,14 @@ class Registry:
         self._require(slug)
         with self._write():
             self._check_seen(seen, self._risk(slug, risk_id))
-            self._require_pending(slug, risk_id, "approved")
-            ledger.write_row(self.conn, slug, "risks", risk_id, {
-                "review_state": "approved", **self._review_fields(session, note),
-                "last_approved": None,
-            }, op="approve", actor=f"human:{session.name}")
+            cur = self._require_pending(slug, risk_id, "approved")
+            update = {"review_state": "approved", **self._review_fields(session, note),
+                      "last_approved": None}
+            if cur["detail_complete"] == 0 and all(cur.get(f) not in (None, "", [])
+                                                   for f in AI_REQUIRED):
+                update["detail_complete"] = 1  # an imported one-liner whose detail is now filled
+            ledger.write_row(self.conn, slug, "risks", risk_id, update, op="approve",
+                             actor=f"human:{session.name}")
         self._write_register(slug, risk_id)
         return self._risk(slug, risk_id)
 
@@ -730,7 +785,7 @@ class Registry:
                 ledger.write_row(self.conn, slug, "risks", r.id, {
                     "title": catalog.title_for(r.text), "description": r.text,
                     "elements": r.elements or None, "category": category,
-                    "method": "STRIDE" if r.id.startswith("T-") else "LINDDUN",
+                    "method": "stride-per-element" if r.id.startswith("T-") else "linddun",
                     "origin": "threat-model", "origin_ref": "reference catalog",
                     "status": "open", "review_state": "approved",
                     "drafted_by": "human:catalog-import", "detail_complete": 0,
@@ -846,6 +901,13 @@ class Registry:
         self._risk(slug, risk_id)
         return [c for c in ledger.changes(self.conn, slug, risk_id) if c["tbl"] == "risks"]
 
+    def editors(self, slug, risk_id, *, since_last_approval: bool) -> list[str]:
+        """Who edited a risk, from the change log: distinct actors of its edit ops, in order.
+
+        With since_last_approval, only the edits after its latest approve, revert, or import, or
+        every edit if it was never approved. Without it, every edit since creation."""
+        return _editors(self.history(slug, risk_id), since_last_approval)
+
     # ---- reports ----------------------------------------------------------------------------
 
     def report(self, slug, fmt: str = "md", *, include_pending=False, include_retired=False,
@@ -853,8 +915,16 @@ class Registry:
         if fmt not in ("md", "csv", "html"):
             raise RegistryError(f"format must be md, csv, or html; got {fmt!r}")
         self._require(slug)
+        changes: dict[str, list[dict]] = {}
+        for c in ledger.changes(self.conn, slug):
+            if c["tbl"] == "risks":
+                changes.setdefault(c["row_key"], []).append(c)
+        # Every editor since creation, also on a re-review row's last-approved version: a small
+        # overstatement there, kept for simplicity.
+        edited_by = {rid: _editors(chs, False) for rid, chs in changes.items()}
         rows = report_mod.select(self.list_risks(slug), include_pending=include_pending,
-                                 include_retired=include_retired, include_rejected=include_rejected)
+                                 include_retired=include_retired, include_rejected=include_rejected,
+                                 edited_by=edited_by)
         if fmt == "csv":
             return report_mod.render_csv(rows)
         last = self.conn.execute(

@@ -55,6 +55,11 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(config.ConfigError, "pasta"):
             config.load_system(self.root, "demo")
 
+    def test_empty_methods_rejected(self):  # M5
+        self.system('name = "Demo"\nmethods = []\n')
+        with self.assertRaisesRegex(config.ConfigError, "methods"):
+            config.load_system(self.root, "demo")
+
     def test_system_name_required(self):
         self.system('owner = "x"\n')
         with self.assertRaisesRegex(config.ConfigError, "name"):

@@ -1,10 +1,12 @@
+import os
 import tomllib
 import unittest
 from unittest import mock
 
-from helpers import SAMPLE_DFD, TmpTestCase, ai_fields, make_registry, session, start
+from helpers import SAMPLE_DFD, TmpTestCase, ai_fields, human_terminal, make_registry, session, start
 from tmreg import db, ledger, model
-from tmreg.core import RegistryError, ReviewerSession, id_sort_key, require_interactive
+from tmreg.core import (HUMAN_ONLY_MSG, RegistryError, ReviewerSession, StaleRecord, id_sort_key,
+                        require_interactive)
 
 NOTE = "Checked against the DFD checklist."
 
@@ -14,7 +16,7 @@ def no_tty():
 
 
 def tty():
-    return mock.patch("tmreg.core._has_tty", return_value=True)
+    return human_terminal()
 
 
 class InitAndRunsTest(TmpTestCase):
@@ -78,6 +80,30 @@ class InitAndRunsTest(TmpTestCase):
         with mock.patch("tmreg.db.now", return_value="2026-11-08T09:00:00Z"):
             self.assertEqual(reg.start_run("demo")["run_id"], "20261108-01")
 
+    def test_runs_on_a_catalog_mirror_need_trial(self):  # I4
+        reg = make_registry(self.tmp, legacy=True)
+        before = len(reg.history("demo"))
+        with self.assertRaises(RegistryError) as cm:
+            reg.start_run("demo")
+        self.assertEqual(str(cm.exception),
+                         "demo mirrors the guide's catalog (legacy_catalog in system.toml); AI runs on "
+                         "it use --trial. Add new catalog threats to the guide first, then to the "
+                         "registry yourself.")
+        self.assertEqual((reg.runs("demo"), len(reg.history("demo"))), ([], before))
+        with self.assertRaisesRegex(RegistryError, "no run"):  # so no AI add or edit either
+            reg.add_risk("demo", ai_fields(), run_id="20261107-01")
+
+    def test_trial_run_on_an_empty_catalog_mirror_is_evaluation_mode(self):  # I4
+        reg = make_registry(self.tmp, legacy=True)
+        trial = make_registry(self.tmp, root=reg.root, trial=True)
+        run = trial.start_run("demo")
+        self.assertTrue(run["run_id"].startswith("trial-"))
+        self.assertIs(run["evaluation"], True)
+        trial.import_legacy(session(), "demo")
+        self.assertIs(trial.start_run("demo")["evaluation"], False)
+        self.assertIs(make_registry(self.tmp / "plain", trial=True).start_run("demo")["evaluation"], False)
+        self.assertIs(make_registry(self.tmp / "real").start_run("demo")["evaluation"], False)
+
     def test_start_run_without_dfd_and_unknown_system(self):
         reg = make_registry(self.tmp, approve=False)
         self.assertIsNone(reg.start_run("demo")["dfd_approval_id"])
@@ -106,6 +132,19 @@ class DfdTest(TmpTestCase):
         self.assertEqual(reg.dfd_approve(session(), "demo", NOTE)["id"], "DFD-2")
         last = reg.history("demo")[-1]
         self.assertEqual((last["op"], last["actor"]), ("dfd-approve", "human:Test Reviewer"))
+
+    def test_dfd_approve_refuses_a_stale_expected_sha(self):  # I1
+        reg = make_registry(self.tmp, approve=False)
+        shown = reg.dfd_preview("demo")["dfd"].sha256
+        (reg.root / "systems/demo/dfd.md").write_bytes(SAMPLE_DFD + b"\nChanged after display.\n")
+        with self.assertRaises(StaleRecord) as cm:
+            reg.dfd_approve(session(), "demo", NOTE, expected_sha256=shown)
+        self.assertEqual(str(cm.exception), "dfd.md changed since it was shown; review it again")
+        self.assertEqual(reg.history("demo"), [])
+        self.assertEqual(reg.dfd_status("demo").state, "none")
+        current = reg.dfd_preview("demo")["dfd"].sha256
+        appr = reg.dfd_approve(session(), "demo", NOTE, expected_sha256=current)
+        self.assertEqual((appr["id"], appr["sha256"]), ("DFD-1", current))
 
     def test_dfd_approve_note_minimum(self):
         reg = make_registry(self.tmp, approve=False)
@@ -160,6 +199,18 @@ class SessionTest(unittest.TestCase):
                          "in a terminal window, not through Claude Code or its ! prefix.")
         with tty():
             self.assertEqual(ReviewerSession("R", "r@example.com").command, "this command")
+
+    def test_claude_code_shell_is_refused_even_with_a_terminal(self):  # I6
+        with tty(), mock.patch.dict(os.environ, {"CLAUDECODE": "1"}):
+            with self.assertRaises(RegistryError) as cm:
+                require_interactive("approve")
+            with self.assertRaisesRegex(RegistryError, "started by Claude Code"):
+                ReviewerSession("R", "r@example.com")
+        self.assertEqual(str(cm.exception), HUMAN_ONLY_MSG.format(command="approve")
+                         + " (this shell was started by Claude Code)")
+        with tty(), mock.patch.dict(os.environ, {"CLAUDECODE": ""}):
+            require_interactive("approve")  # set but empty does not count
+            ReviewerSession("R", "r@example.com")
 
     def test_id_sort_key(self):
         ids = ["PT-02", "T-100", "PT-01", "T-02", "T-99"]
@@ -224,6 +275,17 @@ class AddTest(TmpTestCase):
                 reg.edit_risk("demo", "T-01", {"owner": "x"}, run_id=None)
         self.assertIsNone(reg.get_risk("demo", "T-01")["owner"])
 
+    def test_run_less_write_in_a_claude_code_shell_is_refused(self):  # I6: no human: attribution
+        reg = self.reg
+        with tty(), mock.patch.dict(os.environ, {"CLAUDECODE": "1"}):
+            with self.assertRaisesRegex(RegistryError, "--run.*started by Claude Code"):
+                reg.add_risk("demo", ai_fields(), run_id=None)
+            reg.add_risk("demo", ai_fields(), run_id=self.run)
+            with self.assertRaisesRegex(RegistryError, "--run.*started by Claude Code"):
+                reg.edit_risk("demo", "T-01", {"owner": "x"}, run_id=None)
+        self.assertEqual([r["drafted_by"] for r in reg.list_risks("demo")], [f"ai:{self.run}"])
+        self.assertIsNone(reg.get_risk("demo", "T-01")["owner"])
+
     def test_interactive_human_add_needs_only_human_fields(self):
         with tty():
             r = self.reg.add_risk("demo", {"title": "t", "elements": "P2; F2", "category": "S",
@@ -233,6 +295,26 @@ class AddTest(TmpTestCase):
         with tty(), self.assertRaisesRegex(RegistryError, "missing required field\\(s\\): description"):
             self.reg.add_risk("demo", {"title": "t", "elements": "P2", "category": "S",
                                        "origin": "ad-hoc"}, run_id=None)
+
+    def test_control_characters_are_refused(self):  # I3
+        reg, run = self.reg, self.run
+        desc = ai_fields()["description"]
+        cases = [("description", desc + "\u001b[8m hidden from the reviewer"),
+                 ("title", "Looks harmless\u001b[1A\u001b[2K\r"),
+                 ("notes", "a\u0000b"), ("notes", "a\u007fb"), ("notes", "a\u0085b"),
+                 ("notes", "a\u009bb"), ("notes", "carriage\rreturn")]
+        before = len(reg.history("demo"))
+        for field, bad in cases:
+            with self.subTest(field=field, bad=bad), \
+                    self.assertRaisesRegex(RegistryError, f"^{field} contains control characters$"):
+                reg.add_risk("demo", ai_fields(**{field: bad}), run_id=run)
+        with self.assertRaisesRegex(RegistryError, "^control_refs contains control characters$"):
+            reg.add_risk("demo", ai_fields(control_refs=["ADR-07\u001b[8m"]), run_id=run)
+        self.assertEqual(len(reg.history("demo")), before)
+        r = reg.add_risk("demo", ai_fields(recommended_controls="1. a\r\n2.\tb"), run_id=run)
+        self.assertEqual(r["recommended_controls"], "1. a\n2.\tb")  # CRLF normalized; tab kept
+        with self.assertRaisesRegex(RegistryError, "^notes contains control characters$"):
+            reg.edit_risk("demo", r["id"], {"notes": "\u001b[8m"}, run_id=run)
 
     def test_values_are_normalized_and_types_checked(self):
         reg, run = self.reg, self.run

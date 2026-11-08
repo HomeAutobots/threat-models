@@ -14,8 +14,31 @@ make test                  # run the unit tests
 ./tmreg verify ordering-platform
 ```
 
-Edit `project.toml` first: set `reviewer_name` and `reviewer_email` to your own. Every review is
-recorded under that identity.
+## First run
+
+`ordering-platform` is the guide's reference system. Its real register mirrors the guide's
+threat catalog (`legacy_catalog` in its `system.toml`), so `/tm-model` runs on it use `--trial`;
+tmreg refuses them otherwise. Do these steps in this order, in your own terminal unless a step
+says otherwise.
+
+1. Set `reviewer_name` and `reviewer_email` in `project.toml` to your own. Every review is
+   recorded under that identity.
+2. Read `systems/ordering-platform/dfd.md`, then run `./tmreg dfd approve ordering-platform`.
+3. Run `./tmreg import-legacy ordering-platform`. Do this only after the guide's branch is merged
+   to `main` with a merge commit, so the guide commit cited in the import note stays reachable.
+4. Run `./tmreg verify ordering-platform`.
+5. Set up the trial register (`registry/trial.db`, git-ignored):
+
+   ```bash
+   ./tmreg init-system ordering-platform --name "Ordering platform" --trial
+   ./tmreg dfd approve ordering-platform --trial
+   ./tmreg import-legacy ordering-platform --trial   # skip this step for an evaluation run
+   ```
+
+   Without the trial import, the trial register is empty and the catalog is withheld, so the run
+   shows what the model re-derives on its own. `run start` prints a note saying so.
+6. In Claude Code, started in this folder: `/tm-model ordering-platform --trial <element IDs>`.
+7. In your own terminal: `./tmreg review ordering-platform --trial`.
 
 ## Commands
 
@@ -51,8 +74,11 @@ Human-only commands need an interactive terminal and refuse to run anywhere else
 Run these in your own terminal.
 
 1. Review `systems/<slug>/dfd.md`, then `./tmreg dfd approve <slug>`. Risks cite elements from the approved DFD.
-2. Add risks yourself (`./tmreg add <slug> --template`) or let a modeling run draft them. Every new risk is `pending`.
-3. `./tmreg review <slug>` walks the pending risks one at a time; approve, reject, or edit each.
+2. Add risks yourself or let a modeling run draft them. Every new risk is `pending`. To add one
+   yourself, run `./tmreg add <slug> --template > c.json`, edit the file, then run
+   `./tmreg add <slug> --json c.json`.
+3. `./tmreg review <slug>` walks the pending risks one at a time. For each one, you approve,
+   reject, merge, skip, or quit. To change a risk, use `./tmreg edit`, which is a separate command.
 4. `register.md` is regenerated after every write. Never hand-edit it; commit it with the database.
 5. Existing risks change through `edit` (which sends an approved risk back to review), `merge`, or `retire`.
 
@@ -62,9 +88,9 @@ Run these in your own terminal.
   `--include-pending`, `--include-rejected`, or `--include-retired` to widen it; `--out PATH` writes a file.
 - `./tmreg verify <slug>` replays the change log and checks its hash chain and the stored rows.
   Run it after any import and before relying on a report.
-- Trial runs: add `--trial` to try the workflow without touching the real register.
-  `./tmreg init-system trial-sys --name "Trial" --trial` creates a system in `registry/trial.db`
-  (git-ignored). Trial runs write `register.trial.md` and run IDs starting `trial-`.
+- Trial runs: add `--trial` to try the workflow without touching the real register. It uses
+  `registry/trial.db` (git-ignored); step 5 of [First run](#first-run) sets up
+  `ordering-platform` there. Trial runs write `register.trial.md` and run IDs starting `trial-`.
 
 ## What the guard blocks
 
@@ -72,9 +98,18 @@ Claude Code may draft risks and DFD changes in this project, but it may not appr
 change the registry. Four layers enforce this. The first three block, and the fourth detects what
 gets past them.
 
+The hook and the permission rules load only when Claude Code starts in this folder
+(`~/Developer/threat-models`). A Claude session started anywhere else, such as the sibling guide
+repo, is not guarded by them, even when it works on files here.
+
 1. **Human-only commands need a terminal.** `review`, `approve`, `reject`, `merge`, `retire`,
    `import-legacy`, and `dfd approve` refuse to run without an interactive terminal. Claude Code's
-   shell has none, and no flag or environment variable bypasses the check.
+   shell has none, and no flag or environment variable bypasses the check. They also refuse when
+   `CLAUDECODE` is set and non-empty, even with a terminal. Claude Code exports that variable to
+   every shell it starts, so a terminal wrapper run from a Claude session is refused too, in any
+   folder. `add` and `edit` without `--run`, which record the write under your name, refuse there
+   the same way. This check only adds a refusal. `env -u CLAUDECODE` evades it, which falls under
+   the "actively looking for a new way around" limit below, and the terminal check still applies.
 2. **The hook** (`.claude/hooks/guard.py`, a `PreToolUse` hook) is an allow-list. It runs before
    every Bash, Monitor, Edit, Write, MultiEdit, and NotebookEdit call, and it blocks everything it
    does not name.
@@ -115,8 +150,11 @@ gets past them.
    tmreg shows up. `/tm-model` runs it first and stops on a failure.
 
 **Limits.**
-- These controls stop Claude, and anything else run non-interactively, from approving through any
-  path known when they were built. They also make out-of-band edits detectable.
+- In a session started in this project, these controls stop Claude, and anything else run
+  non-interactively, from approving through any path known when they were built. They also make
+  out-of-band edits detectable.
+- A Claude session started outside this folder loads neither the hook nor the permission rules.
+  Only tmreg's own terminal and `CLAUDECODE` checks, and `verify`, still apply to it.
 - They are not proof against a model actively looking for a new way around them, for example after
   a prompt injection in `inputs/`.
 - They are not a defense against a malicious local user.

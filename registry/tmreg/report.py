@@ -23,31 +23,34 @@ def _sort_key(risk_id) -> tuple[int, int]:
 class ReportRow:
     risk: dict
     marker: str
+    editors: tuple[str, ...] = ()  # actors of the risk's edits, from the change log
 
 
 def select(risks, *, include_pending=False, include_retired=False,
-           include_rejected=False) -> list[ReportRow]:
+           include_rejected=False, edited_by: dict | None = None) -> list[ReportRow]:
+    """edited_by maps a risk ID to the actors who edited it; the caller reads the change log."""
     out: list[tuple[tuple, ReportRow]] = []
     for r in risks:
         key = _sort_key(r["id"])
         state = r["review_state"]
+        eds = tuple((edited_by or {}).get(r["id"], ()))
         if state == "rejected":
             if include_rejected:
-                out.append(((key, 0), ReportRow(r, "REJECTED")))
+                out.append(((key, 0), ReportRow(r, "REJECTED", eds)))
         elif state == "pending":
             snap = r.get("last_approved")
             if snap is not None:
                 shown = {**r, **{f: snap[f] for f in SNAPSHOT_FIELDS}}
-                out.append(((key, 0), ReportRow(shown, "re-review pending")))
+                out.append(((key, 0), ReportRow(shown, "re-review pending", eds)))
                 if include_pending:
-                    out.append(((key, 1), ReportRow(r, "PENDING")))
+                    out.append(((key, 1), ReportRow(r, "PENDING", eds)))
             elif include_pending:
-                out.append(((key, 1), ReportRow(r, "PENDING")))
+                out.append(((key, 1), ReportRow(r, "PENDING", eds)))
         elif r.get("status") == "retired":
             if include_retired:
-                out.append(((key, 0), ReportRow(r, "RETIRED")))
+                out.append(((key, 0), ReportRow(r, "RETIRED", eds)))
         else:
-            out.append(((key, 0), ReportRow(r, "")))
+            out.append(((key, 0), ReportRow(r, "", eds)))
     return [row for _, row in sorted(out, key=lambda t: t[0])]
 
 
@@ -59,8 +62,13 @@ def _join(value, sep: str) -> str:
     return str(value)
 
 
+def _md_text(text: str) -> str:
+    """Keep stored text from adding HTML to the Markdown: escape < and > (before any <br>)."""
+    return text.replace("<", "&lt;").replace(">", "&gt;")
+
+
 def cell(value) -> str:
-    return (_join(value, "; ").replace("|", "\\|").replace("\r\n", "<br>")
+    return (_md_text(_join(value, "; ")).replace("|", "\\|").replace("\r\n", "<br>")
             .replace("\r", "<br>").replace("\n", "<br>"))
 
 
@@ -81,6 +89,13 @@ def _date(r) -> str:
     return (r.get("updated_at") or "")[:10]
 
 
+def _drafted_by(row: ReportRow) -> str:
+    """Who wrote the row, then `; edited by <actors>` for any later editor who is someone else."""
+    drafted = row.risk.get("drafted_by") or ""
+    others = [a for a in row.editors if a != drafted]
+    return f"{drafted}; edited by {', '.join(others)}" if others else drafted
+
+
 # (label, key); keys not in a risk row are computed in _register_cells.
 REGISTER_COLUMNS = [
     ("ID", "id"), ("Element(s)", "elements"), ("Category", "category"), ("Threat", "title"),
@@ -96,8 +111,9 @@ REGISTER_COLUMNS = [
 
 def _register_cells(row: ReportRow) -> list[str]:
     r = row.risk
-    special = {"score": _score(r), "status": _status(row), "origin": _origin(r),
-               "updated_at": _date(r)}
+    title = (r.get("title") or "") + (" (detail incomplete)" if _incomplete(row) else "")
+    special = {"title": title, "score": _score(r), "status": _status(row), "origin": _origin(r),
+               "drafted_by": _drafted_by(row), "updated_at": _date(r)}
     return [special[k] if k in special else _join(r.get(k), "; ") for _, k in REGISTER_COLUMNS]
 
 
@@ -119,8 +135,16 @@ def _csv_cells(row: ReportRow) -> list[str]:
     for col in CSV_HEADER:
         v = r.get(_CSV_SOURCE.get(col, col))
         out.append(_date(r) if col == "date" else _status(row) if col == "status"
-                   else _join(v, ";"))
+                   else _drafted_by(row) if col == "drafted_by" else _join(v, ";"))
     return out
+
+
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: str) -> str:
+    """A spreadsheet runs a cell that starts like a formula; a leading ' keeps it text."""
+    return "'" + value if value.startswith(_FORMULA_START) else value
 
 
 def render_csv(rows) -> str:
@@ -128,7 +152,7 @@ def render_csv(rows) -> str:
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(CSV_HEADER)
     for row in rows:
-        w.writerow(_csv_cells(row))
+        w.writerow([_csv_safe(c) for c in _csv_cells(row)])
     return buf.getvalue()
 
 
@@ -138,7 +162,9 @@ _DETAIL_FIELDS = [f for f in RISK_FIELDS if f not in ("id", "title", "last_appro
 def _detail(row: ReportRow) -> list[tuple[str, str]]:
     out = []
     for f in _DETAIL_FIELDS:
-        v = row.risk.get(f)
+        v = _drafted_by(row) if f == "drafted_by" else row.risk.get(f)
+        if f == "detail_complete" and v in (0, 1):
+            v = "yes" if v else "no"
         s = _join(v, "; ")
         out.append((LABELS[f], s if s != "" else "—"))
     return out
@@ -172,7 +198,7 @@ def render_md(rows, *, title, stamp, scope_note) -> str:
 
 def _md_heading(row: ReportRow) -> str:
     # headings are one line; keep values from adding structure
-    return _heading(row).replace("\r", " ").replace("\n", " ")
+    return _md_text(_heading(row)).replace("\r", " ").replace("\n", " ")
 
 
 _CSS = """body{font:14px/1.45 system-ui,sans-serif;margin:1.5rem;color:#1a1a1a;background:#fff}

@@ -161,9 +161,66 @@ class ReportTest(TmpTestCase):
         md = reg.report("demo", include_pending=True)
         self.assertIn("> Detail incomplete: imported from the reference catalog as a one-liner.", md)
 
+    def test_summary_marks_incomplete_rows_and_detail_says_yes_or_no(self):  # M2
+        self.approved()
+        md = self.reg.report("demo")
+        cells = re.split(r"(?<!\\)\|", next(l for l in md.splitlines() if l.startswith("| T-01 |")))
+        self.assertEqual(cells[4].strip(), "P2 trusts client-supplied forwarded headers")
+        self.assertIn("| Detail complete | yes |", md)
+        (self.tmp / "legacy").mkdir()
+        reg = make_registry(self.tmp / "legacy", legacy=True)
+        reg.import_legacy(session(), "demo")
+        md = reg.report("demo")
+        cells = re.split(r"(?<!\\)\|", next(l for l in md.splitlines() if l.startswith("| T-01 |")))
+        self.assertTrue(cells[4].strip().endswith(" (detail incomplete)"), cells[4])
+        self.assertIn("| Detail complete | no |", md)
+        self.assertNotIn("| Detail complete | 0 |", md)
+        self.assertIn(" (detail incomplete)</td>", reg.report("demo", "html"))
+
+    def test_drafted_by_names_later_editors(self):  # I2
+        (self.tmp / "legacy").mkdir()
+        reg = make_registry(self.tmp / "legacy", legacy=True, trial=True)
+        reg.import_legacy(session(), "demo")
+        run = start(reg)
+        reg.edit_risk("demo", "T-01", {"notes": "Detail added by the model."}, run_id=run)
+        reg.approve(session(), "demo", "T-01", NOTE)
+        want = f"human:catalog-import; edited by ai:{run}"
+        md = reg.report("demo")
+        self.assertIn(f"| {want} |", next(l for l in md.splitlines() if l.startswith("| T-01 |")))
+        self.assertIn("| human:catalog-import |", next(l for l in md.splitlines() if l.startswith("| T-02 |")))
+        self.assertIn(f"| Drafted by | {want} |", md.split("### T-01")[1])
+        rows = list(csv.reader(io.StringIO(reg.report("demo", "csv"))))
+        col = report.CSV_HEADER.index("drafted_by")
+        self.assertEqual((rows[1][0], rows[1][col]), ("T-01", want))
+        self.assertIn(f"<td>{want}</td>", reg.report("demo", "html"))
+
+    def test_drafted_by_unchanged_when_only_the_drafter_edited(self):  # I2
+        rid = self.approved()
+        self.reg.edit_risk("demo", rid, {"notes": "Same run, more detail."}, run_id=self.run)
+        self.reg.approve(session(), "demo", rid, NOTE)
+        row = next(l for l in self.reg.report("demo").splitlines() if l.startswith("| T-01 |"))
+        self.assertIn(f"| ai:{self.run} |", row)
+        self.assertNotIn("edited by", row)
+
 
 class PureTest(TmpTestCase):
     def test_cell(self):
         self.assertEqual(report.cell(None), "")
         self.assertEqual(report.cell(["a", "b"]), "a; b")
         self.assertEqual(report.cell("a|b\r\nc\nd\re"), "a\\|b<br>c<br>d<br>e")
+
+    def test_csv_neutralizes_formula_cells(self):  # M4
+        risk = {"id": "T-01", "title": '=HYPERLINK("http://x")', "notes": "+1", "owner": "-x",
+                "test": "@SUM(A1)", "ticket": "\tq", "evidence": "\rz", "assumptions": "safe = fine",
+                "review_state": "approved", "status": "open", "updated_at": "2026-11-07T00:00:00Z",
+                "drafted_by": "ai:r"}
+        rows = list(csv.reader(io.StringIO(report.render_csv([report.ReportRow(risk, "")]))))
+        self.assertEqual(rows[0], report.CSV_HEADER)
+        got = dict(zip(rows[0], rows[1]))
+        self.assertEqual([got[c] for c in ("threat", "notes", "owner", "test_ref", "ticket", "evidence")],
+                         ["'=HYPERLINK(\"http://x\")", "'+1", "'-x", "'@SUM(A1)", "'\tq", "'\rz"])
+        self.assertEqual((got["id"], got["assumptions"], got["elements"]), ("T-01", "safe = fine", ""))
+
+    def test_cell_escapes_angle_brackets(self):  # I3
+        self.assertEqual(report.cell("<b>bold</b>"), "&lt;b&gt;bold&lt;/b&gt;")
+        self.assertEqual(report.cell("a<b\nc"), "a&lt;b<br>c")

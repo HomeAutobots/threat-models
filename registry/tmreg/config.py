@@ -88,6 +88,8 @@ def load_system(root: Path, slug: str) -> SystemConfig:
     if not isinstance(name, str) or not name.strip():
         raise ConfigError("name is required in system.toml")
     methods = _str_list(raw, "methods", ("stride-per-element",))
+    if not methods:
+        raise ConfigError(f"methods must name at least one of {', '.join(METHODS)}")
     for m in methods:
         if m not in METHODS:
             raise ConfigError(f"unknown method {m!r}; expected one of {', '.join(METHODS)}")

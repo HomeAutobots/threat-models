@@ -2,7 +2,8 @@ import subprocess
 import unittest
 from unittest import mock
 
-from helpers import SAMPLE_CATALOG, SAMPLE_DFD, TmpTestCase, ai_fields, make_registry, session, start
+from helpers import (SAMPLE_CATALOG, SAMPLE_DFD, TmpTestCase, ai_fields, human_terminal, make_registry,
+                     session, start)
 from tmreg import core, model
 from tmreg.core import RegistryError, StaleRecord
 
@@ -164,6 +165,29 @@ class ReviewTest(TmpTestCase):
         self.assertIsNone(r["last_approved"])
         self.assertEqual((r["owner"], r["review_state"]), ("A", "approved"))
 
+    def test_editors_since_last_approval_reset_on_approval_and_revert(self):  # I2
+        ai = f"ai:{self.run}"
+
+        def since():
+            return self.reg.editors("demo", "T-01", since_last_approval=True)
+        self.add()
+        self.assertEqual(since(), [])
+        self.edit("A")
+        self.assertEqual(since(), [ai])
+        self.reg.approve(session(), "demo", "T-01", NOTE)
+        self.assertEqual(since(), [])
+        self.assertEqual(self.reg.editors("demo", "T-01", since_last_approval=False), [ai])
+        with human_terminal():
+            self.reg.edit_risk("demo", "T-01", {"owner": "B"}, run_id=None)
+        self.edit("C")
+        self.assertEqual(since(), ["human:Test Reviewer", ai])
+        self.reg.reject(session(), "demo", "T-01", "Owner change not agreed with Payments.")  # revert
+        self.assertEqual(since(), [])
+        self.assertEqual(self.reg.editors("demo", "T-01", since_last_approval=False),
+                         [ai, "human:Test Reviewer"])
+        with self.assertRaisesRegex(RegistryError, "no risk"):
+            self.reg.editors("demo", "T-09", since_last_approval=True)
+
     def test_merge(self):
         self.add_approved()
         self.add()  # T-02, pending duplicate
@@ -238,15 +262,30 @@ class ImportLegacyTest(TmpTestCase):
                          ("approved", "human:catalog-import", 0))
         self.assertRegex(t1["review_note"], r"commit [0-9a-f]{40}")
         self.assertEqual((t1["method"], t1["elements"], t1["status"], t1["dfd_approval_id"]),
-                         ("STRIDE", ["E1", "F1"], "open", "DFD-1"))
-        self.assertEqual(reg.get_risk("demo", "PT-01")["method"], "LINDDUN")
+                         ("stride-per-element", ["E1", "F1"], "open", "DFD-1"))  # M3: method names
+        self.assertEqual(reg.get_risk("demo", "PT-01")["method"], "linddun")
         self.assertEqual(reg.history("demo", "T-01")[-1]["op"], "import")
-        run = start(reg)
-        self.assertEqual(reg.add_risk("demo", ai_fields(), run_id=run)["id"], "T-03")
-        self.assertEqual(reg.add_risk("demo", ai_fields(category="Linking", elements=["D1"]),
-                                      run_id=run)["id"], "PT-02")
+        with human_terminal():  # a catalog mirror takes no AI runs (I4); the owner adds by hand
+            self.assertEqual(reg.add_risk("demo", ai_fields(), run_id=None)["id"], "T-03")
+            self.assertEqual(reg.add_risk("demo", ai_fields(category="Linking", elements=["D1"]),
+                                          run_id=None)["id"], "PT-02")
         with self.assertRaisesRegex(RegistryError, "once"):
             reg.import_legacy(session(), "demo")
+
+    def test_approve_marks_detail_complete_once_every_ai_field_is_filled(self):  # M2
+        reg = make_registry(self.tmp, legacy=True)
+        reg.import_legacy(session(), "demo")
+        have = ("title", "elements", "category", "method", "origin", "origin_ref", "description")
+        detail = {f: ai_fields()[f] for f in model.AI_REQUIRED if f not in have}
+        with human_terminal():
+            reg.edit_risk("demo", "T-01", detail, run_id=None)
+            reg.edit_risk("demo", "T-02", {"notes": "Owner confirmed the webhook path."}, run_id=None)
+        reg.approve(session(), "demo", "T-01", NOTE)
+        reg.approve(session(), "demo", "T-02", NOTE)
+        self.assertEqual(reg.get_risk("demo", "T-01")["detail_complete"], 1)
+        self.assertEqual(reg.history("demo", "T-01")[-1]["diff"]["detail_complete"], [0, 1])
+        self.assertEqual(reg.get_risk("demo", "T-02")["detail_complete"], 0)
+        self.assertEqual(reg.verify("demo"), [])
 
     def _catalog_path(self, reg):
         return reg.config.framework_path / "docs/reference/reference-system.md"
@@ -305,7 +344,8 @@ class ImportLegacyTest(TmpTestCase):
 
     def test_import_into_nonempty_register_refused_before_parsing(self):
         reg = make_registry(self.tmp, legacy=True)
-        reg.add_risk("demo", ai_fields(), run_id=start(reg))
+        with human_terminal():
+            reg.add_risk("demo", ai_fields(), run_id=None)
         self._set_catalog(reg, "# garbage, no section")
         with self.assertRaisesRegex(RegistryError, "once"):
             reg.import_legacy(session(), "demo")
@@ -328,7 +368,8 @@ class ImportLegacyTest(TmpTestCase):
             reg.import_legacy(session(), "demo")
         self.assertEqual(reg.list_risks("demo"), [])
         self.assertEqual([c for c in reg.history("demo") if c["tbl"] == "risks"], [])
-        self.assertEqual(reg.add_risk("demo", ai_fields(), run_id=start(reg))["id"], "T-01")
+        with human_terminal():
+            self.assertEqual(reg.add_risk("demo", ai_fields(), run_id=None)["id"], "T-01")
 
 
 if __name__ == "__main__":

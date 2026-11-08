@@ -1,4 +1,6 @@
 """Shared fixtures: a temp project with a git-tracked framework, registries, sessions, candidates."""
+import contextlib
+import os
 import subprocess
 import tempfile
 import unittest
@@ -182,8 +184,17 @@ def make_registry(tmp, *, slug="demo", approve=True, trial=False, legacy=False,
     return reg
 
 
+@contextlib.contextmanager
+def human_terminal(tty: bool = True):
+    """Patch the terminal check and drop CLAUDECODE, which is set when the suite itself runs under
+    Claude Code. os.environ is restored on exit."""
+    with mock.patch("tmreg.core._has_tty", return_value=tty), mock.patch.dict(os.environ):
+        os.environ.pop("CLAUDECODE", None)
+        yield
+
+
 def session() -> ReviewerSession:
-    with mock.patch("tmreg.core._has_tty", return_value=True):
+    with human_terminal():
         return ReviewerSession("Test Reviewer", "reviewer@example.com")
 
 

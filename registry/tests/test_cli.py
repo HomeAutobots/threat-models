@@ -1,11 +1,13 @@
 import contextlib
 import io
 import json
+import os
+import sqlite3
 import unittest
 from unittest import mock
 
-from helpers import TmpTestCase, ai_fields, make_registry
-from tmreg import cli, model, report
+from helpers import TmpTestCase, ai_fields, human_terminal, make_registry
+from tmreg import cli, ledger, model, report
 
 NOTE = "Checked against the DFD and the evidence."
 
@@ -16,11 +18,13 @@ class CliTest(TmpTestCase):
         self.reg = make_registry(self.tmp)
         self.root = self.reg.root
 
-    def run_cli(self, *argv, tty=False, inputs=()):
+    def run_cli(self, *argv, tty=False, inputs=(), env=None):
+        """env: variables to set for this call only, after CLAUDECODE has been dropped."""
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch("tmreg.core._has_tty", return_value=tty), \
+        with human_terminal(tty), \
                 mock.patch("builtins.input", side_effect=list(inputs)), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            os.environ.update(env or {})
             code = cli.main(list(argv), project_root=self.root)
         return code, out.getvalue(), err.getvalue()
 
@@ -45,6 +49,18 @@ class CliTest(TmpTestCase):
                 self.assertIn("interactive terminal", err)
                 self.assertEqual(out, "")
         self.assertEqual(len(self.reg.history("demo")), before)
+
+    def test_human_only_refused_in_a_claude_code_shell_even_with_a_terminal(self):  # I6
+        self.ai_add()
+        before = len(self.reg.history("demo"))
+        for argv in [("approve", "demo", "T-01"), ("review", "demo"), ("dfd", "approve", "demo")]:
+            with self.subTest(argv=argv):
+                code, out, err = self.run_cli(*argv, tty=True, inputs=[NOTE, "T-01"],
+                                              env={"CLAUDECODE": "1"})
+                self.assertEqual((code, out), (1, ""))
+                self.assertIn("(this shell was started by Claude Code)", err)
+        self.assertEqual(len(self.reg.history("demo")), before)
+        self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "pending")
 
     def test_add_with_run_prints_id_and_without_run_is_refused(self):
         run, (code, out, _) = self.ai_add()
@@ -101,6 +117,38 @@ class CliTest(TmpTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "approved")
 
+    def test_show_and_review_name_editors_since_last_approval(self):  # I2
+        p = self.root / "h.json"
+        p.write_text(json.dumps({k: ai_fields()[k] for k in model.HUMAN_REQUIRED}))
+        self.run_cli("add", "demo", "--json", str(p), tty=True, inputs=["s"])  # skip: stays pending
+        self.assertEqual(self.reg.get_risk("demo", "T-01")["drafted_by"], "human:Test Reviewer")
+        self.assertNotIn("Edited by", self.run_cli("show", "demo", "T-01")[1])
+        run = self.run_cli("run", "start", "demo")[1].split()[0]
+        e = self.root / "systems/demo/runs" / run / "candidates/edit-T-01.json"
+        e.parent.mkdir(parents=True)
+        e.write_text(json.dumps({"notes": "Added by the model."}))
+        self.assertEqual(self.run_cli("edit", "demo", "T-01", "--run", run, "--json", str(e))[0], 0)
+        line = f"Edited by (since last approval): ai:{run}"
+        self.assertIn(line, self.run_cli("show", "demo", "T-01")[1])
+        self.assertIn(line, self.run_cli("review", "demo", tty=True, inputs=["q"])[1])
+        self.run_cli("approve", "demo", "T-01", tty=True, inputs=[NOTE, "T-01"])
+        self.assertNotIn("Edited by", self.run_cli("show", "demo", "T-01")[1])
+
+    def test_show_and_list_escape_control_characters_already_stored(self):  # I3
+        self.ai_add()
+        with self.reg.conn:  # a row written before the check existed, or out of band
+            ledger.write_row(self.reg.conn, "demo", "risks", "T-01",
+                             {"notes": "ok\u001b[8mhidden\u001b[0m\u200b", "title": "T\u001b[2Kx"},
+                             op="test", actor="human:test")
+        code, out, _ = self.run_cli("show", "demo", "T-01")
+        self.assertEqual(code, 0)
+        self.assertNotIn("\u001b", out)
+        self.assertIn("Notes: ok\\x1b[8mhidden\\x1b[0m\\u200b\n", out)
+        self.assertIn("Title: T\\x1b[2Kx\n", out)
+        out = self.run_cli("list", "demo")[1]
+        self.assertNotIn("\u001b", out)
+        self.assertIn("T\\x1b[2Kx", out)
+
     def test_review_redisplays_fresh_record_after_stale_refusal(self):
         run, _ = self.ai_add()
         state = {"edited": False, "answers": iter(["a", "a"])}
@@ -115,7 +163,7 @@ class CliTest(TmpTestCase):
                 return NOTE
             return "T-01"
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch("tmreg.core._has_tty", return_value=True), \
+        with human_terminal(), \
                 mock.patch("builtins.input", side_effect=hook), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             cli.main(["review", "demo"], project_root=self.root)
@@ -141,7 +189,7 @@ class CliTest(TmpTestCase):
                 return NOTE
             return "T-01"
         out = io.StringIO()
-        with mock.patch("tmreg.core._has_tty", return_value=True), \
+        with human_terminal(), \
                 mock.patch("builtins.input", side_effect=hook), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             cli.main(["review", "demo"], project_root=self.root)
@@ -160,7 +208,7 @@ class CliTest(TmpTestCase):
                 self.reg.approve(session(), "demo", "T-02", NOTE)
             return "s" if prompt.startswith("[a]pprove") else ""
         out = io.StringIO()
-        with mock.patch("tmreg.core._has_tty", return_value=True), \
+        with human_terminal(), \
                 mock.patch("builtins.input", side_effect=hook), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             cli.main(["review", "demo"], project_root=self.root)
@@ -194,10 +242,9 @@ class CliTest(TmpTestCase):
         self.assertEqual(code, 1)
         code, _, _ = self.run_cli("retire", "demo", "T-01", "--reason", NOTE, tty=True, inputs=["T-01"])
         self.assertEqual((code, self.reg.get_risk("demo", "T-01")["status"]), (0, "retired"))
-        # dfd approve: unchanged DFD is refused by core after the prompts
+        # dfd approve: an unchanged DFD is refused before the preview and the prompts
         code, out, err = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
-        self.assertEqual(code, 1)
-        self.assertIn("version:", out)
+        self.assertEqual((code, out), (1, ""))
         self.assertIn("already approved", err)
         (self.root / "systems/demo/dfd.md").write_text(
             (self.root / "systems/demo/dfd.md").read_text() + "\nMore prose.\n")
@@ -205,6 +252,29 @@ class CliTest(TmpTestCase):
         self.assertEqual(code, 1)
         code, _, _ = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
         self.assertEqual((code, self.reg.dfd_status("demo").state), (0, "current"))
+
+    def test_dfd_approve_unchanged_is_refused_before_any_prompt(self):  # I1
+        code, out, err = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[])
+        self.assertEqual((code, out, err), (1, "", "tmreg: already approved as DFD-1\n"))
+
+    def test_dfd_approve_refuses_dfd_changed_between_preview_and_confirm(self):  # I1
+        path = self.root / "systems/demo/dfd.md"
+        path.write_bytes(path.read_bytes() + b"\nThe version the owner reads.\n")
+
+        def hook(prompt):
+            if prompt.startswith("Type demo"):
+                path.write_bytes(path.read_bytes() + b"\nSwapped in after the preview.\n")
+                return "demo"
+            return NOTE
+        out, err = io.StringIO(), io.StringIO()
+        with human_terminal(), mock.patch("builtins.input", side_effect=hook), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["dfd", "approve", "demo"], project_root=self.root)
+        self.assertEqual(code, 1)
+        self.assertIn("runs/<run-id>/dfd-check.md", out.getvalue())
+        self.assertEqual(err.getvalue(), "tmreg: dfd.md changed since it was shown; review it again\n")
+        self.assertEqual(self.reg.dfd_status("demo").latest["id"], "DFD-1")
+        self.assertEqual([c["op"] for c in self.reg.history("demo")], ["dfd-approve"])
 
     def test_import_legacy_flow(self):
         reg = make_registry(self.tmp / "legacy", slug="demo", legacy=True)
@@ -258,6 +328,21 @@ class CliTest(TmpTestCase):
         self.assertIn(lines[0], self.run_cli("runs", "demo")[1])
         self.assertEqual(self.run_cli("history", "demo")[0], 0)
 
+    def test_run_start_on_a_catalog_mirror(self):  # I4
+        self.assertNotIn("note:", self.run_cli("run", "start", "demo", "--trial")[1])  # no legacy_catalog
+        reg = make_registry(self.tmp / "legacy", legacy=True)
+        self.root = reg.root
+        code, out, err = self.run_cli("run", "start", "demo")
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("tmreg: demo mirrors the guide's catalog", err)
+        make_registry(self.tmp / "legacy", root=reg.root, trial=True)
+        code, out, _ = self.run_cli("run", "start", "demo", "--trial")
+        lines = out.splitlines()
+        self.assertEqual(code, 0)
+        self.assertTrue(lines[0].startswith("trial-"))
+        self.assertEqual(lines[3:], ["note: trial register is empty; the catalog is withheld "
+                                     "(evaluation mode)"])
+
     def test_dfd_check_prints_preview_and_ok_without_writing(self):
         code, out, err = self.run_cli("dfd", "check", "demo")
         self.assertEqual((code, err), (0, ""))
@@ -287,6 +372,14 @@ class CliTest(TmpTestCase):
         code, out, err = self.run_cli("dfd", "check", "demo")
         self.assertEqual((code, out), (1, ""))
         self.assertEqual(err, "tmreg: dfd.md has no '| DFD version | x.y |' row\n")
+
+    def test_busy_database_is_reported(self):  # M7
+        for target in ("tmreg.cli.Registry.list_risks", "tmreg.cli.open_registry"):
+            with self.subTest(target=target), \
+                    mock.patch(target, side_effect=sqlite3.OperationalError("database is locked")):
+                code, out, err = self.run_cli("list", "demo")
+            self.assertEqual((code, out, err),
+                             (1, "", "tmreg: database is busy or unavailable: database is locked\n"))
 
     def test_usage_error_exits_2(self):
         with contextlib.redirect_stderr(io.StringIO()):

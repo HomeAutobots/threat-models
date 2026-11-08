@@ -54,6 +54,12 @@ disallowed-tools: WebFetch, WebSearch, NotebookEdit
    - `run start` prints the run ID on its first line; use it as `<run-id>` below. A trial run ID
      starts with `trial-`. Its `methods:` line is the comma-separated method list for step 3.
      Use it as printed: never add or drop a method. `run start` also records the guide commit.
+   - If `run start` refuses, it prints `tmreg:` and the reason. Report the message and stop. A
+     system whose `system.toml` sets `legacy_catalog` mirrors the guide's catalog, and tmreg
+     refuses a run on it without `--trial`.
+   - On an evaluation run, `run start` prints this line:
+     `note: trial register is empty; the catalog is withheld (evaluation mode)`. Say so in the
+     summary, and do not compare the results against a register.
 5. If a scope was given, check that every ID in it is in `dfd.md`. If one is not, stop and name it.
    The scope narrows step 3 only, because the DFD gate always covers the whole DFD.
 
@@ -292,9 +298,9 @@ git log -1 --oneline .claude/commands/tm-model.md
 
 Write `systems/<slug>/runs/<run-id>/summary.md` and give the same content in chat. Report counts
 and lists of IDs, and never paraphrase the worksheet's reasoning. Cover these points:
-- **Run:** the run ID, trial or not, the methods, the DFD approval from `run start`'s `dfd:` line,
-  the scope, your model ID, the command version from `git log`, and whether the run was complete
-  or `partial`.
+- **Run:** the run ID, trial or not, evaluation mode if `run start` printed its note, the methods,
+  the DFD approval from `run start`'s `dfd:` line, the scope, your model ID, the command version
+  from `git log`, and whether the run was complete or `partial`.
 - **Coverage:** the total number of cells; how many have a candidate; how many are `no`; and the
   cells left `not reached`, by ID, with a scoped re-run suggested for their elements.
 - **Writes:**

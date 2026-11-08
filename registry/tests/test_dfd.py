@@ -86,6 +86,11 @@ class HardeningTest(unittest.TestCase):
     def test_unclosed_fence(self):
         self.raises(HEAD + ELEMS + b"\n```\n| ID | X |\n", "unclosed code fence opened at line 10")
 
+    def test_unclosed_comment(self):  # M6
+        self.raises(HEAD + ELEMS + b"\n<!-- note\n| ID | X |\n", "unclosed HTML comment opened at line 10")
+        self.raises(HEAD + ELEMS + b"\n<!-- a --> text\nmore <!-- b\n",
+                    "unclosed HTML comment opened at line 11")
+
     def test_indented_and_comments_ignored(self):
         data = (HEAD + ELEMS + b"\n    | ID | X |\n    |---|---|\n    | E98 | x |\n"
                 b"\n<!-- note\n| ID | X |\n|---|---|\n| E99 | x |\n-->\n")

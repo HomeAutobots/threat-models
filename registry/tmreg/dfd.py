@@ -47,6 +47,7 @@ def _live_lines(text: str) -> list[tuple[int, str | None]]:
     out: list[tuple[int, str | None]] = []
     fence: tuple[str, int, int] | None = None  # (char, length, opening line)
     in_comment = False
+    comment_line = 0  # line of the most recent <!--
     for n, line in enumerate(text.splitlines(), 1):
         if fence is not None:
             m = _FENCE_RE.match(line)
@@ -85,9 +86,12 @@ def _live_lines(text: str) -> list[tuple[int, str | None]]:
                     rest = rest[start + 4:]
                     in_comment = True
                     had_comment = True
+                    comment_line = n
         out.append((n, None if had_comment and not kept.strip() else kept))
     if fence is not None:
         raise DfdError(f"unclosed code fence opened at line {fence[2]}")
+    if in_comment:
+        raise DfdError(f"unclosed HTML comment opened at line {comment_line}")
     return out
 
 
