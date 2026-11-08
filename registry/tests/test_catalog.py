@@ -21,6 +21,17 @@ class CatalogTest(unittest.TestCase):
         with self.assertRaises(catalog.CatalogError):
             catalog.parse(text)
 
+    def test_malformed_rows_raise(self):
+        for bad in ("| T-02 | P2 | T |",
+                    "| PT-01 | | | |",
+                    "| T-02 | P2 | T | text | extra |",
+                    "| T-02 | , | T | text |"):
+            text = SAMPLE_CATALOG.replace(
+                "| PT-01 | D1 | Linking |", bad + "\n| PT-01 | D1 | Linking |", 1)
+            with self.subTest(bad=bad), self.assertRaisesRegex(catalog.CatalogError, "needs ID"):
+                catalog.parse(text.replace("| T-02 | F2, P2 | T |", "| T-03 | F2 | T |", 1)
+                              if "T-02" in bad else text)
+
 
 if __name__ == "__main__":
     unittest.main()

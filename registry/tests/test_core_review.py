@@ -1,8 +1,9 @@
+import subprocess
 import unittest
 from unittest import mock
 
-from helpers import SAMPLE_DFD, TmpTestCase, ai_fields, make_registry, session, start
-from tmreg import core
+from helpers import SAMPLE_CATALOG, SAMPLE_DFD, TmpTestCase, ai_fields, make_registry, session, start
+from tmreg import core, model
 from tmreg.core import RegistryError
 
 NOTE = "Confirmed on F2 against the design doc."
@@ -104,10 +105,18 @@ class ReviewTest(TmpTestCase):
         self.assertIsNone(self.reg.get_risk("demo", "T-01")["last_approved"]["owner"])
 
     def test_reject_re_review_restores_last_approved(self):
-        self.add_approved()
-        self.edit("A")
-        self.edit("B")
-        r = self.reg.reject(session(), "demo", "T-01", "Owner change not agreed with Payments.")
+        self.add()
+        with mock.patch("tmreg.db.now", return_value="2026-01-01T00:00:01Z"):
+            self.reg.approve(session(), "demo", "T-01", NOTE)
+        approved = self.reg.get_risk("demo", "T-01")
+        with mock.patch("tmreg.db.now", return_value="2026-01-02T00:00:02Z"):
+            self.edit("A")
+        with mock.patch("tmreg.db.now", return_value="2026-01-03T00:00:03Z"):
+            self.edit("B")
+        with mock.patch("tmreg.db.now", return_value="2026-01-04T00:00:04Z"):
+            r = self.reg.reject(session(), "demo", "T-01", "Owner change not agreed with Payments.")
+        for f in model.SNAPSHOT_FIELDS:
+            self.assertEqual(r[f], approved[f], f)
         self.assertEqual((r["owner"], r["review_state"], r["last_approved"], r["review_note"]),
                          (None, "approved", None, NOTE))
         last = self.reg.history("demo", "T-01")[-1]
@@ -124,9 +133,12 @@ class ReviewTest(TmpTestCase):
     def test_merge(self):
         self.add_approved()
         self.add()  # T-02, pending duplicate
+        before = self.reg.get_risk("demo", "T-01")
+        n_hist = len(self.reg.history("demo", "T-01"))
         r = self.reg.merge(session(), "demo", "T-02", "T-01", NOTE)
         self.assertEqual((r["review_state"], r["merged_into"]), ("rejected", "T-01"))
-        self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "approved")
+        self.assertEqual(self.reg.get_risk("demo", "T-01"), before)
+        self.assertEqual(len(self.reg.history("demo", "T-01")), n_hist)
         self.assertEqual(self.reg.history("demo", "T-02")[-1]["op"], "merge")
 
     def test_merge_refusals(self):
@@ -195,6 +207,69 @@ class ImportLegacyTest(TmpTestCase):
         with self.assertRaisesRegex(RegistryError, "once"):
             reg.import_legacy(session(), "demo")
 
+    def _catalog_path(self, reg):
+        return reg.config.framework_path / "docs/reference/reference-system.md"
+
+    def _set_catalog(self, reg, text):
+        """Rewrite the catalog and commit it, so the import sees a clean, citable file."""
+        self._catalog_path(reg).write_text(text)
+        fw = str(reg.config.framework_path)
+        subprocess.run(["git", "-C", fw, "-c", "user.name=t", "-c", "user.email=t@e.com",
+                        "-c", "commit.gpgsign=false", "commit", "-qam", "edit", "--no-verify"],
+                       check=True, capture_output=True)
+
+    def test_import_refuses_malformed_catalog_rows(self):
+        reg = make_registry(self.tmp, legacy=True)
+        self._set_catalog(reg, SAMPLE_CATALOG.replace("| T-02 | F2, P2 | T |", "| T-02 | F2, P2 |\n| T-03 | F2 | T |", 1))
+        with self.assertRaisesRegex(RegistryError, "T-02: catalog row needs"):
+            reg.import_legacy(session(), "demo")
+        self.assertEqual(reg.list_risks("demo"), [])
+
+    def test_import_refuses_category_that_does_not_fit_id(self):
+        reg = make_registry(self.tmp, legacy=True)
+        for old, new in (("| PT-01 | D1 | Linking |", "| PT-01 | D1 | S |"),
+                         ("| T-02 | F2, P2 | T |", "| T-02 | F2, P2 | Linking |"),
+                         ("| T-02 | F2, P2 | T |", "| T-02 | F2, P2 | Bogus |")):
+            with self.subTest(new=new):
+                self._set_catalog(reg, SAMPLE_CATALOG.replace(old, new))
+                with self.assertRaisesRegex(RegistryError, "T-02|PT-01"):
+                    reg.import_legacy(session(), "demo")
+        self.assertEqual(reg.list_risks("demo"), [])
+
+    def test_import_refuses_dirty_catalog_but_allows_other_dirty_files(self):
+        reg = make_registry(self.tmp, legacy=True)
+        fw = reg.config.framework_path
+        (fw / "docs/other.md").write_text("scratch")
+        path = self._catalog_path(reg)
+        path.write_text(path.read_text() + "\nedited\n")
+        with self.assertRaisesRegex(RegistryError, "uncommitted changes"):
+            reg.import_legacy(session(), "demo")
+        self.assertEqual(reg.list_risks("demo"), [])
+        subprocess.run(["git", "-C", str(fw), "checkout", "--", "docs/reference/reference-system.md"],
+                       check=True, capture_output=True)
+        reg.import_legacy(session(), "demo")
+        self.assertRegex(reg.get_risk("demo", "T-01")["review_note"], r"commit [0-9a-f]{40}\+dirty")
+
+    def test_import_refuses_unreadable_commit(self):
+        reg = make_registry(self.tmp, legacy=True)
+        with mock.patch("tmreg.core.framework_commit", return_value="unknown"):
+            with self.assertRaisesRegex(RegistryError, "cannot read the guide's git commit"):
+                reg.import_legacy(session(), "demo")
+
+    def test_import_refuses_empty_catalog(self):
+        reg = make_registry(self.tmp, legacy=True)
+        self._set_catalog(reg, "## Threat catalog used in worked examples\n\nnothing yet\n")
+        with self.assertRaisesRegex(RegistryError, "no catalog rows"):
+            reg.import_legacy(session(), "demo")
+
+    def test_import_into_nonempty_register_refused_before_parsing(self):
+        reg = make_registry(self.tmp, legacy=True)
+        reg.add_risk("demo", ai_fields(), run_id=start(reg))
+        self._set_catalog(reg, "# garbage, no section")
+        with self.assertRaisesRegex(RegistryError, "once"):
+            reg.import_legacy(session(), "demo")
+        self.assertEqual([r["id"] for r in reg.list_risks("demo")], ["T-01"])
+
     def test_import_needs_config_and_dfd(self):
         reg = make_registry(self.tmp)
         with self.assertRaisesRegex(RegistryError, "no legacy_catalog in system.toml"):
@@ -207,8 +282,7 @@ class ImportLegacyTest(TmpTestCase):
 
     def test_import_refuses_unknown_elements_and_writes_nothing(self):
         reg = make_registry(self.tmp, legacy=True)
-        path = reg.config.framework_path / "docs/reference/reference-system.md"
-        path.write_text(path.read_text().replace("| PT-01 | D1 |", "| PT-01 | X9 |"))
+        self._set_catalog(reg, SAMPLE_CATALOG.replace("| PT-01 | D1 |", "| PT-01 | X9 |"))
         with self.assertRaisesRegex(RegistryError, "X9"):
             reg.import_legacy(session(), "demo")
         self.assertEqual(reg.list_risks("demo"), [])

@@ -41,12 +41,16 @@ def parse(text: str) -> list[CatalogRow]:
         if not s.startswith("|"):
             continue
         cells = [c.strip().replace("\\|", "|") for c in _SPLIT.split(s.strip("|"))]
-        if len(cells) < 4 or not _ID_RE.fullmatch(cells[0]):
+        if not _ID_RE.fullmatch(cells[0]):
             continue
+        if len(cells) != 4 or not all(cells):
+            raise CatalogError(f"{cells[0]}: catalog row needs ID, elements, category, and text")
         elements = [e.strip() for e in cells[1].split(",") if e.strip()]
+        if not elements:
+            raise CatalogError(f"{cells[0]}: catalog row needs ID, elements, category, and text")
         if any(r.id == cells[0] for r in rows):
             raise CatalogError(f"duplicate catalog ID {cells[0]}")
-        rows.append(CatalogRow(cells[0], elements, cells[2], "|".join(cells[3:]).strip()))
+        rows.append(CatalogRow(cells[0], elements, cells[2], cells[3]))
     return rows
 
 

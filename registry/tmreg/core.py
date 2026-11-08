@@ -639,6 +639,8 @@ class Registry:
         legacy = self.system(slug).legacy_catalog
         if not legacy:
             raise RegistryError("no legacy_catalog in system.toml")
+        if ledger.read_rows(self.conn, slug, "risks"):
+            raise RegistryError("import-legacy runs once, into an empty register")
         path = self.config.framework_path / legacy
         try:
             rows = catalog.parse(path.read_text(encoding="utf-8"))
@@ -647,6 +649,19 @@ class Registry:
         except (catalog.CatalogError, UnicodeDecodeError) as e:
             raise RegistryError(f"{path}: {e}") from None
         commit = framework_commit(self.config.framework_path)  # before taking the write lock
+        if commit == "unknown":
+            raise RegistryError("cannot read the guide's git commit; import needs it for the "
+                                "review note")
+        try:
+            dirty = subprocess.run(
+                ["git", "-C", str(self.config.framework_path), "status", "--porcelain", "--", legacy],
+                capture_output=True, text=True, check=True, timeout=30).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            raise RegistryError("cannot read the guide's git commit; import needs it for the "
+                                "review note") from None
+        if dirty:
+            raise RegistryError("the legacy catalog has uncommitted changes; commit them in the "
+                                "guide first")
         with self._write():
             if ledger.read_rows(self.conn, slug, "risks"):
                 raise RegistryError("import-legacy runs once, into an empty register")
@@ -656,9 +671,12 @@ class Registry:
             prepared = []
             for r in rows:
                 _check_elements(r.elements, latest)
-                category = _category(r.category)
-                is_t = r.id.startswith("T-")
-                if (category in STRIDE) != is_t:
+                try:
+                    category = _category(r.category)
+                except RegistryError as e:
+                    raise RegistryError(f"{r.id}: {e}") from None
+                valid = STRIDE if r.id.startswith("T-") else LINDDUN
+                if category not in valid:
                     raise RegistryError(f"{r.id}: category {r.category!r} does not fit its ID")
                 prepared.append((r, category))
             at = db.now()
