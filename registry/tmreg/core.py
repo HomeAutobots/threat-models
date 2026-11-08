@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -457,7 +458,7 @@ class Registry:
                 "ids": {k: list(v) for k, v in parsed.ids.items()},
                 "approved_by": session.name, "approved_at": db.now(), "note": note,
             }, op="dfd-approve", actor=f"human:{session.name}")
-        self._write_register(slug)
+        self._write_register(slug, approval_id)
         return ledger.read_rows(self.conn, slug, "dfd_approvals")[approval_id]
 
     # ---- drafting ---------------------------------------------------------------------------
@@ -520,7 +521,7 @@ class Registry:
                 "possible_duplicate_of": dup, "dfd_approval_id": latest["id"],
                 "detail_complete": 1, "created_at": at, "updated_at": at,
             }, op="add", actor=actor)
-        self._write_register(slug)
+        self._write_register(slug, risk_id)
         return self.get_risk(slug, risk_id)
 
     def edit_risk(self, slug, risk_id, fields: dict, *, run_id: str | None) -> dict:
@@ -557,7 +558,7 @@ class Registry:
             update["dfd_approval_id"] = latest["id"]
             update["updated_at"] = db.now()
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op="edit", actor=actor)
-        self._write_register(slug)
+        self._write_register(slug, risk_id)
         return self.get_risk(slug, risk_id)
 
     # ---- human review -----------------------------------------------------------------------
@@ -582,7 +583,7 @@ class Registry:
                 "review_state": "approved", **self._review_fields(session, note),
                 "last_approved": None,
             }, op="approve", actor=f"human:{session.name}")
-        self._write_register(slug)
+        self._write_register(slug, risk_id)
         return self._risk(slug, risk_id)
 
     def reject(self, session, slug, risk_id, note) -> dict:
@@ -601,7 +602,7 @@ class Registry:
                 op, log_note = "revert", note
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op=op,
                              actor=f"human:{session.name}", note=log_note)
-        self._write_register(slug)
+        self._write_register(slug, risk_id)
         return self._risk(slug, risk_id)
 
     def merge(self, session, slug, pending_id, into_id, note) -> dict:
@@ -622,7 +623,7 @@ class Registry:
                 "review_state": "rejected", "merged_into": into_id,
                 **self._review_fields(session, note),
             }, op="merge", actor=f"human:{session.name}")
-        self._write_register(slug)
+        self._write_register(slug, pending_id)
         return self._risk(slug, pending_id)
 
     def retire(self, session, slug, risk_id, reason) -> dict:
@@ -639,7 +640,7 @@ class Registry:
             ledger.write_row(self.conn, slug, "risks", risk_id, {
                 "status": "retired", "status_reason": reason, "updated_at": db.now(),
             }, op="retire", actor=f"human:{session.name}")
-        self._write_register(slug)
+        self._write_register(slug, risk_id)
         return self._risk(slug, risk_id)
 
     def import_legacy(self, session, slug) -> list[str]:
@@ -708,7 +709,7 @@ class Registry:
             seq = db.table(slug, "sequences")
             for prefix, n in top.items():
                 self.conn.execute(f"UPDATE {seq} SET next = ? WHERE prefix = ?", (n + 1, prefix))
-        self._write_register(slug)
+        self._write_register(slug, ", ".join(r.id for r, _ in prepared))
         return [r.id for r, _ in prepared]
 
     # ---- verification -----------------------------------------------------------------------
@@ -837,14 +838,17 @@ class Registry:
         render = report_mod.render_md if fmt == "md" else report_mod.render_html
         return render(rows, title=title, stamp=stamp, scope_note=scope)
 
-    def _write_register(self, slug: str) -> Path:
+    def _write_register(self, slug: str, ref: str | None = None) -> Path:
         """Regenerate register.md (register.trial.md for a trial database) after a committed write."""
         path = self.root / "systems" / slug / ("register.trial.md" if self.is_trial else "register.md")
         try:
             text = self.report(slug, "md")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
-        except (OSError, RegistryError) as e:
-            raise RegistryError(f"the write succeeded but {path.name} could not be regenerated "
-                                f"({e}); run ./tmreg report {slug}") from e
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception as err:
+            what = f" ({ref} was written)" if ref else ""
+            raise RegistryError(f"the write succeeded{what} but {path.name} could not be "
+                                f"regenerated ({err}); run ./tmreg report {slug}") from err
         return path

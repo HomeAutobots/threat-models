@@ -60,7 +60,8 @@ def _join(value, sep: str) -> str:
 
 
 def cell(value) -> str:
-    return (_join(value, "; ").replace("|", "\\|").replace("\r\n", "<br>").replace("\n", "<br>"))
+    return (_join(value, "; ").replace("|", "\\|").replace("\r\n", "<br>")
+            .replace("\r", "<br>").replace("\n", "<br>"))
 
 
 def _score(r) -> str:
@@ -117,7 +118,8 @@ def _csv_cells(row: ReportRow) -> list[str]:
     out = []
     for col in CSV_HEADER:
         v = r.get(_CSV_SOURCE.get(col, col))
-        out.append(_date(r) if col == "date" else _join(v, ";"))
+        out.append(_date(r) if col == "date" else _status(row) if col == "status"
+                   else _join(v, ";"))
     return out
 
 

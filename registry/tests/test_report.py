@@ -79,6 +79,18 @@ class ReportTest(TmpTestCase):
         self.assertEqual(rows[0], report.CSV_HEADER)
         self.assertEqual(rows[1][1], "P2;F2")
 
+    def test_csv_marks_re_review_and_pending(self):
+        self.approved()
+        self.reg.edit_risk("demo", "T-01", {"owner": "Mallory"}, run_id=self.run)
+        default = list(csv.reader(io.StringIO(self.reg.report("demo", "csv"))))
+        self.assertEqual(len(default), 2)
+        self.assertTrue(default[1][15].endswith("(re-review pending)"))
+        both = list(csv.reader(io.StringIO(self.reg.report("demo", "csv", include_pending=True))))
+        t01 = [r for r in both[1:] if r[0] == "T-01"]
+        self.assertEqual(len(t01), 2)
+        self.assertTrue(t01[0][15].endswith("(re-review pending)"))
+        self.assertTrue(t01[1][15].endswith("(PENDING)"))
+
     def test_html_escapes(self):
         self.approved()
         self.reg.edit_risk("demo", "T-01", {"notes": "<script>x</script>"}, run_id=self.run)
@@ -122,11 +134,24 @@ class ReportTest(TmpTestCase):
         self.assertEqual(real.read_bytes(), snapshot)
         self.assertTrue((self.reg.root / "systems/demo/register.trial.md").exists())
 
+    def test_unexpected_render_error_is_wrapped(self):
+        with mock.patch("tmreg.core.report_mod.render_md", side_effect=KeyError("boom")):
+            with self.assertRaises(RegistryError) as cm:
+                self.add()
+        self.assertIsInstance(cm.exception.__cause__, KeyError)
+
+    def test_register_write_leaves_no_temp_file(self):
+        self.add()
+        names = [p.name for p in (self.reg.root / "systems/demo").iterdir()]
+        self.assertIn("register.md", names)
+        self.assertFalse([n for n in names if n.endswith(".tmp")])
+
     def test_failed_render_write_raises_after_commit(self):
         with mock.patch("tmreg.core.Path.write_text", side_effect=OSError("disk full")):
             with self.assertRaises(RegistryError) as cm:
                 self.add()
         self.assertIn("./tmreg report demo", str(cm.exception))
+        self.assertIn("T-01 was written", str(cm.exception))
         self.assertEqual(len(self.reg.list_risks("demo")), 1)
 
     def test_imported_rows_flag_incomplete_detail(self):
@@ -141,4 +166,4 @@ class PureTest(TmpTestCase):
     def test_cell(self):
         self.assertEqual(report.cell(None), "")
         self.assertEqual(report.cell(["a", "b"]), "a; b")
-        self.assertEqual(report.cell("a|b\r\nc\nd"), "a\\|b<br>c<br>d")
+        self.assertEqual(report.cell("a|b\r\nc\nd\re"), "a\\|b<br>c<br>d<br>e")
