@@ -566,6 +566,12 @@ class Registry:
     def _review_fields(self, session: ReviewerSession, note: str) -> dict:
         return {"reviewed_by": session.name, "reviewed_at": db.now(), "review_note": note}
 
+    @staticmethod
+    def _check_seen(seen, cur: dict) -> None:
+        """Refuse when the row is not what the reviewer was shown. Runs under the write lock."""
+        if seen is not None and any(seen.get(f) != cur.get(f) for f in RISK_FIELDS):
+            raise RegistryError(f"{cur['id']} changed since it was shown; review it again")
+
     def _require_pending(self, slug: str, risk_id, verb: str) -> dict:
         cur = self._risk(slug, risk_id)
         if cur["review_state"] != "pending":
@@ -573,12 +579,12 @@ class Registry:
                                 f"{cur['review_state']}")
         return cur
 
-    def approve(self, session, slug, risk_id, note) -> dict:
+    def approve(self, session, slug, risk_id, note, *, seen: dict | None = None) -> dict:
         _require_session(session)
         note = _require_note(note)
         self._require(slug)
         with self._write():
-            self._require_pending(slug, risk_id, "approved")
+            self._check_seen(seen, self._require_pending(slug, risk_id, "approved"))
             ledger.write_row(self.conn, slug, "risks", risk_id, {
                 "review_state": "approved", **self._review_fields(session, note),
                 "last_approved": None,
@@ -586,12 +592,13 @@ class Registry:
         self._write_register(slug, risk_id)
         return self._risk(slug, risk_id)
 
-    def reject(self, session, slug, risk_id, note) -> dict:
+    def reject(self, session, slug, risk_id, note, *, seen: dict | None = None) -> dict:
         _require_session(session)
         note = _require_note(note)
         self._require(slug)
         with self._write():
             cur = self._require_pending(slug, risk_id, "rejected")
+            self._check_seen(seen, cur)
             snap = cur["last_approved"]
             if snap is None:
                 update = {"review_state": "rejected", **self._review_fields(session, note)}
@@ -605,12 +612,13 @@ class Registry:
         self._write_register(slug, risk_id)
         return self._risk(slug, risk_id)
 
-    def merge(self, session, slug, pending_id, into_id, note) -> dict:
+    def merge(self, session, slug, pending_id, into_id, note, *, seen: dict | None = None) -> dict:
         _require_session(session)
         note = _require_note(note)
         self._require(slug)
         with self._write():
             cur = self._require_pending(slug, pending_id, "merged")
+            self._check_seen(seen, cur)
             if cur["last_approved"] is not None:
                 raise RegistryError(f"{pending_id} is a re-review of an approved risk; approve or "
                                     "reject the re-review instead of merging it")
@@ -626,12 +634,13 @@ class Registry:
         self._write_register(slug, pending_id)
         return self._risk(slug, pending_id)
 
-    def retire(self, session, slug, risk_id, reason) -> dict:
+    def retire(self, session, slug, risk_id, reason, *, seen: dict | None = None) -> dict:
         _require_session(session)
         reason = _require_note(reason, "reason")
         self._require(slug)
         with self._write():
             cur = self._risk(slug, risk_id)
+            self._check_seen(seen, cur)
             if cur["review_state"] != "approved":
                 raise RegistryError(f"only an approved risk can be retired; {risk_id} is "
                                     f"{cur['review_state']}")
@@ -643,8 +652,8 @@ class Registry:
         self._write_register(slug, risk_id)
         return self._risk(slug, risk_id)
 
-    def import_legacy(self, session, slug) -> list[str]:
-        _require_session(session)
+    def _import_precheck(self, slug):
+        """Everything import needs before the write lock: returns (path, rows, commit)."""
         self._require(slug)
         legacy = self.system(slug).legacy_catalog
         if not legacy:
@@ -672,23 +681,40 @@ class Registry:
         if dirty:
             raise RegistryError("the legacy catalog has uncommitted changes; commit them in the "
                                 "guide first")
+        return path, rows, commit
+
+    def _import_prepare(self, slug, path, rows):
+        """Checks that read the register and DFD: returns (latest approval, [(row, category)])."""
+        if ledger.read_rows(self.conn, slug, "risks"):
+            raise RegistryError("import-legacy runs once, into an empty register")
+        latest = self._require_dfd(slug)
+        if not rows:
+            raise RegistryError(f"{path} has no catalog rows to import")
+        prepared = []
+        for r in rows:
+            _check_elements(r.elements, latest)
+            try:
+                category = _category(r.category)
+            except RegistryError as e:
+                raise RegistryError(f"{r.id}: {e}") from None
+            valid = STRIDE if r.id.startswith("T-") else LINDDUN
+            if category not in valid:
+                raise RegistryError(f"{r.id}: category {r.category!r} does not fit its ID")
+            prepared.append((r, category))
+        return latest, prepared
+
+    def import_preview(self, slug) -> dict:
+        """What import_legacy would do, with the same preconditions and errors. Writes nothing."""
+        path, rows, commit = self._import_precheck(slug)
+        _, prepared = self._import_prepare(slug, path, rows)
+        return {"count": len(prepared), "first": prepared[0][0].id, "last": prepared[-1][0].id,
+                "commit": commit}
+
+    def import_legacy(self, session, slug) -> list[str]:
+        _require_session(session)
+        path, rows, commit = self._import_precheck(slug)
         with self._write():
-            if ledger.read_rows(self.conn, slug, "risks"):
-                raise RegistryError("import-legacy runs once, into an empty register")
-            latest = self._require_dfd(slug)
-            if not rows:
-                raise RegistryError(f"{path} has no catalog rows to import")
-            prepared = []
-            for r in rows:
-                _check_elements(r.elements, latest)
-                try:
-                    category = _category(r.category)
-                except RegistryError as e:
-                    raise RegistryError(f"{r.id}: {e}") from None
-                valid = STRIDE if r.id.startswith("T-") else LINDDUN
-                if category not in valid:
-                    raise RegistryError(f"{r.id}: category {r.category!r} does not fit its ID")
-                prepared.append((r, category))
+            latest, prepared = self._import_prepare(slug, path, rows)
             at = db.now()
             actor = f"human:{session.name}"
             note = f"Imported from the guide's reference catalog at commit {commit}"

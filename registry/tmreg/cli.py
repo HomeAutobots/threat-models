@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import catalog, config, core
+from . import config, core
 from .core import Registry, RegistryError, ReviewerSession
 from .model import EDITABLE_FIELDS, LABELS, NOTE_MIN, REVIEW_STATES, RISK_FIELDS
 
@@ -118,33 +118,52 @@ def parse_sets(pairs: list[str]) -> dict:
 
 # ---- human actions (each shows, asks for a note, then makes the reviewer type the ID) ----------
 
-def _approve(reg, session, slug, rid) -> None:
+def _need_pending(risk: dict, verb: str) -> None:
+    if risk["review_state"] != "pending":
+        raise RegistryError(f"only a pending risk can be {verb}; {risk['id']} is "
+                            f"{risk['review_state']}")
+
+
+def _approve(reg, session, slug, seen) -> None:
+    rid = seen["id"]
+    _need_pending(seen, "approved")
     note = ask_note("Review note: ")
     confirm(rid, "approve")
-    reg.approve(session, slug, rid, note)
+    reg.approve(session, slug, rid, note, seen=seen)
     print(f"{rid} approved")
 
 
-def _reject(reg, session, slug, rid) -> None:
+def _reject(reg, session, slug, seen) -> None:
+    rid = seen["id"]
+    _need_pending(seen, "rejected")
     note = ask_note("Review note: ")
     confirm(rid, "reject")
-    result = reg.reject(session, slug, rid, note)
+    result = reg.reject(session, slug, rid, note, seen=seen)
     print(f"{rid} reverted to its last approval" if result["review_state"] == "approved"
           else f"{rid} rejected")
 
 
-def _merge(reg, session, slug, rid, into) -> None:
+def _merge(reg, session, slug, seen, into) -> None:
+    rid = seen["id"]
+    _need_pending(seen, "merged")
+    if reg.get_risk(slug, into)["review_state"] == "rejected":
+        raise RegistryError(f"{into} is rejected; merge into a live risk")
     note = ask_note("Review note: ")
     confirm(rid, "merge")
-    reg.merge(session, slug, rid, into, note)
+    reg.merge(session, slug, rid, into, note, seen=seen)
     print(f"{rid} merged into {into}")
 
 
-def _retire(reg, session, slug, rid, reason) -> None:
+def _retire(reg, session, slug, seen, reason) -> None:
+    rid = seen["id"]
+    if seen["review_state"] != "approved":
+        raise RegistryError(f"only an approved risk can be retired; {rid} is {seen['review_state']}")
+    if reason is not None and len(reason.strip()) < NOTE_MIN:
+        raise RegistryError(f"the reason must be at least {NOTE_MIN} characters")
     if reason is None:
         reason = ask_note("Reason: ", "reason")
     confirm(rid, "retire")
-    reg.retire(session, slug, rid, reason)
+    reg.retire(session, slug, rid, reason, seen=seen)
     print(f"{rid} retired")
 
 
@@ -156,16 +175,16 @@ def review_prompt(reg, session, slug, risk) -> str:
         choice = _ask("[a]pprove  [r]eject  [m]erge  [s]kip  [q]uit: ").lower()[:1]
         try:
             if choice == "a":
-                _approve(reg, session, slug, rid)
+                _approve(reg, session, slug, risk)
             elif choice == "r":
-                _reject(reg, session, slug, rid)
+                _reject(reg, session, slug, risk)
             elif choice == "m":
                 default = risk.get("possible_duplicate_of")
                 target = _ask(f"Merge into [{default}]: " if default else "Merge into: ") or default
                 if not target:
                     print("Not changed.")
                     continue
-                _merge(reg, session, slug, rid, target)
+                _merge(reg, session, slug, risk, target)
             elif choice == "s" or choice == "":
                 return "skipped"
             elif choice == "q":
@@ -185,9 +204,13 @@ def cmd_review(args, reg, root) -> int:
     pending = sorted(reg.list_risks(slug, "pending"),
                      key=lambda r: (r["created_at"] or "", core.id_sort_key(r["id"])))
     reviewed = skipped = 0
-    for i, risk in enumerate(pending):
+    for i, listed in enumerate(pending):
+        risk = reg.get_risk(slug, listed["id"])  # fresh: it may have changed since the list
         if i:
             print()
+        if risk["review_state"] != "pending":
+            print(f"{risk['id']} is no longer pending; skipped.")
+            continue
         outcome = review_prompt(reg, session, slug, risk)
         if outcome == "quit":
             break
@@ -288,10 +311,9 @@ def cmd_add(args, reg, root) -> int:
         print(format_risk(reg, args.slug, risk))
         if _ask("[a]pprove  [s]kip (stays pending): ").lower()[:1] == "a":
             try:
-                _approve(reg, session, args.slug, risk["id"])
+                _approve(reg, session, args.slug, risk)
             except Abort:
-                print("Not changed.")
-                return 1
+                print(f"Not approved; {risk['id']} stays pending.")
     return 0
 
 
@@ -304,47 +326,42 @@ def cmd_edit(args, reg, root) -> int:
 
 def cmd_approve(args, reg, root) -> int:
     session = human_session(reg, "approve")
-    print(format_risk(reg, args.slug, reg.get_risk(args.slug, args.id)))
-    _approve(reg, session, args.slug, args.id)
+    seen = reg.get_risk(args.slug, args.id)
+    print(format_risk(reg, args.slug, seen))
+    _approve(reg, session, args.slug, seen)
     return 0
 
 
 def cmd_reject(args, reg, root) -> int:
     session = human_session(reg, "reject")
-    print(format_risk(reg, args.slug, reg.get_risk(args.slug, args.id)))
-    _reject(reg, session, args.slug, args.id)
+    seen = reg.get_risk(args.slug, args.id)
+    print(format_risk(reg, args.slug, seen))
+    _reject(reg, session, args.slug, seen)
     return 0
 
 
 def cmd_merge(args, reg, root) -> int:
     session = human_session(reg, "merge")
-    print(format_risk(reg, args.slug, reg.get_risk(args.slug, args.id)))
-    _merge(reg, session, args.slug, args.id, args.into)
+    seen = reg.get_risk(args.slug, args.id)
+    print(format_risk(reg, args.slug, seen))
+    _merge(reg, session, args.slug, seen, args.into)
     return 0
 
 
 def cmd_retire(args, reg, root) -> int:
     session = human_session(reg, "retire")
-    print(format_risk(reg, args.slug, reg.get_risk(args.slug, args.id)))
-    _retire(reg, session, args.slug, args.id, args.reason)
+    seen = reg.get_risk(args.slug, args.id)
+    print(format_risk(reg, args.slug, seen))
+    _retire(reg, session, args.slug, seen, args.reason)
     return 0
 
 
 def cmd_import_legacy(args, reg, root) -> int:
     session = human_session(reg, "import-legacy")
     slug = args.slug
-    legacy = reg.system(slug).legacy_catalog
-    if not legacy:
-        raise RegistryError("no legacy_catalog in system.toml")
-    path = reg.config.framework_path / legacy
-    try:
-        rows = catalog.parse(path.read_text(encoding="utf-8"))
-    except OSError as e:
-        raise RegistryError(f"cannot read {path}: {e.strerror}") from None
-    except (catalog.CatalogError, UnicodeDecodeError) as e:
-        raise RegistryError(f"{path}: {e}") from None
-    print(f"rows: {len(rows)}")
-    print(f"guide commit: {core.framework_commit(reg.config.framework_path)}")
+    preview = reg.import_preview(slug)
+    print(f"rows: {preview['count']} ({preview['first']} to {preview['last']})")
+    print(f"guide commit: {preview['commit']}")
     confirm(slug, "import")
     ids = reg.import_legacy(session, slug)
     print(f"imported {len(ids)} risks, all approved with detail incomplete")
@@ -488,6 +505,8 @@ def main(argv: list[str] | None = None, *, project_root: Path | None = None) -> 
     reg = None
     try:
         if getattr(args, "template", False):
+            if args.run:
+                build_parser().error("--template does not take --run")
             return args.template_func(args)
         if args.human:  # before the database opens, a file is read, or anything is printed
             core.require_interactive(getattr(args, "human_name", args.command))

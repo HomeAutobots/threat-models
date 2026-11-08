@@ -101,6 +101,107 @@ class CliTest(TmpTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "approved")
 
+    def test_review_refuses_edit_between_display_and_confirm(self):
+        run, _ = self.ai_add()
+        calls = []
+
+        def hook(prompt):
+            calls.append(prompt)
+            if prompt.startswith("[a]pprove"):
+                return "a" if len(calls) == 1 else "q"
+            if prompt.startswith("Review note"):
+                self.reg.edit_risk("demo", "T-01", {"notes": "sneaky"}, run_id=run)
+                return NOTE
+            if prompt.startswith("Type"):
+                return "T-01"
+            return "q"
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch("tmreg.core._has_tty", return_value=True), \
+                mock.patch("builtins.input", side_effect=hook), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            cli.main(["review", "demo"], project_root=self.root)
+        self.assertIn("changed since it was shown", err.getvalue())
+        self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "pending")
+
+    def test_review_skips_item_approved_elsewhere(self):
+        self.ai_add()
+        self.ai_add()
+        state = {"done": False}
+
+        def hook(prompt):
+            if prompt.startswith("[a]pprove"):
+                return "s"
+            return ""
+        out = io.StringIO()
+        real = self.reg.approve
+        # approve T-02 behind the reviewer's back once T-01 is on screen
+        orig_input = hook
+
+        def hook2(prompt):
+            if not state["done"]:
+                state["done"] = True
+                from helpers import session
+                self.reg.approve(session(), "demo", "T-02", NOTE)
+            return orig_input(prompt)
+        with mock.patch("tmreg.core._has_tty", return_value=True), \
+                mock.patch("builtins.input", side_effect=hook2), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            cli.main(["review", "demo"], project_root=self.root)
+        self.assertIn("T-02 is no longer pending; skipped.", out.getvalue())
+
+    def test_reject_merge_retire_dfd_import(self):
+        self.ai_add()
+        self.ai_add()
+        code, out, _ = self.run_cli("reject", "demo", "T-02", tty=True, inputs=[NOTE, "T-99"])
+        self.assertEqual((code, self.reg.get_risk("demo", "T-02")["review_state"]), (1, "pending"))
+        code, _, _ = self.run_cli("reject", "demo", "T-02", tty=True, inputs=[NOTE, "T-02"])
+        self.assertEqual((code, self.reg.get_risk("demo", "T-02")["review_state"]), (0, "rejected"))
+        self.ai_add()
+        self.run_cli("approve", "demo", "T-01", tty=True, inputs=[NOTE, "T-01"])
+        code, _, _ = self.run_cli("merge", "demo", "T-03", "--into", "T-01", tty=True,
+                                  inputs=[NOTE, "T-01"])
+        self.assertEqual(code, 1)  # mismatch: typed the target, not the pending ID
+        code, _, _ = self.run_cli("merge", "demo", "T-03", "--into", "T-01", tty=True,
+                                  inputs=[NOTE, "T-03"])
+        self.assertEqual((code, self.reg.get_risk("demo", "T-03")["merged_into"]), (0, "T-01"))
+        code, _, _ = self.run_cli("retire", "demo", "T-01", "--reason", NOTE, tty=True, inputs=["T-00"])
+        self.assertEqual(code, 1)
+        code, _, _ = self.run_cli("retire", "demo", "T-01", "--reason", NOTE, tty=True, inputs=["T-01"])
+        self.assertEqual((code, self.reg.get_risk("demo", "T-01")["status"]), (0, "retired"))
+        # dfd approve: unchanged DFD is refused by core after the prompts
+        code, out, err = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
+        self.assertEqual(code, 1)
+        self.assertIn("version:", out)
+        self.assertIn("already approved", err)
+        (self.root / "systems/demo/dfd.md").write_text(
+            (self.root / "systems/demo/dfd.md").read_text() + "\nMore prose.\n")
+        code, _, _ = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "wrong"])
+        self.assertEqual(code, 1)
+        code, _, _ = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
+        self.assertEqual((code, self.reg.dfd_status("demo").state), (0, "current"))
+
+    def test_import_legacy_flow(self):
+        reg = make_registry(self.tmp / "legacy", slug="demo", legacy=True)
+        self.root = reg.root
+        code, out, _ = self.run_cli("import-legacy", "demo", tty=True, inputs=["nope"])
+        self.assertEqual(code, 1)
+        self.assertIn("rows: 3", out)
+        self.assertEqual(reg.list_risks("demo"), [])
+        code, out, _ = self.run_cli("import-legacy", "demo", tty=True, inputs=["demo"])
+        self.assertEqual((code, len(reg.list_risks("demo"))), (0, 3))
+
+    def test_edit_without_run_or_terminal_is_refused(self):
+        self.ai_add()
+        code, out, err = self.run_cli("edit", "demo", "T-01", "--set", "status=planned")
+        self.assertEqual(code, 1)
+        self.assertIn("--run", err)
+
+    def test_template_with_run_is_usage_error(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                cli.main(["add", "demo", "--template", "--run", "x"], project_root=self.root)
+        self.assertEqual(cm.exception.code, 2)
+
     def test_list_json_all_states(self):
         self.ai_add()
         code, out, _ = self.run_cli("list", "demo", "--state", "all", "--json")

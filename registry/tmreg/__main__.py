@@ -1,4 +1,4 @@
-"""python3 registry/tmreg-package: `python3 -m tmreg` from the registry directory."""
+"""Run the CLI with `python3 -m tmreg` from the registry directory."""
 import sys
 
 if sys.version_info < (3, 11):

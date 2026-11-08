@@ -62,6 +62,24 @@ class ReviewTest(TmpTestCase):
         with self.assertRaisesRegex(RegistryError, "pending"):
             self.reg.approve(session(), "demo", "T-01", NOTE)
 
+    def test_seen_stale_is_refused_and_writes_nothing(self):
+        self.add()
+        seen = self.reg.get_risk("demo", "T-01")
+        self.reg.edit_risk("demo", "T-01", {"notes": "changed"}, run_id=self.run)
+        before = len(self.reg.history("demo"))
+        for call in (lambda: self.reg.approve(session(), "demo", "T-01", NOTE, seen=seen),
+                     lambda: self.reg.reject(session(), "demo", "T-01", NOTE, seen=seen)):
+            with self.assertRaisesRegex(RegistryError, "changed since it was shown"):
+                call()
+        self.assertEqual(self.reg.get_risk("demo", "T-01")["review_state"], "pending")
+        self.assertEqual(len(self.reg.history("demo")), before)
+
+    def test_seen_current_succeeds(self):
+        self.add()
+        seen = self.reg.get_risk("demo", "T-01")
+        r = self.reg.approve(session(), "demo", "T-01", NOTE, seen=seen)
+        self.assertEqual(r["review_state"], "approved")
+
     def test_approve_guards(self):
         self.add()
         with self.assertRaisesRegex(RegistryError, "20"):
@@ -188,6 +206,13 @@ class ReviewTest(TmpTestCase):
 
 
 class ImportLegacyTest(TmpTestCase):
+    def test_import_preview(self):
+        reg = make_registry(self.tmp, legacy=True)
+        p = reg.import_preview("demo")
+        self.assertEqual((p["count"], p["first"], p["last"]), (3, "T-01", "PT-01"))
+        self.assertRegex(p["commit"], r"^[0-9a-f]{40}")
+        self.assertEqual(reg.list_risks("demo"), [])
+
     def test_import_legacy(self):
         reg = make_registry(self.tmp, legacy=True)
         ids = reg.import_legacy(session(), "demo")
