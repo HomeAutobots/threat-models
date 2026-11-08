@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import catalog, config, db, dfd, ledger
+from . import catalog, config, db, dfd, ledger, report as report_mod
 from .model import (
     AI_REQUIRED, CONFIDENCE, EDITABLE_FIELDS, HUMAN_REQUIRED, JSON_COLUMNS, KEY_COLUMNS, LINDDUN,
     MIN_LENGTHS, NOTE_MIN, REVIEW_STATES, RISK_FIELDS, SNAPSHOT_FIELDS, STATUSES, STRIDE, SUPERSEDED_RE,
@@ -341,6 +341,7 @@ class Registry:
                 _create(doc, skeleton)
         except OSError as e:
             raise RegistryError(f"cannot create {e.filename}: {e.strerror}") from None
+        self._write_register(slug)
 
     def _skeleton(self, slug: str, name: str) -> str:
         path = self.config.framework_path / TEMPLATE_PATH
@@ -456,6 +457,7 @@ class Registry:
                 "ids": {k: list(v) for k, v in parsed.ids.items()},
                 "approved_by": session.name, "approved_at": db.now(), "note": note,
             }, op="dfd-approve", actor=f"human:{session.name}")
+        self._write_register(slug)
         return ledger.read_rows(self.conn, slug, "dfd_approvals")[approval_id]
 
     # ---- drafting ---------------------------------------------------------------------------
@@ -518,6 +520,7 @@ class Registry:
                 "possible_duplicate_of": dup, "dfd_approval_id": latest["id"],
                 "detail_complete": 1, "created_at": at, "updated_at": at,
             }, op="add", actor=actor)
+        self._write_register(slug)
         return self.get_risk(slug, risk_id)
 
     def edit_risk(self, slug, risk_id, fields: dict, *, run_id: str | None) -> dict:
@@ -554,6 +557,7 @@ class Registry:
             update["dfd_approval_id"] = latest["id"]
             update["updated_at"] = db.now()
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op="edit", actor=actor)
+        self._write_register(slug)
         return self.get_risk(slug, risk_id)
 
     # ---- human review -----------------------------------------------------------------------
@@ -578,6 +582,7 @@ class Registry:
                 "review_state": "approved", **self._review_fields(session, note),
                 "last_approved": None,
             }, op="approve", actor=f"human:{session.name}")
+        self._write_register(slug)
         return self._risk(slug, risk_id)
 
     def reject(self, session, slug, risk_id, note) -> dict:
@@ -596,6 +601,7 @@ class Registry:
                 op, log_note = "revert", note
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op=op,
                              actor=f"human:{session.name}", note=log_note)
+        self._write_register(slug)
         return self._risk(slug, risk_id)
 
     def merge(self, session, slug, pending_id, into_id, note) -> dict:
@@ -616,6 +622,7 @@ class Registry:
                 "review_state": "rejected", "merged_into": into_id,
                 **self._review_fields(session, note),
             }, op="merge", actor=f"human:{session.name}")
+        self._write_register(slug)
         return self._risk(slug, pending_id)
 
     def retire(self, session, slug, risk_id, reason) -> dict:
@@ -632,6 +639,7 @@ class Registry:
             ledger.write_row(self.conn, slug, "risks", risk_id, {
                 "status": "retired", "status_reason": reason, "updated_at": db.now(),
             }, op="retire", actor=f"human:{session.name}")
+        self._write_register(slug)
         return self._risk(slug, risk_id)
 
     def import_legacy(self, session, slug) -> list[str]:
@@ -700,6 +708,7 @@ class Registry:
             seq = db.table(slug, "sequences")
             for prefix, n in top.items():
                 self.conn.execute(f"UPDATE {seq} SET next = ? WHERE prefix = ?", (n + 1, prefix))
+        self._write_register(slug)
         return [r.id for r, _ in prepared]
 
     # ---- verification -----------------------------------------------------------------------
@@ -804,3 +813,38 @@ class Registry:
             return ledger.changes(self.conn, slug)
         self._risk(slug, risk_id)
         return [c for c in ledger.changes(self.conn, slug, risk_id) if c["tbl"] == "risks"]
+
+    # ---- reports ----------------------------------------------------------------------------
+
+    def report(self, slug, fmt: str = "md", *, include_pending=False, include_retired=False,
+               include_rejected=False) -> str:
+        if fmt not in ("md", "csv", "html"):
+            raise RegistryError(f"format must be md, csv, or html; got {fmt!r}")
+        self._require(slug)
+        rows = report_mod.select(self.list_risks(slug), include_pending=include_pending,
+                                 include_retired=include_retired, include_rejected=include_rejected)
+        if fmt == "csv":
+            return report_mod.render_csv(rows)
+        last = self.conn.execute(
+            f"SELECT seq, at FROM {db.table(slug, 'changes')} ORDER BY seq DESC LIMIT 1").fetchone()
+        stamp = "no changes yet" if last is None else f"change #{last['seq']} ({last['at']})"
+        shown = ["approved"] + [name for name, on in (("pending", include_pending),
+                                                      ("rejected", include_rejected),
+                                                      ("retired", include_retired)) if on]
+        scope = ("Approved risks only." if len(shown) == 1 else
+                 f"Includes {', '.join(shown[:-1])} and {shown[-1]} risks.")
+        title = f"{self.system(slug).name} ({slug})"
+        render = report_mod.render_md if fmt == "md" else report_mod.render_html
+        return render(rows, title=title, stamp=stamp, scope_note=scope)
+
+    def _write_register(self, slug: str) -> Path:
+        """Regenerate register.md (register.trial.md for a trial database) after a committed write."""
+        path = self.root / "systems" / slug / ("register.trial.md" if self.is_trial else "register.md")
+        try:
+            text = self.report(slug, "md")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except (OSError, RegistryError) as e:
+            raise RegistryError(f"the write succeeded but {path.name} could not be regenerated "
+                                f"({e}); run ./tmreg report {slug}") from e
+        return path
