@@ -7,12 +7,11 @@ import { ApiError, apiPath } from '../api/client'
 import type { Conflict409, Reg, Risk, RiskDetail } from '../api/types'
 import { ReReviewDiff } from '../components/review/ReReviewDiff'
 import { DecisionPanel } from '../components/review/DecisionPanel'
-import classes from '../components/review/review.module.css'
+import classes from '../components/layout/RecordLayout.module.css'
 import { RiskRecord, visibleSections } from '../components/record/RiskRecord'
 import { SectionOutline } from '../components/record/SectionOutline'
+import { refusalText, STALE_TEXT } from '../components/manage/errors'
 import { visible } from '../lib/visible'
-
-const STALE_TEXT = 'This risk changed after you opened it. Review the current version.'
 
 type Decision = 'approve' | 'reject' | 'merge'
 
@@ -22,35 +21,55 @@ export function ReviewPage() {
   const risks = useRisks(reg as Reg, slug ?? '')
 
   // Pin the shown item into the URL, so a background refetch of the list cannot switch it.
-  const firstPending = (risks.data ?? []).find((r) => r.review_state === 'pending')?.id
-  const unpinned = !params.get('id') && !!firstPending
+  const queue = (risks.data ?? []).filter((r) => r.review_state === 'pending')
+  const firstPending = queue[0]?.id
+  const wanted = params.get('id')
+  // No id, or an id that is not pending (decided elsewhere, or mistyped): pin what is shown.
+  const unpinned = (!wanted || !queue.some((r) => r.id === wanted)) && !!firstPending
   useEffect(() => {
     if (unpinned && firstPending) setParams({ id: firstPending }, { replace: true })
   }, [unpinned, firstPending, setParams])
 
   if (risks.isLoading) return <Loader m="xl" aria-label="Loading" />
-  if (risks.error) return <Alert color="red">{risks.error.message}</Alert>
+  // A failed list refetch replaces the page only when there is nothing to show.
+  if (risks.error && !risks.data) return <Alert color="red">{visible(risks.error.message)}</Alert>
+  const listError = risks.error ? (
+    <Alert color="red" mb="md">
+      {visible(risks.error.message)}
+    </Alert>
+  ) : null
 
-  const queue = (risks.data ?? []).filter((r) => r.review_state === 'pending')
-  if (queue.length === 0) return <Text>No risks are waiting for review.</Text>
+  if (queue.length === 0) {
+    return (
+      <div>
+        {listError}
+        <Text>No risks are waiting for review.</Text>
+      </div>
+    )
+  }
 
-  const wanted = params.get('id')
-  const index = Math.max(0, queue.findIndex((r) => r.id === wanted))
+  const index = Math.max(
+    0,
+    queue.findIndex((r) => r.id === wanted),
+  )
   const go = (id: string | undefined) => setParams(id ? { id } : {})
 
   return (
-    <ReviewItem
-      key={queue[index].id}
-      reg={reg as Reg}
-      slug={slug as string}
-      id={queue[index].id}
-      position={index + 1}
-      total={queue.length}
-      previousId={queue[index - 1]?.id}
-      nextId={queue[index + 1]?.id}
-      afterDecisionId={queue[index + 1]?.id ?? queue[index - 1]?.id}
-      go={go}
-    />
+    <>
+      {listError}
+      <ReviewItem
+        key={queue[index].id}
+        reg={reg as Reg}
+        slug={slug as string}
+        id={queue[index].id}
+        position={index + 1}
+        total={queue.length}
+        previousId={queue[index - 1]?.id}
+        nextId={queue[index + 1]?.id}
+        afterDecisionId={queue[index + 1]?.id ?? queue[index - 1]?.id}
+        go={go}
+      />
+    </>
   )
 }
 
@@ -89,30 +108,51 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
   }
 
   const client = useQueryClient()
-  const [reloadFailed, setReloadFailed] = useState(false)
+  // Set by a 409. `base` is the risk query's `dataUpdateCount` at that moment. `shownAt` is the
+  // count `shown` was last reconciled from. The reload is done only when `shown` comes from a
+  // fetch after the 409, so buttons and context change in the same render, and an offline
+  // refetch cannot unlock anything.
+  const [shownAt, setShownAt] = useState(0)
+  const [conflict, setConflict] = useState<{
+    base: number
+    histBase: number
+    failed: boolean
+  } | null>(null)
+  const riskKey = [reg, slug, 'risk', id]
+  const histKey = [...riskKey, 'history']
 
   // Compare a fetched record with the pinned one. Equal: keep the pinned object and take the
   // fresh context. Different: swap it in and show the banner.
   const reconcile = (data: RiskDetail | undefined) => {
     if (!data) return
+    setShownAt(client.getQueryState(riskKey)?.dataUpdateCount ?? 0)
     const prev = shownRef.current
     if (!prev) return show(data)
     if (JSON.stringify(prev.risk) === JSON.stringify(data.risk)) return show({ ...data, risk: prev.risk })
     setStale(true)
     show(data)
   }
-  const latest = () => client.getQueryData<RiskDetail>([reg, slug, 'risk', id])
+  const latest = () => client.getQueryData<RiskDetail>(riskKey)
 
   const data = fetched.data
+  const updatedAt = fetched.dataUpdatedAt
   useEffect(() => {
     if (inFlight.current) return
     reconcile(data)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data])
+  }, [data, updatedAt])
 
-  if (fetched.error) return <Alert color="red">{fetched.error.message}</Alert>
+  // An error with a record on the page shows inside the item, below.
+  if (fetched.error && !shown) return <Alert color="red">{visible(fetched.error.message)}</Alert>
   if (!shown || !meta.data) return <Loader m="xl" aria-label="Loading" />
 
+  // The history must also have been refetched since the 409, or the old one would show as current.
+  // Reading `dataUpdatedAt` subscribes this component to a refetch that returns equal data, which
+  // the observer would otherwise not report.
+  void history.dataUpdatedAt
+  const histCount = client.getQueryState(histKey)?.dataUpdateCount ?? 0
+  const awaiting = conflict !== null && (shownAt <= conflict.base || histCount <= conflict.histBase)
+  const reloadFailed = awaiting && conflict.failed
   const risk = shown.risk
   const isReReview = !!risk.last_approved
   const base = `/${reg}/${encodeURIComponent(slug)}`
@@ -125,24 +165,33 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
     setStale(false)
     const body = kind === 'merge' ? { into: risk.possible_duplicate_of, note, seen: risk } : { note, seen: risk }
     try {
-      await action.mutateAsync({ path: apiPath(reg, slug, 'risks', risk.id, kind), body })
+      await action.mutateAsync({
+        path: apiPath(reg, slug, 'risks', risk.id, kind),
+        body,
+      })
       go(afterDecisionId)
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         const current = (e.body as Conflict409 | null)?.current
         if (current) show({ ...shown, risk: current as Risk })
         setStale(true)
+        const seenAt = client.getQueryState(riskKey)?.dataUpdateCount ?? 0
+        const histSeenAt = client.getQueryState(histKey)?.dataUpdateCount ?? 0
+        setConflict({ base: seenAt, histBase: histSeenAt, failed: false })
         // The context (elements, duplicate, DFD) belongs to the old record: reload it before any
         // decision, and keep every button disabled until it is here.
         try {
-          await client.refetchQueries({ queryKey: [reg, slug, 'risk', id], exact: true }, { throwOnError: true })
-          reconcile(latest())
+          await Promise.all([
+            client.refetchQueries({ queryKey: histKey, exact: true }, { throwOnError: true }),
+            client.refetchQueries({ queryKey: riskKey, exact: true }, { throwOnError: true }),
+          ])
+          // A paused refetch resolves without fetching: only a record newer than the 409 counts.
+          if ((client.getQueryState(riskKey)?.dataUpdateCount ?? 0) > seenAt) reconcile(latest())
         } catch {
-          setReloadFailed(true)
-          setError('Could not reload this risk. Reload the page before deciding.')
+          setConflict({ base: seenAt, histBase: histSeenAt, failed: true })
         }
       } else {
-        setError(visible(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)))
+        setError(refusalText(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)))
         reconcile(latest())
       }
     } finally {
@@ -173,6 +222,11 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
 
       <div className={classes.layout}>
         <div>
+          {fetched.error && !reloadFailed && (
+            <Alert color="red" mb="md">
+              {visible(fetched.error.message)}
+            </Alert>
+          )}
           {stale && (
             <Alert color="yellow" mb="md">
               {STALE_TEXT}
@@ -185,7 +239,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
               </Anchor>
             </Alert>
           )}
-          {dfd.state === 'changed' && (
+          {dfd.state === 'changed' && !awaiting && (
             <Alert color="yellow" mb="md">
               <Text inherit>
                 {visible(
@@ -198,7 +252,12 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
             </Alert>
           )}
           {isReReview && <ReReviewDiff risk={risk} editable={meta.data.editable} labels={meta.data.labels} />}
-          <RiskRecord detail={shown} meta={meta.data} history={history.data ?? []} />
+          <RiskRecord
+            detail={shown}
+            meta={meta.data}
+            history={history.data ?? []}
+            reloading={awaiting}
+          />
         </div>
         <aside className={classes.rail}>
           <SectionOutline sections={visibleSections(risk)} />
@@ -207,8 +266,10 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
             isReReview={isReReview}
             duplicateId={risk.possible_duplicate_of ? visible(risk.possible_duplicate_of) : null}
             noteMin={meta.data.note_min}
-            busy={busy || reloadFailed}
-            error={error}
+            trial={reg === 'trial'}
+            busy={busy || awaiting}
+            reloading={awaiting && !reloadFailed}
+            error={error ?? (reloadFailed ? 'Could not reload this risk. Reload the page before deciding.' : null)}
             note={note}
             onNote={setNote}
             onApprove={() => decide('approve')}

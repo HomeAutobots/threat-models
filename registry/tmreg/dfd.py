@@ -105,6 +105,14 @@ def _live_lines(text: str) -> list[tuple[int, str | None]]:
     return out
 
 
+def _col(header: list[str], cells: list[str], *names: str) -> str:
+    """The cell under the first of `names` that is a column of this table and present in the row."""
+    for nm in names:
+        if nm in header and header.index(nm) < len(cells):
+            return cells[header.index(nm)]
+    return ""
+
+
 def parse(data: bytes) -> Dfd:
     sha = hashlib.sha256(data).hexdigest()
     try:
@@ -152,22 +160,17 @@ def parse(data: bytes) -> Dfd:
         kind = re.match(r"[A-Z]+", rid).group()
         ids[kind].append(rid)
 
-        def col(*names: str) -> str:
-            for nm in names:
-                if nm in header and header.index(nm) < len(cells):
-                    return cells[header.index(nm)]
-            return ""
-
         if kind in ("E", "P", "D"):
-            name = col("element") or (cells[1] if len(cells) > 1 else "")
-            details[rid] = {"name": name, "type": col("type"),
-                            "description": col("notes") or col("description")}
+            name = _col(header, cells, "element") or (cells[1] if len(cells) > 1 else "")
+            details[rid] = {"name": name, "type": _col(header, cells, "type"),
+                            "description": (_col(header, cells, "notes")
+                                            or _col(header, cells, "description"))}
         elif kind == "F":
-            details[rid] = {"name": col("label"), "type": "Data flow", "description": "",
-                            "from": col("from"), "to": col("to")}
+            details[rid] = {"name": _col(header, cells, "label"), "type": "Data flow",
+                            "description": "", "from": _col(header, cells, "from"), "to": _col(header, cells, "to")}
         elif kind == "TB":
-            details[rid] = {"name": col("boundary"), "type": "Trust boundary",
-                            "description": col("what enforces it")}
+            details[rid] = {"name": _col(header, cells, "boundary"), "type": "Trust boundary",
+                            "description": _col(header, cells, "what enforces it")}
         if kind == "F":
             if "from" not in header or "to" not in header:
                 raise DfdError("flows table needs From and To columns")

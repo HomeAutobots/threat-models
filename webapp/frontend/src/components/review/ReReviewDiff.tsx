@@ -56,7 +56,7 @@ export function ReReviewDiff({
         </Table>
       )}
       <Text size="sm" c="dimmed" mt="xs">
-        {unchanged} other fields unchanged
+        {unchanged} other {unchanged === 1 ? 'field' : 'fields'} unchanged
       </Text>
     </Card>
   )

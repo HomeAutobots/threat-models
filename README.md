@@ -227,7 +227,8 @@ repo, is not guarded by them, even when it works on files here.
      servers: Claude in Chrome (`mcp__claude-in-chrome`), the Claude app's built-in browser
      (`mcp__Claude_Browser`), computer use (`mcp__computer-use`), and `mcp__remote-devices`, which
      hosts the remote browser and computer tools of a linked session. `/tm-model` disallows the
-     same four for its run. A deny rule beats any allow rule.
+     same four for the turn that starts it; the deny rules in `.claude/settings.json` hold for the
+     whole session. A deny rule beats any allow rule.
    - Deny rules apply right away. The allow rules, and the read access to the guide in
      `additionalDirectories`, apply only after you accept the workspace-trust dialog for this
      folder.
@@ -278,7 +279,7 @@ Also:
   includes MCP tools that write local files or send data out, for example mail or drive
   connectors, so keep such servers off for this project. Of the MCP servers, the deny rules cover
   only the four browser and desktop automation servers in layer 3. `/tm-model` also disallows the
-  built-in web tools (WebFetch and WebSearch) for its run.
+  built-in web tools (WebFetch and WebSearch) for the turn that starts it.
 - A browser-automation tool working in your signed-in browser, such as Claude in Chrome, can act
   as you in the web app. A guarded session is denied those four servers. A Claude session started
   elsewhere is not, nor is Claude in Chrome when you use it from Chrome itself. Never grant the

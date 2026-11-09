@@ -4,10 +4,11 @@ import threading
 
 COOKIE = "tmweb_session"
 CSRF_HEADER = "X-CSRF-Token"
-DEV_ORIGIN = "http://localhost:5173"
+DEV_PORT = 5199  # Vite under --dev, with strictPort, so no other dev server shares the origin
+DEV_ORIGIN = f"http://localhost:{DEV_PORT}"
 
 
-def _same(a: str, b: str) -> bool:
+def same(a: str, b: str) -> bool:
     return secrets.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
@@ -24,7 +25,7 @@ class SessionStore:
     def consume(self, token: str) -> str | None:
         """Return a new session ID if `token` is the unused sign-in token, else None."""
         with self._lock:
-            if self._token is None or not _same(token, self._token):
+            if self._token is None or not same(token, self._token):
                 return None
             self._token = None
             session_id = secrets.token_urlsafe(32)
@@ -34,7 +35,7 @@ class SessionStore:
     def csrf(self, session_id: str) -> str | None:
         with self._lock:
             for known, csrf in self._sessions.items():
-                if _same(session_id, known):
+                if same(session_id, known):
                     return csrf
             return None
 

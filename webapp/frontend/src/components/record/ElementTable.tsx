@@ -27,9 +27,6 @@ export function ElementTable({
 }) {
   return (
     <>
-      <Text size="sm" c="dimmed" mb="xs" style={WRAP_STYLE}>
-        {visible(elementCaption(dfd))}
-      </Text>
       {ids.length === 0 ? (
         <NotProvided />
       ) : (
@@ -55,14 +52,14 @@ export function ElementTable({
                   {el === null ? (
                     <Table.Td colSpan={3}>
                       <Text c="dimmed" fs="italic" inherit>
-                        Not in the current DFD
+                        {dfd.error ? 'DFD details unavailable' : 'Not in the current DFD'}
                       </Text>
                     </Table.Td>
                   ) : (
                     <>
                       <Table.Td style={WRAP_STYLE}>
                         {text(el.from) || text(el.to) ? (
-                          <div>{visible(`${text(el.from)} → ${text(el.to)}`)}</div>
+                          <div>{visible(`${text(el.from) || '?'} → ${text(el.to) || '?'}`)}</div>
                         ) : null}
                         <div>{visible(el.name)}</div>
                       </Table.Td>

@@ -37,6 +37,11 @@ describe('ReReviewDiff', () => {
     expect(screen.getByText('3 other fields unchanged')).toBeInTheDocument()
   })
 
+  it('says 1 other field unchanged in the singular', () => {
+    renderDiff({ title: 'A', notes: 'n2', impact: 'x', owner: 'o', last_approved: { title: 'A', notes: 'n1', impact: 'y', owner: 'p' } })
+    expect(screen.getByText('1 other field unchanged')).toBeInTheDocument()
+  })
+
   it('shows a field that went from empty to a value as Not provided then the value', () => {
     renderDiff({ title: 'T', notes: 'n', impact: null, owner: 'Sam', last_approved: { title: 'T', notes: 'n', impact: null } })
     const rows = screen.getAllByRole('row').slice(1)

@@ -54,7 +54,7 @@ export interface Risk {
   exception_ref: string | null
   treatment: string | null
   decision_requested: string | null
-  evidence: string[] | string | null
+  evidence: string | null
   ai_confidence: string | null
   owner: string | null
   due: string | null

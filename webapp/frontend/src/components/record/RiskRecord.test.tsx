@@ -119,8 +119,9 @@ describe('RiskRecord', () => {
 
   it('element source label: current', () => {
     renderRecord(detail())
-    expect(within(card('where')).getByText('From DFD-1 (current)')).toBeInTheDocument()
     const w = within(card('where'))
+    // The caption shows once, in the heading.
+    expect(w.getAllByText(/From DFD-1 \(current\)/)).toHaveLength(1)
     expect(w.getByText('P1 \u2192 P2')).toBeInTheDocument()
     expect(w.getByText('Order lookups')).toBeInTheDocument()
     expect(w.getByText('Data flow')).toBeInTheDocument()
@@ -136,10 +137,8 @@ describe('RiskRecord', () => {
     )
     const where = card('where')
     expect(
-      within(where).getByText(
-        'From the current dfd.md, which has changed since this risk was written against DFD-1',
-      ),
-    ).toBeInTheDocument()
+      within(where).getAllByText(/From the current dfd\.md, which has changed since this risk was written against DFD-1/),
+    ).toHaveLength(1)
     expect(within(where).getAllByText('Not in the current DFD')).toHaveLength(2)
   })
 
@@ -147,7 +146,44 @@ describe('RiskRecord', () => {
     renderRecord(
       detail({ dfd: { state: 'none', latest_id: null, written_against: null, error: 'bad file' }, elements: {} }),
     )
-    expect(within(card('where')).getByText('DFD details unavailable: bad file')).toBeInTheDocument()
+    const where = within(card('where'))
+    expect(where.getAllByText(/DFD details unavailable: bad file/)).toHaveLength(1)
+    expect(where.queryByText('Not in the current DFD')).not.toBeInTheDocument()
+  })
+
+  it('on a DFD error each element row says DFD details unavailable', () => {
+    renderRecord(
+      detail({ dfd: { state: 'none', latest_id: null, written_against: null, error: 'bad file' }, elements: { P7: null, F19: null } }),
+    )
+    expect(within(card('where')).getAllByText('DFD details unavailable')).toHaveLength(2)
+    expect(within(card('where')).queryByText('Not in the current DFD')).not.toBeInTheDocument()
+  })
+
+  it('a flow with one end missing shows ? for it, with no leading space', () => {
+    renderRecord(
+      detail({
+        elements: {
+          P7: { name: 'A', type: 'Process', description: '' },
+          F19: { name: 'Order lookups', type: 'Data flow', description: '', from: null, to: 'P2' },
+        },
+      }),
+    )
+    const cell = within(card('where')).getByText('Order lookups').parentElement as HTMLElement
+    expect(cell.firstElementChild?.textContent).toBe('? \u2192 P2')
+  })
+
+  it.each([
+    ['pending', null, 'None (new draft)'],
+    ['approved', null, 'None (no re-review pending)'],
+    ['rejected', null, 'None (no re-review pending)'],
+  ])('last_approved null on a %s risk reads %s', (state, _v, text) => {
+    renderRecord(detail({}, { review_state: state, last_approved: null }))
+    expect(within(card('record')).getByText(text)).toBeInTheDocument()
+  })
+
+  it('last_approved with a value keeps its copy', () => {
+    renderRecord(detail({}, { review_state: 'pending', last_approved: { title: 'x' } as never }))
+    expect(within(card('record')).getByText('Kept while this re-review is pending')).toBeInTheDocument()
   })
 
   it('category label', () => {

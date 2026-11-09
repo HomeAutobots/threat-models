@@ -23,4 +23,9 @@ describe('visible', () => {
     expect(visible('a\rb')).toBe('a\\rb')
     expect(visible('a\r\nb')).toBe('a\\r\nb')
   })
+  it('escapes a lone surrogate, U+2028, and U+200B', () => {
+    expect(visible('a\ud800b')).toBe('a\\ud800b')
+    expect(visible('a\u2028b')).toBe('a\\u2028b')
+    expect(visible('a\u200bb')).toBe('a\\u200bb')
+  })
 })

@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { apiPath } from '../../api/client'
 import { useAction } from '../../api/queries'
 import type { Meta, Reg, Risk } from '../../api/types'
-import { failure, STALE_TEXT } from './errors'
+import { failure, sameRecord, STALE_TEXT } from './errors'
 
 interface Props {
   reg: Reg
@@ -21,11 +21,19 @@ export function ChangeStatusModal({ reg, slug, risk, meta, opened, onClose }: Pr
   // `seen` is the record this dialog acts on; a 409 replaces it with the current one.
   const [seen, setSeen] = useState<Risk>(risk)
   const [stale, setStale] = useState(false)
+  // A 409 without the current record: the page refetches it, and the next one to arrive replaces `seen`.
+  const [adoptFrom, setAdoptFrom] = useState<Risk | null>(null)
   const [status, setStatus] = useState<string | null>(risk.status)
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef(false)
+
+  // Adjusted while rendering, not in an effect: the refetched record has arrived.
+  if (adoptFrom !== null && risk !== adoptFrom) {
+    setSeen(risk)
+    setAdoptFrom(null)
+  }
 
   const save = async () => {
     if (inFlight.current || !status) return
@@ -33,6 +41,7 @@ export function ChangeStatusModal({ reg, slug, risk, meta, opened, onClose }: Pr
     setBusy(true)
     setError(null)
     setStale(false)
+    setAdoptFrom(null)
     try {
       await action.mutateAsync({
         path: apiPath(reg, slug, 'risks', risk.id, 'edit'),
@@ -44,6 +53,8 @@ export function ChangeStatusModal({ reg, slug, risk, meta, opened, onClose }: Pr
       if (f.kind === 'stale') {
         setStale(true)
         if (f.current) setSeen(f.current)
+        else if (!sameRecord(risk, seen)) setSeen(risk) // the page already holds a newer one
+        else setAdoptFrom(risk)
         void client.invalidateQueries({ queryKey: [reg, slug] })
       } else {
         setError(f.message)

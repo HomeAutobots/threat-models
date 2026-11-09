@@ -95,7 +95,7 @@ Anti-goals (a failure even if everything works):
 
 - The owner starts the app with `make web`, or by double-clicking a `.command` file in `webapp/`,
   which opens Terminal and runs the same thing. The first start installs the pinned dependencies
-  and builds the front end. Later starts skip what is already current.
+  and builds the front end. Later starts skip only `npm ci`, and only when the lockfile hasn't changed.
 - Before anything else, the server calls `core.require_interactive("web")`. It refuses to start
   without an interactive terminal or when `CLAUDECODE` is set, exactly like the human-only
   commands. A Claude Code shell cannot start it.
@@ -147,7 +147,8 @@ As defense in depth, `threat-models/.claude/settings.json` gains a deny rule for
 `Edit(/webapp/**)`. The guard's allow-list already blocks starting the server and every web
 request command. The settings also deny the browser and desktop automation MCP servers
 (`mcp__claude-in-chrome`, `mcp__Claude_Browser`, `mcp__computer-use`, and `mcp__remote-devices`,
-which hosts the remote browser and computer tools), and `/tm-model` disallows them, so a guarded
+which hosts the remote browser and computer tools), and `/tm-model` disallows them for the turn that
+starts it; the deny rules in `.claude/settings.json` hold for the whole session, so a guarded
 session cannot drive the signed-in browser. A session started elsewhere can, which is why the
 rule above still holds.
 
@@ -167,6 +168,9 @@ an adversarial review before commit:
    `approve` uses for imported one-liners: if `detail_complete` is 0 and every `AI_REQUIRED` field
    is now filled, it sets `detail_complete` to 1. That way an imported catalog row the owner fills
    in stops being reported as "detail incomplete".
+   Such an edit moves `dfd_approval_id` to the latest DFD approval only when it changes
+   `elements`. Otherwise the risk keeps the DFD it was written against, so "the DFD has moved on"
+   still shows. AI edits and edits of pending risks always move it.
 2. **Edit takes `seen` and a reason.** `edit_risk` gains keyword-only `seen` (as on `approve`,
    raising `StaleRecord` if the row changed since it was shown) and an optional `note`, stored as
    the change log's note. The web app always passes `seen`. The CLI keeps working without either.

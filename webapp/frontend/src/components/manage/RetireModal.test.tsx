@@ -10,7 +10,7 @@ const risk = { id: 'T-1', status: 'open', review_state: 'approved', title: 'A' }
 const CONFIRM = "Retire T-1? It stays in the register under Retired and can't be edited."
 
 let posts: { url: string; body: any }[]
-let reply409: Risk | null
+let reply409: Risk | 'no-current' | null
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -24,6 +24,7 @@ beforeEach(() => {
     vi.fn(async (url: string, init?: RequestInit) => {
       if (init?.method === 'POST') {
         posts.push({ url, body: JSON.parse(String(init.body)) })
+        if (reply409 === 'no-current') return json({ detail: 'x' }, 409)
         if (reply409) return json({ detail: 'x', current: reply409 }, 409)
         return json({ risk: { ...risk, status: 'retired' } })
       }
@@ -65,6 +66,23 @@ describe('RetireModal', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 
+  it('strips outer whitespace the way Python does: U+001C and U+0085 go, U+FEFF stays', async () => {
+    renderModal()
+    const box = await screen.findByLabelText('Reason')
+    fireEvent.change(box, { target: { value: `\u001c\u0085${'x'.repeat(5)}\u0085` } })
+    expect(screen.getByText('5 / 20')).toBeInTheDocument()
+    fireEvent.change(box, { target: { value: `\ufeff${'x'.repeat(19)}` } })
+    expect(screen.getByText('20 / 20')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retire T-1' })).toBeEnabled()
+  })
+
+  it('counts the reason in code points, as core does', async () => {
+    renderModal()
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: '😀'.repeat(20) } })
+    expect(screen.getByText('20 / 20')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retire T-1' })).toBeEnabled()
+  })
+
   it('Cancel on the confirmation posts nothing', async () => {
     renderModal()
     fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: 'x'.repeat(20) } })
@@ -99,5 +117,71 @@ describe('RetireModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
     await waitFor(() => expect(posts).toHaveLength(2))
     expect(posts[1].body).toEqual({ reason, seen: current })
+  })
+
+  it('escapes the risk ID in the title, the button and the confirmation', async () => {
+    const hostile = { ...risk, id: 'T\u202e1' } as Risk
+    render(
+      <MantineProvider>
+        <QueryClientProvider client={makeQueryClient()}>
+          <RetireModal reg="main" slug="demo" risk={hostile} noteMin={20} opened onClose={vi.fn()} />
+        </QueryClientProvider>
+      </MantineProvider>,
+    )
+    expect(await screen.findByText('Retire T\\u202e1', { selector: 'h2' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'x'.repeat(20) } })
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T\\u202e1' }))
+    expect(screen.getByText(/^Retire T\\u202e1\? /)).toBeInTheDocument()
+  })
+
+  it('a 409 without current shows the banner and adopts the refetched risk as seen', async () => {
+    const refetched = { ...risk, status: 'accepted' } as Risk
+    const ui = (r: Risk) => (
+      <MantineProvider>
+        <QueryClientProvider client={client}>
+          <RetireModal reg="main" slug="demo" risk={r} noteMin={20} opened onClose={vi.fn()} />
+        </QueryClientProvider>
+      </MantineProvider>
+    )
+    const client = makeQueryClient()
+    const { rerender } = render(ui(risk))
+    reply409 = 'no-current'
+    const reason = 'y'.repeat(25)
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: reason } })
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    expect(await screen.findByText(/This risk changed after you opened it/)).toBeInTheDocument()
+    rerender(ui(refetched))
+    expect(await screen.findByText(/Current status: accepted\./)).toBeInTheDocument()
+    reply409 = null
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1].body).toEqual({ reason, seen: refetched })
+  })
+
+  it('a 409 without current adopts the newer record the page already holds', async () => {
+    const newer = { ...risk, status: 'accepted' } as Risk
+    const client = makeQueryClient()
+    const ui = (r: Risk) => (
+      <MantineProvider>
+        <QueryClientProvider client={client}>
+          <RetireModal reg="main" slug="demo" risk={r} noteMin={20} opened onClose={vi.fn()} />
+        </QueryClientProvider>
+      </MantineProvider>
+    )
+    const { rerender } = render(ui(risk))
+    reply409 = 'no-current'
+    const reason = 'y'.repeat(25)
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: reason } })
+    rerender(ui(newer)) // the page's refetch landed before the dialog was submitted
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    expect(await screen.findByText(/Current status: accepted\./)).toBeInTheDocument()
+    reply409 = null
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1].body).toEqual({ reason, seen: newer })
   })
 })

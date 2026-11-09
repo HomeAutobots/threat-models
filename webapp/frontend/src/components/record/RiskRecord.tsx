@@ -42,30 +42,41 @@ function Heading({ s, suffix }: { s: Section; suffix?: ReactNode }) {
   )
 }
 
-function Fields({ fields, display }: { fields: string[]; display: (f: string) => unknown }) {
+function Fields({ fields, display, state }: { fields: string[]; display: (f: string) => unknown; state: string }) {
   return (
     <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 200px) minmax(0, 1fr)', gap: '10px 18px', margin: 0 }}>
       {fields.map((f) => (
-        <FieldRow key={f} field={f} value={display(f)} />
+        <FieldRow key={f} field={f} value={display(f)} state={state} />
       ))}
     </dl>
   )
 }
 
-function FieldRow({ field, value }: { field: string; value: unknown }) {
+function FieldRow({ field, value, state }: { field: string; value: unknown; state: string }) {
   return (
     <>
       <Text component="dt" size="sm" fw={600} c="dimmed">
         {FIELD_LABELS[field] ?? field}
       </Text>
       <dd style={{ margin: 0, maxWidth: '75ch', minWidth: 0 }}>
-        <FieldValue field={field} value={value} />
+        <FieldValue field={field} value={value} reviewState={state} />
       </dd>
     </>
   )
 }
 
-export function RiskRecord({ detail, meta, history }: { detail: RiskDetail; meta: Meta; history: Change[] }) {
+export function RiskRecord({
+  detail,
+  meta,
+  history,
+  reloading = false,
+}: {
+  detail: RiskDetail
+  meta: Meta
+  history: Change[]
+  /** The context (elements, duplicate) belongs to a replaced record: hide it until it reloads. */
+  reloading?: boolean
+}) {
   const { risk } = detail
   const display = (f: string): unknown => (f === 'category' ? formatCategory(risk.category, meta) : risk[f])
   const pending = risk.review_state === 'pending'
@@ -94,6 +105,7 @@ export function RiskRecord({ detail, meta, history }: { detail: RiskDetail; meta
           </>
         )
       case 'where':
+        if (reloading) return null
         return <ElementTable ids={risk.elements ?? []} elements={detail.elements} dfd={detail.dfd} />
       case 'threat':
         return (
@@ -111,23 +123,24 @@ export function RiskRecord({ detail, meta, history }: { detail: RiskDetail; meta
           </>
         )
       case 'dup':
+        if (reloading) return null
         return detail.duplicate ? (
           <DuplicateCompare risk={risk} other={detail.duplicate} meta={meta} />
         ) : (
-          <Fields fields={s.fields} display={display} />
+          <Fields fields={s.fields} display={display} state={risk.review_state} />
         )
       case 'record':
         return (
           <>
-            <Fields fields={s.fields} display={display} />
+            <Fields fields={s.fields} display={display} state={risk.review_state} />
             <Text size="xs" fw={600} c="dimmed" tt="uppercase" mt="md" mb="xs">
               History
             </Text>
-            <HistoryTable history={history} />
+            {reloading ? <NotProvided text="Reloading history…" /> : <HistoryTable history={history} />}
           </>
         )
       default:
-        return <Fields fields={s.fields} display={display} />
+        return <Fields fields={s.fields} display={display} state={risk.review_state} />
     }
   }
 
@@ -169,7 +182,7 @@ export function RiskRecord({ detail, meta, history }: { detail: RiskDetail; meta
           <Heading
             s={s}
             suffix={
-              s.id === 'where' ? (
+              s.id === 'where' && !reloading ? (
                 <Text size="xs" c="dimmed" component="span">
                   {'·'} {visible(elementCaption(detail.dfd))}
                 </Text>

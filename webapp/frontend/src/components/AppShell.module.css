@@ -17,9 +17,12 @@
 
 /*
  * A closed mobile navbar is only moved off screen. Hide it too, so its links leave the tab order
- * and the accessibility tree.
+ * and the accessibility tree. This is Mantine's collapsed-mobile query exactly: it uses
+ * (max-width: 47.99375em), the breakpoint less 0.1px (assign-navbar-variables.mjs). The opened
+ * mobile layout uses (max-width: 48em) (get-variables.mjs), so the navbar is never hidden while
+ * it is open: at 768px it is the opened layout that applies.
  */
-@media (max-width: $mantine-breakpoint-sm) {
+@media (max-width: 47.99375em) {
   .navbar[data-collapsed] {
     visibility: hidden;
   }

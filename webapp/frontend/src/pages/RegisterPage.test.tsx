@@ -32,11 +32,13 @@ function Where() {
   return <div data-testid="where">{loc.pathname + loc.search}</div>
 }
 
-function renderPage() {
+function renderPage(metaFails = false, metaDetail = 'meta is down') {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) =>
-      new Response(JSON.stringify(url === '/api/meta' ? meta : url.endsWith('/risks') ? risks : {}), {
+      url === '/api/meta' && metaFails
+        ? new Response(JSON.stringify({ detail: metaDetail }), { status: 422, headers: { 'Content-Type': 'application/json' } })
+        : new Response(JSON.stringify(url === '/api/meta' ? meta : url.endsWith('/risks') ? risks : {}), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -67,6 +69,27 @@ beforeEach(() => {
 })
 
 describe('RegisterPage', () => {
+  it('every tab points aria-controls at a real panel', async () => {
+    renderPage()
+    const tabs = await screen.findAllByRole('tab')
+    expect(tabs).toHaveLength(4)
+    for (const t of tabs) {
+      const panel = document.getElementById(t.getAttribute('aria-controls') ?? '')
+      expect(panel).not.toBeNull()
+      expect(panel).toHaveAttribute('role', 'tabpanel')
+    }
+  })
+
+  it('shows an alert when the metadata fails to load', async () => {
+    renderPage(true)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/meta is down/)
+  })
+
+  it('escapes control and bidi characters in a metadata error', async () => {
+    renderPage(true, 'meta \u202e down')
+    expect(await screen.findByRole('alert')).toHaveTextContent('meta \\u202e down')
+  })
+
   it('counts the tabs, and a retired risk is only under Retired', async () => {
     renderPage()
     expect(await screen.findByRole('tab', { name: /Approved/ })).toHaveTextContent('Approved2')
@@ -86,6 +109,12 @@ describe('RegisterPage', () => {
     expect(screen.queryByText('Title of A-1')).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'a-1' } })
     expect(screen.getByText('Title of A-1')).toBeInTheDocument()
+  })
+
+  it('has the row ID as a link to the risk page, for keyboard users', async () => {
+    renderPage()
+    await screen.findByText('Title of A-1')
+    expect(screen.getByRole('link', { name: 'A-1' })).toHaveAttribute('href', '/main/demo/risks/A-1')
   })
 
   it('filters by element and status', async () => {

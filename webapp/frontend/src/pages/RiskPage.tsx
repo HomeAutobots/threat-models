@@ -1,9 +1,10 @@
-import { Alert, Button, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core'
+import { Alert, Badge, Button, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useMeta, useRisk, useRiskHistory } from '../api/queries'
+import { visible } from '../lib/visible'
 import type { Reg } from '../api/types'
-import classes from '../components/review/review.module.css'
+import classes from '../components/layout/RecordLayout.module.css'
 import { ChangeStatusModal } from '../components/manage/ChangeStatusModal'
 import { RetireModal } from '../components/manage/RetireModal'
 import { RiskRecord, visibleSections } from '../components/record/RiskRecord'
@@ -17,7 +18,8 @@ export function RiskPage() {
   const [statusOpen, setStatusOpen] = useState(false)
   const [retireOpen, setRetireOpen] = useState(false)
 
-  if (fetched.error) return <Alert color="red">{fetched.error.message}</Alert>
+  if (fetched.error) return <Alert color="red">{visible(fetched.error.message)}</Alert>
+  if (meta.error) return <Alert color="red">{visible(meta.error.message)}</Alert>
   if (!fetched.data || !meta.data) return <Loader m="xl" aria-label="Loading" />
 
   const detail = fetched.data
@@ -40,6 +42,11 @@ export function RiskPage() {
               <Title order={2} size="h5">
                 Actions
               </Title>
+              {reg === 'trial' && (
+                <Badge color="orange" variant="filled">
+                  Trial register
+                </Badge>
+              )}
               {risk.review_state === 'pending' && (
                 <Button component={Link} to={`${base}/review?id=${encodeURIComponent(risk.id)}`}>
                   Review this risk
