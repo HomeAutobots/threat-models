@@ -101,8 +101,12 @@ Anti-goals (a failure even if everything works):
   commands. A Claude Code shell cannot start it.
 - The server prints a one-time sign-in link, `http://127.0.0.1:<port>/signin?token=<random>`,
   in that Terminal window and nowhere else. The token is 32 random bytes from `secrets`, held only
-  in memory, and works once. Opening it sets the session cookie and redirects to `/#k=<token>`. The front end
-  stores that token and removes `#k=` from the address bar. Nothing about sign-in is written to disk.
+  in memory, and works once. Opening it sets the session cookie and redirects to `/#k=<token>`,
+  where the token is the session's CSRF token (section 5.3). The front end keeps that token in
+  `localStorage` and removes `#k=` from the address bar. The server writes nothing about sign-in
+  to disk: the sign-in token, the session, and the CSRF token live in its memory only. The browser
+  does keep some of it: the CSRF token in `localStorage`, and the used sign-in link and the `/#k=`
+  URL may appear in its history. None of it works once the server stops.
 - The session lasts until the server stops. Closing the Terminal window stops the server and signs
   the owner out. Restarting prints a new link.
 - Human-only operations still build a `ReviewerSession` from `project.toml`. Core's existing
