@@ -114,15 +114,19 @@ Anti-goals (a failure even if everything works):
 
 Every `/api/` route, read or write, requires a valid session. On top of that:
 - **Cookie.** A random session ID, `HttpOnly`, `SameSite=Strict`, `Path=/`. Page scripts cannot
-  read it.
-- **Anti-forgery.** `GET /api/session` returns a CSRF token. Every write must send it in a header
-  and must carry an `Origin` equal to the app's own origin.
+  read it. Cookies are shared across `localhost` ports, so any other local server the owner opens
+  in the browser would receive it. The cookie alone therefore opens nothing.
+- **CSRF token.** The sign-in redirect goes to `/#k=<token>`. The fragment never reaches a server
+  or a `Referer`. The front end keeps the token in `localStorage`, which is per origin, so per
+  port. Every `/api` request, reads included, must send it in the `X-CSRF-Token` header along
+  with the cookie. Without both, the answer is 401. Every write must also carry an `Origin` equal
+  to the app's own origin.
 - **Host check.** Requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` are
   refused, which blocks DNS rebinding from a web page.
 - **No other way in.** No API keys, bearer tokens, or stored passwords. No CORS.
 - **One item per write.** Every write route names one system and at most one risk ID in its path.
 
-What this stops: any script or agent without the browser's cookie, including a Claude session
+What this stops: any script or agent without the browser's cookie and CSRF token, including a Claude session
 outside the guard that can make web requests. A guarded modeling session cannot make web requests
 at all.
 
@@ -285,7 +289,7 @@ CSRF header and the origin check.
 
 | Method and path | Calls |
 |---|---|
-| `GET /api/session` | Reviewer name, CSRF token, whether a trial register exists |
+| `GET /api/session` | Reviewer name, whether a trial register exists |
 | `GET /api/meta` | Field list, editable fields, labels, vocabularies, minimum lengths (from `model.py`) |
 | `GET /api/{reg}/systems` | Systems in that register |
 | `GET /api/{reg}/systems/{slug}/risks?state=` | `list_risks` |

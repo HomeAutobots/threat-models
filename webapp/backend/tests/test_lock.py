@@ -13,7 +13,7 @@ PARAMS = {"reg": "main", "slug": "demo", "id": "T-01"}
 def test_signin_token_works_once(anon):
     r = anon.get("/signin", params={"token": "T0KEN"}, follow_redirects=False)
     assert r.status_code == 303
-    assert r.headers["location"] == "/"
+    assert r.headers["location"].startswith("/#k=")
     cookie = r.headers["set-cookie"]
     assert "tmweb_session=" in cookie
     assert "HttpOnly" in cookie
@@ -52,19 +52,80 @@ def test_unknown_host_refused(anon):
 
 def test_unsafe_methods_need_csrf_and_origin(client):
     token = client.headers["X-CSRF-Token"]
-    no_csrf = {"X-CSRF-Token": ""}
-    assert client.post("/api/session", headers=no_csrf).status_code == 403
+    assert client.post("/api/session", headers={"X-CSRF-Token": ""}).status_code == 401
     bad_origin = {"X-CSRF-Token": token, "Origin": "http://evil.example"}
     assert client.post("/api/session", headers=bad_origin).status_code == 403
     assert client.post("/api/session").status_code == 405
 
 
+def test_cookie_alone_is_refused(client, app):
+    from fastapi.testclient import TestClient
+
+    cookie_only = TestClient(app, base_url="http://127.0.0.1:8765")
+    cookie_only.cookies.set("tmweb_session", client.cookies["tmweb_session"])
+    r = cookie_only.get("/api/session")
+    assert r.status_code == 401
+    assert r.json() == {"detail": "signed out"}
+    bad = cookie_only.get("/api/session", headers={"X-CSRF-Token": "wrong"})
+    assert bad.status_code == 401
+    forged = cookie_only.get(
+        "/api/session",
+        headers={"X-CSRF-Token": "wrong", "Origin": "http://127.0.0.1:8765"},
+    )
+    assert forged.status_code == 401
+    assert client.get("/api/session").status_code == 200
+
+
+def test_header_alone_is_refused(client, app):
+    from fastapi.testclient import TestClient
+
+    header_only = TestClient(app, base_url="http://127.0.0.1:8765")
+    r = header_only.get("/api/session", headers={"X-CSRF-Token": client.headers["X-CSRF-Token"]})
+    assert r.status_code == 401
+
+
+def test_api_responses_are_not_cached(client, anon):
+    assert client.get("/api/session").headers["cache-control"] == "no-store"
+    assert anon.get("/api/session").headers["cache-control"] == "no-store"
+    bad_host = anon.get("/api/session", headers={"Host": "evil.example:8765"})
+    assert bad_host.status_code == 400
+    forbidden = client.post("/api/session", headers={"Origin": "http://evil.example"})
+    assert forbidden.status_code == 403
+    assert forbidden.headers["cache-control"] == "no-store"
+
+
+def test_websocket_refused(project):
+    import pytest
+    from fastapi import WebSocket
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from tmweb.app import create_app
+
+    app = create_app(project, port=8765, signin_token="T0KEN")
+
+    @app.websocket("/api/ws")
+    async def ws(socket: WebSocket):
+        await socket.accept()
+        await socket.send_text("open")
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        with pytest.raises(WebSocketDisconnect):
+            with c.websocket_connect("/api/ws") as sock:
+                sock.receive_text()
+
+
+def test_empty_signin_token_refused():
+    import pytest
+
+    from tmweb.security import SessionStore
+
+    with pytest.raises(ValueError):
+        SessionStore("")
+
+
 def test_session_shape(client):
-    body = client.get("/api/session").json()
-    assert body["reviewer"] == "Test Reviewer"
-    assert body["trial"] is False
-    assert isinstance(body["csrf"], str) and body["csrf"]
-    assert set(body) == {"reviewer", "csrf", "trial"}
+    assert client.get("/api/session").json() == {"reviewer": "Test Reviewer", "trial": False}
 
 
 def test_spa_fallback(project, tmp_path):
@@ -78,8 +139,9 @@ def test_spa_fallback(project, tmp_path):
     app = create_app(project, port=8765, signin_token="T0KEN", static_dir=static)
     with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         assert c.get("/main/demo/register").text == "<html>SPA</html>"
-        c.get("/signin", params={"token": "T0KEN"}, follow_redirects=False)
-        assert c.get("/api/nope").status_code == 404
+        r = c.get("/signin", params={"token": "T0KEN"}, follow_redirects=False)
+        csrf = r.headers["location"].split("#k=", 1)[1]
+        assert c.get("/api/nope", headers={"X-CSRF-Token": csrf}).status_code == 404
 
 
 def test_main_refuses_without_terminal(tmp_path, capsys):

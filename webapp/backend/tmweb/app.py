@@ -10,6 +10,7 @@ from tmreg import config
 from .security import (
     COOKIE,
     CSRF_HEADER,
+    HttpOnly,
     SessionStore,
     _same,
     allowed_hosts,
@@ -42,16 +43,21 @@ def create_app(
         if request.headers.get("host") not in hosts:
             return JSONResponse({"detail": "unknown host"}, status_code=400)
         path = request.url.path
-        if path == "/api" or path.startswith("/api/"):
-            sessions: SessionStore = request.app.state.sessions
-            session_id = request.cookies.get(COOKIE)
-            csrf = sessions.csrf(session_id) if session_id else None
-            if csrf is None:
-                return JSONResponse({"detail": "signed out"}, status_code=401)
-            if request.method not in ("GET", "HEAD"):
-                sent = request.headers.get(CSRF_HEADER, "")
-                if not _same(sent, csrf) or request.headers.get("origin") not in origins:
-                    return JSONResponse({"detail": "forbidden"}, status_code=403)
+        if not (path == "/api" or path.startswith("/api/")):
+            return await call_next(request)
+        response = await _api_checked(request, call_next)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    async def _api_checked(request: Request, call_next):
+        sessions: SessionStore = request.app.state.sessions
+        session_id = request.cookies.get(COOKIE)
+        csrf = sessions.csrf(session_id) if session_id else None
+        sent = request.headers.get(CSRF_HEADER)
+        if csrf is None or not sent or not _same(sent, csrf):
+            return JSONResponse({"detail": "signed out"}, status_code=401)
+        if request.method not in ("GET", "HEAD") and request.headers.get("origin") not in origins:
+            return JSONResponse({"detail": "forbidden"}, status_code=403)
         return await call_next(request)
 
     @app.get("/signin")
@@ -59,7 +65,9 @@ def create_app(
         session_id = request.app.state.sessions.consume(token)
         if session_id is None:
             return PlainTextResponse(SIGNIN_REFUSED, status_code=403)
-        response = RedirectResponse("/", status_code=303)
+        response = RedirectResponse(
+            f"/#k={request.app.state.sessions.csrf(session_id)}", status_code=303
+        )
         response.set_cookie(
             COOKIE, session_id, httponly=True, samesite="strict", path="/"
         )
@@ -67,10 +75,9 @@ def create_app(
 
     @app.get("/api/session")
     def session(request: Request):
-        csrf = request.app.state.sessions.csrf(request.cookies[COOKIE])
         project = config.load_project(request.app.state.root)
         trial = (request.app.state.root / "registry" / "trial.db").is_file()
-        return {"reviewer": project.reviewer_name, "csrf": csrf, "trial": trial}
+        return {"reviewer": project.reviewer_name, "trial": trial}
 
     if static_dir is not None:
         index = static_dir / "index.html"
@@ -83,4 +90,5 @@ def create_app(
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
             return FileResponse(index)
 
+    app.add_middleware(HttpOnly)  # added last, so it runs first
     return app

@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -43,7 +44,9 @@ def client(app):
     with TestClient(app, base_url=BASE) as c:
         r = c.get("/signin", params={"token": "T0KEN"}, follow_redirects=False)
         assert r.status_code == 303
-        csrf = c.get("/api/session").json()["csrf"]
+        location = r.headers["location"]
+        assert re.match(r"^/#k=[A-Za-z0-9_-]{40,}$", location)
+        csrf = location.split("#k=", 1)[1]
         c.headers.update({"X-CSRF-Token": csrf, "Origin": BASE})
         yield c
 

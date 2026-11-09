@@ -15,6 +15,8 @@ class SessionStore:
     """Holds the one-time sign-in token and the sessions it creates, in memory only."""
 
     def __init__(self, signin_token: str):
+        if not signin_token:
+            raise ValueError("signin_token must not be empty")
         self._token: str | None = signin_token
         self._sessions: dict[str, str] = {}
         self._lock = threading.Lock()
@@ -35,6 +37,19 @@ class SessionStore:
                 if _same(session_id, known):
                     return csrf
             return None
+
+
+class HttpOnly:
+    """ASGI middleware: refuse websocket scopes so nothing bypasses the HTTP lock."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await self.app(scope, receive, send)
 
 
 def allowed_hosts(port: int) -> set[str]:
