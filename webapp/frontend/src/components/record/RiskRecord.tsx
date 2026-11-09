@@ -182,7 +182,7 @@ export function RiskRecord({
           <Heading
             s={s}
             suffix={
-              s.id === 'where' ? (
+              s.id === 'where' && !reloading ? (
                 <Text size="xs" c="dimmed" component="span">
                   {'·'} {visible(elementCaption(detail.dfd))}
                 </Text>

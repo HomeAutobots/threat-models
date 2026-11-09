@@ -108,8 +108,11 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
   }
 
   const client = useQueryClient()
-  // Set by a 409. `base` is the risk query's `dataUpdatedAt` at that moment: the reload is done
-  // only when a fetch has landed after it, so an offline refetch cannot unlock the buttons.
+  // Set by a 409. `base` is the risk query's `dataUpdateCount` at that moment. `shownAt` is the
+  // count `shown` was last reconciled from. The reload is done only when `shown` comes from a
+  // fetch after the 409, so buttons and context change in the same render, and an offline
+  // refetch cannot unlock anything.
+  const [shownAt, setShownAt] = useState(0)
   const [conflict, setConflict] = useState<{
     base: number
     failed: boolean
@@ -120,6 +123,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
   // fresh context. Different: swap it in and show the banner.
   const reconcile = (data: RiskDetail | undefined) => {
     if (!data) return
+    setShownAt(client.getQueryState(riskKey)?.dataUpdateCount ?? 0)
     const prev = shownRef.current
     if (!prev) return show(data)
     if (JSON.stringify(prev.risk) === JSON.stringify(data.risk)) return show({ ...data, risk: prev.risk })
@@ -140,7 +144,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
   if (fetched.error && !shown) return <Alert color="red">{visible(fetched.error.message)}</Alert>
   if (!shown || !meta.data) return <Loader m="xl" aria-label="Loading" />
 
-  const awaiting = conflict !== null && updatedAt <= conflict.base
+  const awaiting = conflict !== null && shownAt <= conflict.base
   const reloadFailed = awaiting && conflict.failed
   const risk = shown.risk
   const isReReview = !!risk.last_approved
@@ -164,7 +168,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
         const current = (e.body as Conflict409 | null)?.current
         if (current) show({ ...shown, risk: current as Risk })
         setStale(true)
-        const seenAt = client.getQueryState(riskKey)?.dataUpdatedAt ?? 0
+        const seenAt = client.getQueryState(riskKey)?.dataUpdateCount ?? 0
         setConflict({ base: seenAt, failed: false })
         // The context (elements, duplicate, DFD) belongs to the old record: reload it before any
         // decision, and keep every button disabled until it is here.
@@ -176,7 +180,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
           await client.refetchQueries({ queryKey: riskKey, exact: true }, { throwOnError: true })
           await history
           // A paused refetch resolves without fetching: only a record newer than the 409 counts.
-          if ((client.getQueryState(riskKey)?.dataUpdatedAt ?? 0) > seenAt) reconcile(latest())
+          if ((client.getQueryState(riskKey)?.dataUpdateCount ?? 0) > seenAt) reconcile(latest())
         } catch {
           setConflict({ base: seenAt, failed: true })
         }
@@ -229,7 +233,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
               </Anchor>
             </Alert>
           )}
-          {dfd.state === 'changed' && (
+          {dfd.state === 'changed' && !awaiting && (
             <Alert color="yellow" mb="md">
               <Text inherit>
                 {visible(
@@ -246,7 +250,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
             detail={shown}
             meta={meta.data}
             history={history.data ?? []}
-            reloading={awaiting && !reloadFailed}
+            reloading={awaiting}
           />
         </div>
         <aside className={classes.rail}>
@@ -257,7 +261,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
             duplicateId={risk.possible_duplicate_of ? visible(risk.possible_duplicate_of) : null}
             noteMin={meta.data.note_min}
             busy={busy || awaiting}
-            reloading={awaiting && !reloadFailed}
+            reloading={awaiting}
             error={error ?? (reloadFailed ? 'Could not reload this risk. Reload the page before deciding.' : null)}
             note={note}
             onNote={setNote}

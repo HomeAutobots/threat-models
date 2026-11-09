@@ -63,6 +63,7 @@ let postReply: (post: Post) => Response | Promise<Response>
 let failList: boolean
 let failRisk: boolean
 let historyGets: number
+let historyGate: Promise<void> | null
 
 function mockApi() {
   vi.stubGlobal(
@@ -76,6 +77,7 @@ function mockApi() {
       if (url === '/api/meta') return json(meta)
       if (url.endsWith('/history')) {
         historyGets++
+        if (historyGate) await historyGate
         return json([])
       }
       const m = url.match(/\/risks\/([^/]+)$/)
@@ -123,6 +125,7 @@ beforeEach(() => {
   failList = false
   failRisk = false
   historyGets = 0
+  historyGate = null
   queue = [mkRisk('T-1'), mkRisk('T-2'), mkRisk('T-3')]
   details = Object.fromEntries(queue.map((r) => [r.id, mkDetail(r)]))
   postReply = (p) => json({ risk: { ...p.body.seen, review_state: 'approved' } })
@@ -559,6 +562,106 @@ describe('ReviewPage', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
       await screen.findByText('2 of 3 pending')
       expect((screen.getByLabelText('Review note') as HTMLTextAreaElement).value).toBe('')
+    })
+
+    describe('reload gate (fix round 1)', () => {
+      const setup = () => {
+        const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['P7'] })
+        queue = [r]
+        const dfdChanged = { state: 'changed', latest_id: 'DFD-2', written_against: 'DFD-1', error: null } as const
+        details = {
+          'T-1': mkDetail(r, {
+            dfd: dfdChanged,
+            elements: { P7: { name: 'Seven', type: 'Process' } },
+            duplicate: mkRisk('T-0', { review_state: 'approved', title: 'Zero title' }),
+          }),
+        }
+        postReply = () => {
+          const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['P7'] })
+          details = {
+            'T-1': mkDetail(current, {
+              dfd: dfdChanged,
+              elements: { P7: { name: 'Seven', type: 'Process' } },
+              duplicate: mkRisk('T-5', { review_state: 'approved', title: 'Five title' }),
+            }),
+          }
+          return json({ detail: 'stale', current }, 409)
+        }
+      }
+      const DFD_ALERT = /DFD has moved on/
+      const dup = () => (document.getElementById('dup') as HTMLElement).textContent as string
+      const noOldContext = () => {
+        expect(dup()).not.toContain('Zero title')
+        expect(dup()).not.toContain('Five title')
+        expect(screen.queryByText('Seven')).not.toBeInTheDocument()
+        expect(screen.queryByText(DFD_ALERT)).not.toBeInTheDocument()
+        expect(document.getElementById('where')?.textContent ?? '').not.toContain('From the current dfd.md')
+      }
+
+      it('in the failed state the old context stays hidden and the buttons stay disabled', async () => {
+        setup()
+        const client = renderPage()
+        await type()
+        expect(await screen.findByText(DFD_ALERT)).toBeInTheDocument()
+        failRisk = true
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+        expect(await screen.findByText(/Could not reload this risk/)).toBeInTheDocument()
+        noOldContext()
+        for (const name of ['Approve T-1', 'Reject T-1', 'Merge into T-5']) {
+          expect(screen.getByRole('button', { name })).toBeDisabled()
+        }
+        failRisk = false
+        await invalidateRisk(client)
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
+        expect(dup()).toContain('Five title')
+        expect(screen.getByText(DFD_ALERT)).toBeInTheDocument()
+      })
+
+      it('keeps Reloading this risk… and the buttons disabled while the history request is pending', async () => {
+        setup()
+        renderPage()
+        await type()
+        await screen.findByText('Zero title')
+        let release: () => void = () => {}
+        historyGate = new Promise<void>((res) => (release = res))
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+        await waitFor(() => expect(historyGets).toBeGreaterThan(1))
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 50)) // the risk refetch has landed by now
+        })
+        expect(screen.getByText('Reloading this risk…')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeDisabled()
+        noOldContext()
+        await act(async () => release())
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
+        expect(screen.queryByText('Reloading this risk…')).not.toBeInTheDocument()
+        expect(dup()).toContain('Five title')
+      })
+
+      it('no commit enables the buttons while the old context is shown', async () => {
+        setup()
+        const client = renderPage()
+        await type()
+        await screen.findByText('Zero title')
+        failRisk = true
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+        await screen.findByText(/Could not reload this risk/)
+        failRisk = false
+        const seen: { enabled: boolean; dup: string }[] = []
+        const obs = new MutationObserver(() => {
+          const merge = screen.queryByRole('button', { name: 'Merge into T-5' }) as HTMLButtonElement | null
+          const el = document.getElementById('dup')
+          if (merge && el) seen.push({ enabled: !merge.disabled, dup: el.textContent as string })
+        })
+        obs.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
+        await invalidateRisk(client)
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
+        obs.disconnect()
+        const enabled = seen.filter((x) => x.enabled)
+        expect(enabled.length).toBeGreaterThan(0)
+        expect(enabled[0].dup).toContain('Five title')
+        for (const x of enabled) expect(x.dup).not.toContain('Zero title')
+      })
     })
 
     it('keeps the stale banner text in one place', () => {
