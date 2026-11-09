@@ -738,7 +738,10 @@ class Registry:
 
     def _adoption(self, slug: str, record: dict) -> dict:
         """What the first model approval of a DFD-era register does to its live risks (spec 7.6):
-        old IDs no item claims, pending re-reviews (both block it), and the rewrites it would make."""
+        old IDs no item claims, pending re-reviews (both block it), and the edits it would make: one
+        per live risk (R21), including identity mappings, so every live risk gets a
+        model_approval_id. A risk citing a gap is left out of `rewrites`, because approval is
+        refused while any gap remains."""
         was = c4.was_map(record)
         live = [r for r in self.list_risks(slug)
                 if r["review_state"] != "rejected" and r["status"] != "retired"
@@ -754,7 +757,7 @@ class Registry:
                 for n in was.get(e, ()):
                     if n not in new:
                         new.append(n)
-            if new != old and all(e in was for e in old):
+            if all(e in was for e in old):  # a risk with a gap is left out: approval is refused
                 rewrites[r["id"]] = {"from": old, "to": new}
         order = {k: i for i, k in enumerate(("E", "P", "D", "F", "TB"))}
 
@@ -843,7 +846,7 @@ class Registry:
                             f'same boundary, or take {info["next_ids"]["TB"]}')
                 raise RegistryError(msg)
             adoption = info["adoption"]
-            if adoption:
+            if adoption is not None:
                 found = [f"adoption: {g['id']} is cited by {', '.join(g['cited_by'])} and claimed by nothing"
                          for g in adoption["gaps"]]
                 found += [f"adoption: {rid} awaits re-review; approve or reject it first"
@@ -863,14 +866,17 @@ class Registry:
                 "model": info["record"], "source": info["text"],
                 "approved_by": session.name, "approved_at": db.now(), "note": note,
             }, op="model-approve", actor=f"human:{session.name}")
-            if adoption:
+            if adoption is not None:
                 was = c4.was_map(info["record"])
                 for rid, change in adoption["rewrites"].items():
                     note_ = (f"Adopted the C4 model {approval_id}: "
-                             + ", ".join(f"{o}→{'/'.join(was[o])}" for o in change["from"]))
-                    ledger.write_row(self.conn, slug, "risks", rid, {
-                        "elements": change["to"], "model_approval_id": approval_id,
-                        "updated_at": db.now()}, op="edit", actor=f"human:{session.name}", note=note_)
+                             + (", ".join(f"{o}→{'/'.join(was[o])}" for o in change["from"])
+                                or "no elements"))
+                    fields = {"model_approval_id": approval_id, "updated_at": db.now()}
+                    if change["to"] != change["from"]:
+                        fields["elements"] = change["to"]
+                    ledger.write_row(self.conn, slug, "risks", rid, fields, op="edit",
+                                     actor=f"human:{session.name}", note=note_)
         self._write_register(slug, approval_id)
         return ledger.read_rows(self.conn, slug, "model_approvals")[approval_id]
 

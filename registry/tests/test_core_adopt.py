@@ -4,9 +4,9 @@ import unittest
 from unittest import mock
 
 from helpers import (SAMPLE_WORKSPACE, TmpTestCase, approve_model, make_registry, seed_dfd_era,
-                     seed_dfd_risk, write_model)
+                     seed_dfd_risk, session, write_model)
 from tmreg import ledger
-from tmreg.core import RegistryError
+from tmreg.core import RegistryError, StaleRecord
 
 TEXT = SAMPLE_WORKSPACE.decode()
 
@@ -54,6 +54,9 @@ class AdoptTest(TmpTestCase):
         self.assertEqual(ad["gaps"], [{"id": "P9", "cited_by": ["T-02"]}])
         self.assertEqual(ad["pending_rereviews"], [])
         self.assertEqual(ad["rewrites"], {"T-01": {"from": ["P2", "F2"], "to": ["C2", "R2"]}})
+        seed_dfd_risk(self.reg, "T-03", ["TB1"])
+        ad = self.reg.c4_preview("demo")["adoption"]
+        self.assertEqual(ad["rewrites"]["T-03"], {"from": ["TB1"], "to": ["TB1"]})
 
     def test_no_adoption_outside_dfd_era(self):
         reg = make_registry(self.tmp / "x", approve=False, slug="other")
@@ -117,10 +120,51 @@ class AdoptTest(TmpTestCase):
         self.assertEqual(len(self.reg.history("demo", "T-01")), n)
         self.assertEqual(self.reg.verify("demo"), [])
 
-    def test_unchanged_risk_gets_no_edit(self):
+    def test_identity_mapped_risk_still_gets_the_edit(self):
         seed_dfd_risk(self.reg, "T-01", ["TB1"])
         self.approve()
-        self.assertEqual([c["op"] for c in self.reg.history("demo", "T-01")], ["add"])
+        r = self.risk("T-01")
+        self.assertEqual(r["elements"], ["TB1"])
+        self.assertEqual(r["model_approval_id"], "MODEL-1")
+        last = self.reg.history("demo", "T-01")[-1]
+        self.assertEqual(last["note"], "Adopted the C4 model MODEL-1: TB1→TB1")
+        self.assertNotIn("elements", last["diff"])
+        write_model(self.reg, "demo", TEXT.replace("Untrusted public network.", "Hostile network.").encode())
+        approve_model(self.reg, "demo")
+        self.assertTrue(self.reg.moved_on("demo", self.risk("T-01"))["moved_on"])
+
+    def test_live_risk_without_elements_gets_the_edit(self):
+        seed_dfd_risk(self.reg, "T-01", [])
+        seed_dfd_risk(self.reg, "T-02", None)
+        self.approve()
+        for rid in ("T-01", "T-02"):
+            self.assertEqual(self.risk(rid)["model_approval_id"], "MODEL-1")
+            self.assertEqual(self.reg.history("demo", rid)[-1]["note"],
+                             "Adopted the C4 model MODEL-1: no elements")
+        self.assertEqual(self.reg.verify("demo"), [])
+
+    def test_edit_row_touches_only_its_fields(self):
+        seed_dfd_risk(self.reg, "T-01", ["P2"], review_state="approved")
+        self.approve()
+        diff = self.reg.history("demo", "T-01")[-1]["diff"]
+        self.assertTrue({"elements", "model_approval_id"} <= set(diff) <= {"elements", "model_approval_id", "updated_at"})
+        self.assertIsNone(self.risk("T-01")["last_approved"])
+
+    def test_gap_is_refused_before_a_stale_sha(self):
+        seed_dfd_risk(self.reg, "T-01", ["P9"])
+        with self.assertRaises(RegistryError) as cm:
+            self.reg.c4_approve(session(), "demo", "Checked against the DFD checklist.", expected_sha256="0" * 64)
+        self.assertNotIsInstance(cm.exception, StaleRecord)
+        self.assertIn("P9", str(cm.exception))
+
+    def test_removed_tb_claim_is_a_gap_and_refused(self):
+        seed_dfd_risk(self.reg, "T-01", ["TB1"])
+        write_model(self.reg, "demo", TEXT.replace('                    "tm.was" "TB1"\n', "", 1).encode())
+        gaps = self.reg.c4_preview("demo")["adoption"]["gaps"]
+        self.assertEqual(gaps, [{"id": "TB1", "cited_by": ["T-01"]}])
+        with self.assertRaises(RegistryError):
+            self.approve()
+        self.assertEqual(self.reg.model_approvals("demo"), [])
 
     def test_failure_partway_rolls_back_the_approval(self):
         seed_dfd_risk(self.reg, "T-01", ["P1"])
