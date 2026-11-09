@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import c4, catalog, config, db, dfd, ledger, report as report_mod
+from . import c4, catalog, config, db, ledger, report as report_mod
 from .model import (
     AI_REQUIRED, CONFIDENCE, EDITABLE_FIELDS, HUMAN_REQUIRED, JSON_COLUMNS, KEY_COLUMNS, LINDDUN,
     MIN_LENGTHS, NOTE_MIN, REVIEW_STATES, RISK_FIELDS, SNAPSHOT_FIELDS, STATUSES, STRIDE, SUPERSEDED_RE,
@@ -34,7 +34,6 @@ _RISK_ID_RE = re.compile(r"(P?T)-([0-9]+)")
 _DFD_APPROVAL_RE = re.compile(r"DFD-([0-9]+)")
 _MODEL_APPROVAL_RE = re.compile(r"MODEL-([0-9]+)")
 _C4_ID_RE = re.compile(r"(A|S|C|K|R|TB|N|I|ENV|SEQ)([1-9][0-9]*)", re.ASCII)
-_DFD_ID_RE = re.compile(r"(E|P|D|F|TB)([0-9]+)")
 _EXC_RE = re.compile(r"EXC-[0-9]{2,}")
 _ROUTE_END_RE = re.compile(r"[ASCK][0-9]+")
 _OPEN_STATUSES = ("open", "planned", "in-progress")
@@ -106,13 +105,6 @@ class ReviewerSession:
         require_interactive(self.command)
         if not isinstance(self.name, str) or not self.name.strip():
             raise RegistryError("a reviewer session needs the reviewer's name")
-
-
-@dataclass(frozen=True)
-class DfdStatus:
-    state: str  # "none", "current", or "changed"
-    latest: dict | None
-    current_sha256: str | None
 
 
 @dataclass(frozen=True)
@@ -262,31 +254,19 @@ def _check_required(row: dict, *, ai: bool) -> None:
             raise RegistryError("; ".join(short))
 
 
-def _dfd_ids(approval: dict) -> set[str]:
-    return {i for ids in (approval.get("ids") or {}).values() for i in ids}
-
-
-def _citable(approval: dict) -> set[str]:
-    """The IDs a risk may cite under an approval: all of a DFD approval's, and every kind of a
-    model approval's except ENV (spec section 7.4)."""
-    return {i for kind, ids in (approval.get("ids") or {}).items() if kind != "ENV" for i in ids}
+def _ids(approval: dict, *, citable: bool = False) -> set[str]:
+    """Every ID an approval (a DFD-n or a MODEL-n row) records. citable drops the ENV kind: the
+    IDs a risk may cite (spec section 7.4)."""
+    return {i for kind, ids in (approval.get("ids") or {}).items()
+            if not (citable and kind == "ENV") for i in ids}
 
 
 def _check_elements(elements, latest: dict) -> None:
     """Refuse elements that the approval (a DFD-n or a MODEL-n row) does not let a risk cite."""
-    known = _citable(latest)
+    known = _ids(latest, citable=True)
     unknown = [e for e in elements or [] if e not in known]
     if unknown:
         raise RegistryError(f"unknown element ID(s) for {latest['id']}: {', '.join(unknown)}")
-
-
-def _model_ids(approval: dict) -> set[str]:
-    return {i for ids in (approval.get("ids") or {}).values() for i in ids}
-
-
-def _dfd_id_key(i: str):
-    m = _DFD_ID_RE.fullmatch(i)
-    return (dfd.KINDS.index(m.group(1)), int(m.group(2)), "") if m else (len(dfd.KINDS), 0, i)
 
 
 def _model_number(approval: dict) -> int:
@@ -490,9 +470,6 @@ class Registry:
 
     # ---- DFD --------------------------------------------------------------------------------
 
-    def _dfd_path(self, slug: str) -> Path:
-        return self.root / "systems" / slug / "dfd.md"
-
     def _latest_dfd(self, slug: str) -> dict | None:
         rows = ledger.read_rows(self.conn, slug, "dfd_approvals")
         return max(rows.values(), key=_approval_number) if rows else None
@@ -500,82 +477,9 @@ class Registry:
     def list_systems(self) -> list[dict]:
         return db.list_systems(self.conn)
 
-    def dfd_details(self, slug: str) -> dict[str, dict[str, str]]:
-        """Element names and types from the current dfd.md, for display only."""
-        return self._parse_dfd(slug).details
-
     def dfd_approvals(self, slug: str) -> list[dict]:
         rows = ledger.read_rows(self.conn, slug, "dfd_approvals")
         return sorted(rows.values(), key=_approval_number)
-
-    def _parse_dfd(self, slug: str) -> dfd.Dfd:
-        path = self._dfd_path(slug)
-        try:
-            data = path.read_bytes()
-        except FileNotFoundError:
-            raise RegistryError(f"no dfd.md for {slug}: write systems/{slug}/dfd.md first") from None
-        except OSError as e:
-            raise RegistryError(f"cannot read {path}: {e.strerror}") from None
-        try:
-            return dfd.parse(data)
-        except dfd.DfdError as e:
-            raise RegistryError(str(e)) from None
-
-    def dfd_status(self, slug) -> DfdStatus:
-        self._require(slug)
-        latest = self._latest_dfd(slug)
-        path = self._dfd_path(slug)
-        try:
-            current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-        except OSError:
-            current = None  # unreadable: reported like a missing file
-        if latest is None:
-            state = "none"
-        elif latest["sha256"] == current:
-            state = "current"
-        else:
-            state = "changed"
-        return DfdStatus(state=state, latest=latest, current_sha256=current)
-
-    def dfd_preview(self, slug) -> dict:
-        self._require(slug)
-        parsed = self._parse_dfd(slug)
-        latest = self._latest_dfd(slug)
-        old = _dfd_ids(latest) if latest else set()
-        new = parsed.all_ids()
-        removed = sorted(old - new, key=_dfd_id_key)
-        gone = set(removed)
-        warnings = []
-        for r in self.list_risks(slug):
-            if r["review_state"] == "rejected" or r["status"] == "retired":
-                continue
-            cited = [e for e in r["elements"] or () if e in gone]
-            if cited:
-                warnings.append(f"{r['id']} cites {', '.join(cited)}, which this DFD no longer has")
-        return {"dfd": parsed, "added": sorted(new - old, key=_dfd_id_key), "removed": removed,
-                "warnings": warnings}
-
-    def dfd_approve(self, session, slug, note, *, expected_sha256: str | None = None) -> dict:
-        """Record an approval of dfd.md. With expected_sha256 (the hash the reviewer was shown),
-        refuse when the file under the write lock is not that file."""
-        _require_session(session)
-        note = _require_note(note)
-        self._require(slug)
-        with self._write():
-            parsed = self._parse_dfd(slug)  # under the write lock: this is the file recorded
-            if expected_sha256 is not None and parsed.sha256 != expected_sha256:
-                raise StaleRecord("dfd.md changed since it was shown; review it again")
-            latest = self._latest_dfd(slug)
-            if latest is not None and latest["sha256"] == parsed.sha256:
-                raise RegistryError(f"already approved as {latest['id']}")
-            approval_id = self._allocate(slug, "DFD", "dfd_approvals")
-            ledger.write_row(self.conn, slug, "dfd_approvals", approval_id, {
-                "version": parsed.version, "sha256": parsed.sha256,
-                "ids": {k: list(v) for k, v in parsed.ids.items()},
-                "approved_by": session.name, "approved_at": db.now(), "note": note,
-            }, op="dfd-approve", actor=f"human:{session.name}")
-        self._write_register(slug, approval_id)
-        return ledger.read_rows(self.conn, slug, "dfd_approvals")[approval_id]
 
     # ---- C4 model ---------------------------------------------------------------------------
 
@@ -893,14 +797,14 @@ class Registry:
         retired: set[str] = set()  # used by a register's earlier approvals, absent from its latest
         for rows in (own_models, sib_models):
             rows = sorted(rows, key=_model_number)
-            seen = set().union(*(_model_ids(r) for r in rows)) if rows else set()
+            seen = set().union(*(_ids(r) for r in rows)) if rows else set()
             prior |= seen
-            retired |= seen - (_model_ids(rows[-1]) if rows else set())
+            retired |= seen - (_ids(rows[-1]) if rows else set())
         dfd_tbs = {i for row in dfds for i in (row.get("ids") or {}).get("TB", ())}
         file_ids = model.all_ids()
-        reused = (file_ids & retired) - (_model_ids(latest) if latest else set())
+        reused = (file_ids & retired) - (_ids(latest) if latest else set())
         from_dfd = set()  # old DFD boundaries stay used after a model approval (R18)
-        for tb in (file_ids & dfd_tbs) - (_model_ids(latest) if latest else set()):
+        for tb in (file_ids & dfd_tbs) - (_ids(latest) if latest else set()):
             item = model.items.get(tb)
             claimed = [p.strip() for p in (item.properties.get("tm.was", "") if item else "").split(",")]
             if tb not in claimed:

@@ -1,5 +1,5 @@
 """The GET routes. One Registry call each; every rule lives in tmreg."""
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
 from tmreg import config, model
@@ -8,6 +8,12 @@ from tmreg.core import Registry, RegistryError
 from .registry_dep import db_path, get_registry
 
 router = APIRouter(prefix="/api")
+
+def _row(approval: dict | None) -> dict | None:
+    """An approval without its record and source (the page gets the record separately)."""
+    return None if approval is None else {
+        k: v for k, v in approval.items() if k not in ("model", "source")}
+
 
 MEDIA = {"md": "text/markdown", "csv": "text/csv", "html": "text/html"}
 
@@ -49,24 +55,36 @@ async def risks(slug: str, state: str = "all", registry: Registry = Depends(get_
     return registry.list_risks(slug, state)
 
 
+def _entry(record: dict | None, id: str) -> dict | None:
+    """One cited ID's entry in a model record: an item, a path, or a sequence view."""
+    if record is None:
+        return None
+    return record["items"].get(id) or record["rels"].get(id) or record["views"].get(id)
+
+
 @router.get("/{reg}/systems/{slug}/risks/{id}")
 async def risk_detail(slug: str, id: str, registry: Registry = Depends(get_registry)):
     risk = registry.get_risk(slug, id)
-    status = registry.dfd_status(slug)
-    error = None
-    try:
-        details = registry.dfd_details(slug)
-    except RegistryError as e:
-        details, error = {}, str(e)
+    status = registry.c4_status(slug)
+    basis_id = risk.get("model_approval_id")
+    written = registry.model_record(slug, basis_id) if basis_id else None
+    latest = status.latest["model"] if status.latest and status.latest["id"] != basis_id else None
+    elements = {}
+    for e in risk["elements"] or ():
+        w, l = _entry(written, e), _entry(latest, e)
+        elements[e] = {"written": w, "latest": l if l != w else None}
+    moved = registry.moved_on(slug, risk)
     duplicate = risk.get("possible_duplicate_of")
     return {
         "risk": risk,
-        "elements": {e: details.get(e) for e in risk["elements"] or ()},
-        "dfd": {
+        "elements": elements,
+        "model": {
             "state": status.state,
             "latest_id": status.latest["id"] if status.latest else None,
-            "written_against": risk["dfd_approval_id"],
-            "error": error,
+            "written_against": moved["written_against"],
+            "moved_on": moved["moved_on"],
+            "changed": moved["changed"],
+            "basis": "model" if basis_id else "dfd",
         },
         "editors_since_approval": registry.editors(slug, id, since_last_approval=True),
         "duplicate": registry.get_risk(slug, duplicate) if duplicate else None,
@@ -88,32 +106,46 @@ async def verify(slug: str, registry: Registry = Depends(get_registry)):
     return {"problems": registry.verify(slug)}
 
 
-@router.get("/{reg}/systems/{slug}/dfd")
-async def dfd(slug: str, registry: Registry = Depends(get_registry)):
-    status = registry.dfd_status(slug)
-    approvals = registry.dfd_approvals(slug)
+STRUCTURIZR_NOT_CHECKED = {"state": "not-checked", "message": None, "base": None, "views": []}
+
+
+@router.get("/{reg}/systems/{slug}/c4")
+async def c4_model(slug: str, registry: Registry = Depends(get_registry)):
+    status = registry.c4_status(slug)
+    approvals = [{k: v for k, v in a.items() if k not in ("model", "source")}
+                 for a in registry.model_approvals(slug)]
     preview = error = None
+    text = ""
     try:
-        p = registry.dfd_preview(slug)
-        parsed = p["dfd"]
-        preview = {"version": parsed.version, "sha256": parsed.sha256, "ids": parsed.ids,
-                   "details": parsed.details, "added": p["added"], "removed": p["removed"],
-                   "warnings": p["warnings"]}
-    except RegistryError as e:
+        p = registry.c4_preview(slug)
+    except RegistryError as e:  # the sibling register cannot be read
         error = str(e)
-    path = registry.root / "systems" / slug / "dfd.md"
-    try:
-        text = path.read_bytes().decode("utf-8", errors="replace")
-    except OSError:
-        text = None
+    else:
+        error, text = p["error"], p["text"]
+        if p["model"] is not None:
+            preview = {"sha256": p["sha256"], "version": p["model"].version,
+                       "ids": p["model"].ids(), "record": p["record"], "added": p["added"],
+                       "removed": p["removed"], "changed": p["changed"],
+                       "warnings": p["warnings"], "next_ids": p["next_ids"],
+                       "reused": p["reused"], "problems": p["problems"], "diff": p["diff"],
+                       "adoption": p["adoption"]}
     return {
-        "status": {"state": status.state, "latest": status.latest,
+        "status": {"state": status.state, "latest": _row(status.latest),
                    "current_sha256": status.current_sha256},
         "approvals": approvals,
         "preview": preview,
-        "preview_error": error,
+        "error": error,
         "text": text,
+        "counts": registry.open_risk_counts(slug),
+        "latest_record": status.latest["model"] if status.latest else None,
+        "structurizr": STRUCTURIZR_NOT_CHECKED,
     }
+
+
+@router.get("/{reg}/systems/{slug}/c4/routes")
+async def c4_routes(slug: str, from_id: str = Query(alias="from"), to_id: str = Query(alias="to"),
+                    registry: Registry = Depends(get_registry)):
+    return {"chains": registry.c4_routes(slug, from_id, to_id)}
 
 
 @router.get("/{reg}/systems/{slug}/report")

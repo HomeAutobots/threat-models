@@ -3,7 +3,7 @@ import subprocess
 import unittest
 
 from helpers import (FIXTURES, SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields,
-                     approve_model, human_terminal, make_registry, seed_dfd_era, seed_dfd_risk,
+                     approve_model, human_terminal, make_registry, seed_dfd_approval, seed_dfd_era, seed_dfd_risk,
                      session, start, write_dfd, write_model)
 from tmreg.core import RegistryError
 
@@ -173,8 +173,7 @@ class DfdEraTest(TmpTestCase):
         self.assertEqual((r["review_state"], r["dfd_approval_id"], r["model_approval_id"]),
                          ("approved", "DFD-1", None))
         # D1 still holds on dfd_approval_id before adoption
-        write_dfd(reg, "demo", SAMPLE_DFD + b"\n")  # dfd_approve reads the file
-        self.assertEqual(reg.dfd_approve(session(), "demo", NOTE)["id"], "DFD-2")
+        self.assertEqual(seed_dfd_approval(reg, "demo")["id"], "DFD-2")
         with human_terminal():
             r = reg.edit_risk("demo", "T-01", {"notes": "Owner confirmed."}, run_id=None)
             self.assertEqual(r["dfd_approval_id"], "DFD-1")
@@ -188,8 +187,7 @@ class DfdEraTest(TmpTestCase):
     def test_owner_edit_of_pending_in_dfd_era_moves_the_dfd_basis(self):
         reg = self.reg
         seed_dfd_risk(reg, "T-02", ["P1", "F1"])  # pending, on DFD-1
-        write_dfd(reg, "demo", SAMPLE_DFD + b"\n")
-        self.assertEqual(reg.dfd_approve(session(), "demo", NOTE)["id"], "DFD-2")
+        self.assertEqual(seed_dfd_approval(reg, "demo")["id"], "DFD-2")
         with human_terminal():
             r = reg.edit_risk("demo", "T-02", {"notes": "Owner confirmed."}, run_id=None)
         self.assertEqual((r["review_state"], r["dfd_approval_id"], r["model_approval_id"]),

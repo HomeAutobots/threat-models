@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from helpers import (SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
-                     make_registry, seed_dfd_era, session, start, write_dfd, write_model)
+from helpers import (SAMPLE_DFD_IDS, SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
+                     make_registry, seed_dfd_approval, seed_dfd_era, session, start, write_dfd, write_model)
 from tmreg import c4
 from tmreg.core import RegistryError, StaleRecord
 
@@ -285,10 +285,7 @@ class C4CoreTest(TmpTestCase):
 
     def test_old_dfd_boundary_stays_used_after_a_model_approval(self):
         reg = self.reg(dfd=False)
-        dfd = SAMPLE_DFD.replace(b"| TB1 | Internet to edge | WAF |\n",
-                                 b"| TB1 | Internet to edge | WAF |\n| TB2 | Edge to cloud | SG |\n")
-        (reg.root / "systems/demo/dfd.md").write_bytes(dfd)
-        reg.dfd_approve(session(), "demo", NOTE)
+        seed_dfd_approval(reg, "demo", ids={**SAMPLE_DFD_IDS, "TB": ["TB1", "TB2"]})
         write_model(reg, "demo", TEXT.replace("TB2", "TB4").encode())
         approve_model(reg, "demo")
         write_model(reg, "demo")

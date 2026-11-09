@@ -11,7 +11,7 @@ from unittest import mock
 from tmreg import db, ledger
 from tmreg.core import Registry, ReviewerSession
 
-# Copied from tests/test_dfd.py (the final, strict-parser fixture). The mermaid fence holds a
+# A DFD fixture (the final, strict-parser one, from the deleted tests/test_dfd.py). The mermaid fence holds a
 # table-like row that the parser must ignore.
 SAMPLE_DFD = b"""| Field | Value |
 |---|---|
@@ -139,7 +139,7 @@ flowchart LR
 - Keep it in the repository.
 """
 
-# SAMPLE_DFD's IDs by kind, as dfd_approve would record them. seed_dfd_era writes them.
+# SAMPLE_DFD's IDs by kind, as `dfd approve` recorded them. seed_dfd_era writes them.
 SAMPLE_DFD_IDS = {"E": ["E1"], "P": ["P1", "P2"], "D": ["D1"], "F": ["F1", "F2", "F3"], "TB": ["TB1"]}
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -203,23 +203,31 @@ def approve_model(reg: Registry, slug: str, note: str = "Checked against the DFD
 
 
 def write_dfd(reg: Registry, slug: str, data: bytes = SAMPLE_DFD) -> None:
-    """For the DFD commands and endpoints, which stay until the DFD code is removed."""
+    """Write dfd.md, for tests that exercise only the file (no code reads it any more)."""
     (reg.root / "systems" / slug / "dfd.md").write_bytes(data)
 
 
-def seed_dfd_era(reg: Registry, slug: str = "demo") -> dict:
-    """Record DFD-1 (SAMPLE_DFD's IDs) the way dfd_approve did, without dfd.md: a register from
-    before the C4 model, for adoption and DFD-era tests. Bumps the DFD sequence, so verify stays clean."""
+def seed_dfd_approval(reg: Registry, slug: str = "demo", ids: dict | None = None) -> dict:
+    """Record the next DFD-n (SAMPLE_DFD_IDS unless ids is given) the way dfd approve did, without
+    dfd.md: a register from before the C4 model, for adoption and DFD-era tests. Bumps the DFD
+    sequence, so verify stays clean."""
+    ids = SAMPLE_DFD_IDS if ids is None else ids
+    n = len(reg.dfd_approvals(slug)) + 1
     with reg.conn:
-        ledger.write_row(reg.conn, slug, "dfd_approvals", "DFD-1", {
-            "version": "1.0", "sha256": hashlib.sha256(SAMPLE_DFD).hexdigest(),
-            "ids": {k: list(v) for k, v in SAMPLE_DFD_IDS.items()},
+        ledger.write_row(reg.conn, slug, "dfd_approvals", f"DFD-{n}", {
+            "version": "1.0", "sha256": hashlib.sha256(SAMPLE_DFD + b"\n" * n).hexdigest(),
+            "ids": {k: list(v) for k, v in ids.items()},
             "approved_by": "Test Reviewer", "approved_at": db.now(),
             "note": "Checked against the DFD checklist.",
         }, op="dfd-approve", actor="human:Test Reviewer")
-        reg.conn.execute(f"UPDATE {db.table(slug, 'sequences')} SET next = MAX(next, 2) "
-                         "WHERE prefix = 'DFD'")
-    return reg.dfd_approvals(slug)[0]
+        reg.conn.execute(f"UPDATE {db.table(slug, 'sequences')} SET next = MAX(next, ?) "
+                         "WHERE prefix = 'DFD'", (n + 1,))
+    return reg.dfd_approvals(slug)[-1]
+
+
+def seed_dfd_era(reg: Registry, slug: str = "demo") -> dict:
+    """Record DFD-1 (SAMPLE_DFD's IDs): a register from before the C4 model."""
+    return seed_dfd_approval(reg, slug)
 
 
 def seed_dfd_risk(reg: Registry, risk_id: str, elements: list[str], *, slug: str = "demo",

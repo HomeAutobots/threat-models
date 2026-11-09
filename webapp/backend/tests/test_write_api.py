@@ -98,21 +98,41 @@ def test_reject_merge_retire(client, human, reg):
     assert r.json()["risk"]["status"] == "retired"
 
 
-def test_dfd_approve_and_stale_sha(client, human, project, reg):
-    helpers.write_dfd(reg, "demo")  # the DFD endpoints stay until the C4 API replaces them
-    helpers.seed_dfd_era(reg, "demo")
-    path = project / "systems" / "demo" / "dfd.md"
-    path.write_bytes(path.read_bytes() + b"\nA change.\n")
-    sha = client.get("/api/main/systems/demo/dfd").json()["preview"]["sha256"]
-    r = client.post("/api/main/systems/demo/dfd/approve", json={"note": NOTE, "expected_sha256": sha})
+C4 = "/api/main/systems/demo/c4"
+
+
+def test_c4_approve_and_stale_sha(client, human, project, reg):
+    path = project / "systems" / "demo" / "workspace.dsl"
+    path.write_bytes(path.read_bytes().replace(b"Serves the pages.", b"Serves the pages, fast."))
+    sha = client.get(C4).json()["preview"]["sha256"]
+    r = client.post(C4 + "/approve", json={"note": NOTE, "expected_sha256": sha})
     assert r.status_code == 200, r.text
-    assert r.json()["approval"]["id"] == "DFD-2"
-    path.write_bytes(path.read_bytes() + b"\nAnother change.\n")
-    r = client.post("/api/main/systems/demo/dfd/approve", json={"note": NOTE, "expected_sha256": sha})
+    assert r.json()["approval"]["id"] == "MODEL-2"
+    assert r.json()["approval"]["approved_by"] == "Test Reviewer"
+    assert client.get(C4).json()["status"]["state"] == "current"
+    path.write_bytes(path.read_bytes().replace(b"fast.", b"faster."))
+    r = client.post(C4 + "/approve", json={"note": NOTE, "expected_sha256": sha})
     assert r.status_code == 409
-    assert [a["id"] for a in reg.dfd_approvals("demo")] == ["DFD-1", "DFD-2"]  # no new approval
-    now = client.get("/api/main/systems/demo/dfd").json()["status"]["current_sha256"]
+    assert [a["id"] for a in reg.model_approvals("demo")] == ["MODEL-1", "MODEL-2"]  # no new one
+    now = client.get(C4).json()["status"]["current_sha256"]
     assert r.json()["current_sha256"] == now != sha
+    assert "changed since" in r.json()["detail"]
+
+
+def test_c4_approve_refusals_are_422(client, human, project, reg):
+    path = project / "systems" / "demo" / "workspace.dsl"
+    sha = client.get(C4).json()["status"]["current_sha256"]
+    r = client.post(C4 + "/approve", json={"note": NOTE, "expected_sha256": sha})
+    assert r.status_code == 422 and "already approved" in r.json()["detail"]
+    path.write_bytes(path.read_bytes().replace(b"Serves the pages.", b"Serves the pages, fast."))
+    sha = client.get(C4).json()["status"]["current_sha256"]
+    r = client.post(C4 + "/approve", json={"note": "short", "expected_sha256": sha})
+    assert r.status_code == 422 and "20" in r.json()["detail"]
+    path.write_bytes(b"garbage")
+    sha = client.get(C4).json()["status"]["current_sha256"]
+    r = client.post(C4 + "/approve", json={"note": NOTE, "expected_sha256": sha})
+    assert r.status_code == 422 and "workspace.dsl" in r.json()["detail"]
+    assert len(reg.model_approvals("demo")) == 1
 
 
 WRITES = [
@@ -123,16 +143,16 @@ WRITES = [
     ("reject", "/T-01/reject", lambda c: approve_body(c)),
     ("merge", "/T-01/merge", lambda c: {**approve_body(c), "into": "T-02"}),
     ("retire", "/T-01/retire", lambda c: {"reason": NOTE, "seen": approve_body(c)["seen"]}),
-    ("dfd-approve", None, lambda c: {"note": NOTE, "expected_sha256": "0" * 64}),
+    ("c4-approve", "C4", lambda c: {"note": NOTE, "expected_sha256": "0" * 64}),
 ]
 
 
 @pytest.mark.parametrize("name,suffix,body", WRITES, ids=[w[0] for w in WRITES])
 def test_human_ops_fail_closed_without_terminal(client, reg, risk, name, suffix, body):
-    url = ("/api/main/systems/demo/dfd/approve" if suffix is None else BASE + suffix)
+    url = (C4 + "/approve" if suffix == "C4" else BASE + suffix)
     payload = body(client)
     changes = len(reg.history("demo"))
-    approvals = len(reg.dfd_approvals("demo"))
+    approvals = len(reg.model_approvals("demo"))
     with mock.patch("tmreg.core._has_tty", return_value=False):
         r = client.post(url, json=payload)
     assert r.status_code == 422, r.text
@@ -140,7 +160,7 @@ def test_human_ops_fail_closed_without_terminal(client, reg, risk, name, suffix,
     expected = ("must name a run" if name in ("add", "edit") else "needs an interactive terminal")
     assert expected in r.json()["detail"]
     assert len(reg.history("demo")) == changes
-    assert len(reg.dfd_approvals("demo")) == approvals
+    assert len(reg.model_approvals("demo")) == approvals
     assert reg.get_risk("demo", "T-01")["review_state"] == "pending"
 
 
@@ -155,6 +175,7 @@ def test_same_seen_twice_is_409(client, human, risk):  # R12
 def test_write_routes_name_one_risk(app):
     posts = [r for r in api_routes(app) if "POST" in r.methods]
     assert len(posts) >= 7
+    assert any(r.path.endswith("/c4/approve") for r in posts)
     for route in posts:
         names = set(route.param_convertors)
         assert names <= {"reg", "slug", "id"}, route.path

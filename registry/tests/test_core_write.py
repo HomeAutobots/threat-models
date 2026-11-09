@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 
 from helpers import (SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
-                     human_terminal, make_registry, seed_dfd_era, seed_dfd_risk, session, start,
+                     human_terminal, make_registry, seed_dfd_approval, seed_dfd_era, seed_dfd_risk, session, start,
                      write_dfd, write_model)
 from tmreg import db, ledger, model
 from tmreg.core import (HUMAN_ONLY_MSG, RegistryError, ReviewerSession, StaleRecord, id_sort_key,
@@ -118,108 +118,6 @@ class InitAndRunsTest(TmpTestCase):
                      lambda: reg.add_risk("Bad Slug", ai_fields(), run_id="x")):
             with self.assertRaises(RegistryError):
                 call()
-
-
-class DfdTest(TmpTestCase):
-    """The DFD commands, which stay until the DFD code is removed. Each test writes dfd.md."""
-
-    def dfd_era(self, *, approve: bool):
-        """A register with SAMPLE_DFD in dfd.md, recorded as DFD-1 when approve."""
-        reg = make_registry(self.tmp, approve=False)
-        write_dfd(reg, "demo")
-        if approve:
-            seed_dfd_era(reg, "demo")
-        return reg
-
-    def test_dfd_status_approve_and_change(self):
-        reg = self.dfd_era(approve=False)
-        self.assertEqual(reg.dfd_status("demo").state, "none")
-        appr = reg.dfd_approve(session(), "demo", NOTE)
-        self.assertEqual((appr["id"], appr["version"]), ("DFD-1", "1.0"))
-        self.assertIn("F3", appr["ids"]["F"])
-        self.assertEqual((appr["approved_by"], appr["note"]), ("Test Reviewer", NOTE))
-        status = reg.dfd_status("demo")
-        self.assertEqual((status.state, status.latest["id"]), ("current", "DFD-1"))
-        with self.assertRaisesRegex(RegistryError, "already approved as DFD-1"):
-            reg.dfd_approve(session(), "demo", NOTE)
-        (reg.root / "systems/demo/dfd.md").write_bytes(SAMPLE_DFD + b"\n")
-        self.assertEqual(reg.dfd_status("demo").state, "changed")
-        self.assertEqual(reg.dfd_approve(session(), "demo", NOTE)["id"], "DFD-2")
-        last = reg.history("demo")[-1]
-        self.assertEqual((last["op"], last["actor"]), ("dfd-approve", "human:Test Reviewer"))
-
-    def test_dfd_approve_refuses_a_stale_expected_sha(self):  # I1
-        reg = self.dfd_era(approve=False)
-        shown = reg.dfd_preview("demo")["dfd"].sha256
-        (reg.root / "systems/demo/dfd.md").write_bytes(SAMPLE_DFD + b"\nChanged after display.\n")
-        with self.assertRaises(StaleRecord) as cm:
-            reg.dfd_approve(session(), "demo", NOTE, expected_sha256=shown)
-        self.assertEqual(str(cm.exception), "dfd.md changed since it was shown; review it again")
-        self.assertEqual(reg.history("demo"), [])
-        self.assertEqual(reg.dfd_status("demo").state, "none")
-        current = reg.dfd_preview("demo")["dfd"].sha256
-        appr = reg.dfd_approve(session(), "demo", NOTE, expected_sha256=current)
-        self.assertEqual((appr["id"], appr["sha256"]), ("DFD-1", current))
-
-    def test_dfd_approve_note_minimum(self):
-        reg = self.dfd_era(approve=False)
-        for note in ["ok", " " * 25]:
-            with self.subTest(note=note), self.assertRaisesRegex(RegistryError, "20"):
-                reg.dfd_approve(session(), "demo", note)
-        with self.assertRaises(RegistryError):
-            reg.dfd_approve("Test Reviewer", "demo", NOTE)  # not a ReviewerSession
-        self.assertEqual(reg.history("demo"), [])
-        self.assertEqual(reg.dfd_status("demo").state, "none")
-
-    def test_dfd_preview_and_parse_errors(self):
-        reg = self.dfd_era(approve=False)
-        prev = reg.dfd_preview("demo")
-        self.assertEqual(prev["added"], ["E1", "P1", "P2", "D1", "F1", "F2", "F3", "TB1"])
-        self.assertEqual((prev["removed"], prev["warnings"], prev["dfd"].version), ([], [], "1.0"))
-        path = reg.root / "systems/demo/dfd.md"
-        path.write_bytes(b"| ID | X |\n|---|---|\n| E1 | a |\n")
-        for call in (lambda: reg.dfd_preview("demo"), lambda: reg.dfd_approve(session(), "demo", NOTE)):
-            with self.assertRaisesRegex(RegistryError, "DFD version"):
-                call()
-        path.unlink()
-        with self.assertRaisesRegex(RegistryError, "dfd.md"):
-            reg.dfd_preview("demo")
-        self.assertEqual(reg.dfd_status("demo").current_sha256, None)
-
-    def test_dfd_preview_warns_for_live_risks_citing_removed_ids(self):
-        reg = self.dfd_era(approve=True)
-        for rid in ("T-01", "T-02", "T-03"):  # add needs a model approval: DFD-era rows
-            seed_dfd_risk(reg, rid, ["P2", "F3"])
-        with reg.conn:  # stand-ins for Task 4's reject and retire: neither row is live
-            ledger.write_row(reg.conn, "demo", "risks", "T-02", {"review_state": "rejected"},
-                             op="test", actor="human:test")
-            ledger.write_row(reg.conn, "demo", "risks", "T-03", {"status": "retired"},
-                             op="test", actor="human:test")
-        (reg.root / "systems/demo/dfd.md").write_bytes(SAMPLE_DFD.replace(b"| F3 | P2 | D1 | SQL |\n", b""))
-        prev = reg.dfd_preview("demo")
-        self.assertEqual((prev["added"], prev["removed"]), ([], ["F3"]))
-        self.assertEqual(prev["warnings"], ["T-01 cites F3, which this DFD no longer has"])
-
-
-    def test_dfd_status_with_unreadable_dfd_has_no_current_hash(self):
-        reg = self.dfd_era(approve=True)
-        path = reg.root / "systems/demo/dfd.md"
-        path.unlink()
-        path.mkdir()
-        status = reg.dfd_status("demo")
-        self.assertIsNone(status.current_sha256)
-        self.assertEqual(status.state, "changed")
-
-
-    @unittest.skipIf(os.geteuid() == 0, "root reads any file")
-    def test_dfd_status_with_permission_denied_dfd_has_no_current_hash(self):
-        reg = self.dfd_era(approve=True)
-        path = reg.root / "systems/demo/dfd.md"
-        path.chmod(0)
-        self.addCleanup(path.chmod, 0o644)
-        status = reg.dfd_status("demo")
-        self.assertIsNone(status.current_sha256)
-        self.assertEqual(status.state, "changed")
 
 
 class SessionTest(unittest.TestCase):
@@ -582,17 +480,10 @@ class ReadHelpersTest(TmpTestCase):
     def test_dfd_approvals(self):
         self.assertEqual([a["id"] for a in self.reg.dfd_approvals("demo")], ["DFD-1"])
         for i in range(2, 11):  # numeric, not lexical, order: DFD-10 sorts after DFD-9
-            (self.reg.root / "systems/demo/dfd.md").write_bytes(SAMPLE_DFD + b"\n" * i)
-            self.reg.dfd_approve(session(), "demo", NOTE)
+            seed_dfd_approval(self.reg, "demo")
         ids = [a["id"] for a in self.reg.dfd_approvals("demo")]
         self.assertEqual(ids, [f"DFD-{i}" for i in range(1, 11)])
         self.assertEqual(self.reg._latest_dfd("demo")["id"], "DFD-10")
-
-    def test_dfd_details(self):
-        self.assertEqual(self.reg.dfd_details("demo")["P2"]["name"], "Gateway")
-        (self.reg.root / "systems/demo/dfd.md").unlink()
-        with self.assertRaisesRegex(RegistryError, "no dfd.md"):
-            self.reg.dfd_details("demo")
 
     def test_stride_names(self):
         self.assertEqual(list(model.STRIDE_NAMES), list(model.STRIDE))

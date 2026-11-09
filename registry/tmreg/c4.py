@@ -24,7 +24,7 @@ MAX_BYTES = 512 * 1024
 TAGS = ("Trust boundary", "Data store", "External", "Async")
 
 _ID = re.compile(ID_RE, re.ASCII)
-# tm.version is AI-writable and shown to the owner, so only a plain token parses (as in dfd.py).
+# tm.version is AI-writable and shown to the owner, so only a plain token parses.
 _VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,31}")
 _KEY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")  # view keys end up in the viewer's links
 _MAX_DEPTH = 12
@@ -605,7 +605,7 @@ def parse(data: bytes) -> Model:
 
 # ---- Content rules, zones, crossings, roles and records (spec sections 5 and 7.4)
 
-_WAS = re.compile(r"(E|P|D|F|TB)[0-9]+", re.ASCII)  # an old DFD ID, as dfd.ID_RE
+_WAS = re.compile(r"(E|P|D|F|TB)[0-9]+", re.ASCII)  # an old DFD ID
 _ZOOM = re.compile(r"[1-7](, [1-7])*: .+")
 _DATACLASS, _INSPECTION = "tm.dataclass.", "structurizr.inspection."
 _ZONE, _ENFORCED = "tm.zone.", "tm.enforced_by."
