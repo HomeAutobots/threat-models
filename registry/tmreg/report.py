@@ -40,7 +40,7 @@ def select(risks, *, include_pending=False, include_retired=False,
         elif state == "pending":
             snap = r.get("last_approved")
             if snap is not None:
-                shown = {**r, **{f: snap[f] for f in SNAPSHOT_FIELDS}}
+                shown = {**r, **{f: snap.get(f) for f in SNAPSHOT_FIELDS}}
                 out.append(((key, 0), ReportRow(shown, "re-review pending", eds)))
                 if include_pending:
                     out.append(((key, 1), ReportRow(r, "PENDING", eds)))

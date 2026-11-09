@@ -70,7 +70,6 @@ class VerifyTest(TmpTestCase):
 
     def test_verify_reports_model_sequence_behind(self):
         reg = self._reg()
-        reg.conn.execute("DROP TRIGGER demo__model_approvals_no_update")
         reg.conn.execute("INSERT INTO demo__model_approvals (id, version) VALUES ('MODEL-3', '1.0')")
         reg.conn.commit()
         self.assertIn("sequence MODEL is behind MODEL-3", reg.verify("demo"))

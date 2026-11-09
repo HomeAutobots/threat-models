@@ -54,32 +54,57 @@ def _columns(conn: sqlite3.Connection, tbl: str) -> set[str]:
     return {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})")}
 
 
+# The v1 -> v2 step, frozen here so a later change to system.sql cannot change what "v2" means
+# for an old database. {p} is the slug's table prefix.
+_V2_DDL = (
+    """CREATE TABLE {p}__model_approvals (
+    id          TEXT PRIMARY KEY,
+    version     TEXT,
+    sha256      TEXT,
+    ids         TEXT,
+    model       TEXT,
+    source      TEXT,
+    approved_by TEXT,
+    approved_at TEXT,
+    note        TEXT
+)""",
+    """CREATE TRIGGER {p}__model_approvals_no_update BEFORE UPDATE ON {p}__model_approvals
+BEGIN SELECT RAISE(ABORT, 'model approvals are append-only'); END""",
+    """CREATE TRIGGER {p}__model_approvals_no_delete BEFORE DELETE ON {p}__model_approvals
+BEGIN SELECT RAISE(ABORT, 'model approvals are append-only'); END""",
+)
+
+
+def _upgrade_state(conn: sqlite3.Connection):
+    cur = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    version = cur[0] if cur else None
+    pending = [r[0] for r in conn.execute("SELECT slug FROM systems ORDER BY slug")
+               if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                               (f"{_prefix(r[0])}__model_approvals",)).fetchone() is None]
+    return version, pending
+
+
 def upgrade(conn: sqlite3.Connection) -> None:
     """Bring a version 1 database to version 2. Additive and idempotent: it never touches
     existing rows or the change log. executescript would commit, so it uses plain statements."""
-    cur = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-    systems = [r[0] for r in conn.execute("SELECT slug FROM systems ORDER BY slug")]
-    pending = [s for s in systems
-               if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                               (f"{_prefix(s)}__model_approvals",)).fetchone() is None]
-    if not pending and cur is not None and cur[0] == str(SCHEMA_VERSION):
-        return
-    if cur is not None and cur[0] not in ("1", str(SCHEMA_VERSION)):
-        return  # an unknown version: leave it for verify to report
-    # Only the model_approvals table and its triggers come from system.sql.
-    parts = [p.strip() for p in (_HERE / "system.sql").read_text().split("\n\n") if p.strip()]
-    wanted = [p for p in parts if "__model_approvals" in p]
+    version, pending = _upgrade_state(conn)
+    if (not pending and version == str(SCHEMA_VERSION)) or version not in (None, "1", str(SCHEMA_VERSION)):
+        return  # current, or an unknown version that verify reports
     conn.execute("BEGIN IMMEDIATE")
     try:
-        for slug in pending:
-            p = _prefix(slug)
-            for tbl in ("risks", "runs"):
-                if "model_approval_id" not in _columns(conn, f"{p}__{tbl}"):
-                    conn.execute(f"ALTER TABLE {p}__{tbl} ADD COLUMN model_approval_id TEXT")
-            for stmt in wanted:
-                conn.execute(stmt.replace("{p}", p))
-            conn.execute(f"INSERT OR IGNORE INTO {table(slug, 'sequences')} (prefix, next) VALUES ('MODEL', 1)")
-        conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
+        # Read again under the lock: another process may have upgraded while this one waited.
+        version, pending = _upgrade_state(conn)
+        if version in (None, "1", str(SCHEMA_VERSION)):
+            for slug in pending:
+                p = _prefix(slug)
+                for tbl in ("risks", "runs"):
+                    if "model_approval_id" not in _columns(conn, f"{p}__{tbl}"):
+                        conn.execute(f"ALTER TABLE {p}__{tbl} ADD COLUMN model_approval_id TEXT")
+                for stmt in _V2_DDL:
+                    conn.execute(stmt.replace("{p}", p))
+                conn.execute(f"INSERT OR IGNORE INTO {table(slug, 'sequences')} (prefix, next) "
+                             "VALUES ('MODEL', 1)")
+            conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
         conn.commit()
     except BaseException:
         conn.rollback()

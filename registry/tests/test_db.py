@@ -75,22 +75,34 @@ class SystemTablesTest(unittest.TestCase):
 
 
 class UpgradeTest(unittest.TestCase):
-    def _v1(self, path):
+    def _v1(self, path, slugs=("demo",), version="1"):
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
         conn.executescript((Path(db.__file__).parent / "schema.sql").read_text())
-        conn.executescript((Path(__file__).parent / "fixtures" / "system_v1.sql")
-                           .read_text().replace("{p}", "demo"))
-        conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")
-        conn.execute("INSERT INTO systems (slug, name, created_at) VALUES ('demo', 'Demo', ?)",
-                     (db.now(),))
-        conn.executemany("INSERT INTO demo__sequences (prefix, next) VALUES (?, 1)",
-                         [("T",), ("PT",), ("DFD",)])
-        conn.execute("UPDATE demo__sequences SET next = 2 WHERE prefix = 'T'")
+        conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (version,))
+        for slug in slugs:
+            conn.executescript((Path(__file__).parent / "fixtures" / "system_v1.sql")
+                               .read_text().replace("{p}", slug))
+            conn.execute("INSERT INTO systems (slug, name, created_at) VALUES (?, ?, ?)",
+                         (slug, slug, db.now()))
+            conn.executemany(f"INSERT INTO {slug}__sequences (prefix, next) VALUES (?, 1)",
+                             [("T",), ("PT",), ("DFD",)])
+        conn.execute("UPDATE demo__sequences SET next = 2 WHERE prefix = 'T'") if "demo" in slugs else None
         conn.commit()
-        ledger.write_row(conn, "demo", "risks", "T-01", {"title": "A v1 risk"}, op="add", actor="ai:r1")
+        if "demo" in slugs:
+            ledger.write_row(conn, "demo", "risks", "T-01", {"title": "A v1 risk"}, op="add", actor="ai:r1")
         conn.commit()
         return conn
+
+    def _shape(self, conn, slug):
+        p = slug.replace("-", "_")
+        tables = {}
+        for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
+            if name.startswith(p + "__"):
+                tables[name] = sorted(c[1] for c in conn.execute(f"PRAGMA table_info({name})"))
+        trigs = sorted(r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE ?", (p + "__%",)))
+        return tables, trigs
 
     def test_upgrade_adds_model_tables_to_a_v1_database(self):
         from tmreg.core import Registry
@@ -128,6 +140,95 @@ class UpgradeTest(unittest.TestCase):
             db.upgrade(conn)
             self.assertEqual(conn.execute(
                 "SELECT COUNT(*) FROM demo__sequences WHERE prefix='MODEL'").fetchone()[0], 1)
+
+    def test_upgrade_survives_a_second_process_that_won_the_race(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.db"
+            self._v1(path).close()
+            loser = sqlite3.connect(str(path))
+            loser.row_factory = sqlite3.Row
+            winner = sqlite3.connect(str(path))
+            winner.row_factory = sqlite3.Row
+            self.addCleanup(loser.close)
+            self.addCleanup(winner.close)
+
+            class Proxy:
+                done = False
+
+                def __getattr__(self, n):
+                    return getattr(loser, n)
+
+                def execute(self, sql, *a):
+                    if sql == "BEGIN IMMEDIATE" and not Proxy.done:
+                        Proxy.done = True
+                        db.upgrade(winner)  # the other process finishes first
+                    return loser.execute(sql, *a)
+
+            db.upgrade(Proxy())
+            self.assertEqual(loser.execute(
+                "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0], "2")
+            self.assertEqual(loser.execute(
+                "SELECT COUNT(*) FROM demo__sequences WHERE prefix='MODEL'").fetchone()[0], 1)
+
+    def test_a_failed_upgrade_rolls_back_every_system(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.db"
+            c = self._v1(path, slugs=("alpha", "zeta"))
+            c.execute("CREATE TRIGGER zeta__model_approvals_no_update BEFORE UPDATE ON zeta__runs "
+                      "BEGIN SELECT 1; END")
+            c.commit()
+            c.close()
+            with self.assertRaises(sqlite3.Error):
+                db.connect(path)
+            conn = sqlite3.connect(str(path))
+            self.addCleanup(conn.close)
+            self.assertEqual(conn.execute(
+                "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0], "1")
+            names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+            self.assertFalse([n for n in names if "model_approvals" in n and not n.startswith("zeta")])
+            self.assertNotIn("zeta__model_approvals", names)
+            for slug in ("alpha", "zeta"):
+                for t in ("risks", "runs"):
+                    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({slug}__{t})")]
+                    self.assertNotIn("model_approval_id", cols)
+
+    def test_an_unknown_schema_version_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.db"
+            self._v1(path, version="3").close()
+            conn = db.connect(path)
+            self.addCleanup(conn.close)
+            self.assertEqual(conn.execute(
+                "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0], "3")
+            names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+            self.assertNotIn("demo__model_approvals", names)
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(demo__risks)")]
+            self.assertNotIn("model_approval_id", cols)
+
+    def test_upgrade_covers_every_system(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.db"
+            self._v1(path, slugs=("alpha", "demo")).close()
+            conn = db.connect(path)
+            self.addCleanup(conn.close)
+            for slug in ("alpha", "demo"):
+                self.assertIn(f"{slug}__model_approvals",
+                              {r[0] for r in conn.execute("SELECT name FROM sqlite_master")})
+                self.assertEqual(conn.execute(
+                    f"SELECT next FROM {slug}__sequences WHERE prefix='MODEL'").fetchone()[0], 1)
+
+    def test_upgraded_and_fresh_databases_have_the_same_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.db"
+            self._v1(path, slugs=("demo",)).close()
+            up = db.connect(path)
+            self.addCleanup(up.close)
+            fresh = db.connect(Path(tmp) / "f.db")
+            self.addCleanup(fresh.close)
+            db.create_system(fresh, "demo", "Demo")
+            self.assertEqual(self._shape(up, "demo"), self._shape(fresh, "demo"))
+            q = "SELECT prefix, next FROM demo__sequences ORDER BY prefix"
+            self.assertEqual({r[0] for r in up.execute(q)}, {r[0] for r in fresh.execute(q)})
 
 
 if __name__ == "__main__":

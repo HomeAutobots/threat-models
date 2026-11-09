@@ -139,6 +139,18 @@ class ReviewTest(TmpTestCase):
         self.assertEqual(r["review_state"], "approved")
         self.assertIsNone(r["model_approval_id"])
 
+    def test_report_and_register_handle_a_snapshot_without_model_field(self):
+        self.add_approved()
+        self.edit("A. Okafor")
+        cur = self.reg._risk("demo", "T-01")
+        snap = {k: v for k, v in cur["last_approved"].items() if k != "model_approval_id"}
+        self.reg.conn.execute("UPDATE demo__risks SET last_approved = ? WHERE id = 'T-01'",
+                              (json.dumps(snap),))
+        self.reg.conn.commit()
+        for fmt in ("md", "csv", "html"):
+            self.assertIn("T-01", self.reg.report("demo", fmt))
+        self.reg._write_register("demo", "T-01")
+
     def test_edit_approved_returns_to_review(self):
         self.add_approved()
         r = self.edit("A. Okafor")
