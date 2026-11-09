@@ -1,11 +1,12 @@
 """Registry.c4_status, c4_preview, c4_approve, and c4_checked_bytes."""
 import hashlib
+import sqlite3
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from helpers import (SAMPLE_WORKSPACE, TmpTestCase, approve_model, make_registry, session,
-                     write_model)
+from helpers import (SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
+                     make_registry, session, start, write_model)
 from tmreg import c4
 from tmreg.core import RegistryError, StaleRecord
 
@@ -212,6 +213,116 @@ class C4CoreTest(TmpTestCase):
             reg.c4_approve(session(), "demo", NOTE, expected_sha256=p["sha256"])
         toml.write_text(toml.read_text().replace("Health", "PII"))
         self.assertEqual(reg.c4_preview("demo")["problems"], [])
+
+    # ---- fix round 1 -------------------------------------------------------------------------
+
+    def _pair(self):
+        real = self.reg()
+        return real, make_registry(self.tmp, root=real.root, trial=True)
+
+    def _trial_bytes(self, reg):
+        p = reg.root / "registry" / "trial.db"
+        wal = p.with_name(p.name + "-wal")
+        return p.read_bytes(), wal.read_bytes() if wal.exists() else None
+
+    def test_v1_sibling_has_no_model_approvals_and_is_not_touched(self):
+        real, trial = self._pair()
+        with trial.conn:
+            trial.conn.execute("DROP TABLE demo__model_approvals")
+        before = self._trial_bytes(real)
+        write_model(real, "demo")
+        p = real.c4_preview("demo")
+        self.assertEqual((p["error"], p["problems"], p["reused"]), (None, [], []))
+        self.assertEqual(self._trial_bytes(real), before)
+
+    def test_sibling_lock_error_fails_closed(self):
+        real, trial = self._pair()
+        write_model(real, "demo")
+        from tmreg import core, ledger
+        read = ledger.read_rows
+
+        def locked(conn, slug, tbl):
+            if conn is not real.conn and tbl == "model_approvals":
+                raise sqlite3.OperationalError("database is locked")
+            return read(conn, slug, tbl)
+
+        with mock.patch.object(core.ledger, "read_rows", locked):
+            with self.assertRaisesRegex(RegistryError, "cannot read trial.db"):
+                real.c4_preview("demo")
+            with self.assertRaises(RegistryError):
+                approve_model(real, "demo")
+            # the light check never reads the sibling
+            data, _ = real.c4_checked_bytes("demo")
+        self.assertEqual(data, SAMPLE_WORKSPACE)
+
+    def test_warnings_for_live_risks_only(self):
+        reg = self.reg()
+        write_model(reg, "demo")
+        approve_model(reg, "demo")
+        run = start(reg)
+        ids = [reg.add_risk("demo", ai_fields(title=f"Risk {n} on the boundary",
+                                              elements=["TB1"]), run_id=run)["id"]
+               for n in range(4)]
+        live, rejected, retired, merged = ids
+        reg.reject(session(), "demo", rejected, NOTE)
+        reg.approve(session(), "demo", retired, NOTE)
+        reg.retire(session(), "demo", retired, "No longer applies to this system.")
+        reg.merge(session(), "demo", merged, live, NOTE)
+        renamed = TEXT.replace("TB1", "TB3").replace('"tm.was" "TB3"', '"tm.was" "TB1"').encode()
+        write_model(reg, "demo", renamed)
+        p = reg.c4_preview("demo")
+        self.assertEqual(p["problems"], [])
+        self.assertIn("TB1", p["removed"])
+        self.assertEqual(len(p["warnings"]), 1)
+        self.assertTrue(p["warnings"][0].startswith(f"{live} cites TB1"))
+
+    def test_old_dfd_boundary_stays_used_after_a_model_approval(self):
+        reg = self.reg(approve=False)
+        dfd = SAMPLE_DFD.replace(b"| TB1 | Internet to edge | WAF |\n",
+                                 b"| TB1 | Internet to edge | WAF |\n| TB2 | Edge to cloud | SG |\n")
+        (reg.root / "systems/demo/dfd.md").write_bytes(dfd)
+        reg.dfd_approve(session(), "demo", NOTE)
+        write_model(reg, "demo", TEXT.replace("TB2", "TB4").encode())
+        approve_model(reg, "demo")
+        write_model(reg, "demo")
+        p = reg.c4_preview("demo")
+        self.assertEqual(p["reused"], ["TB2"])
+        self.assertEqual(p["reused_dfd"], ["TB2"])
+        with self.assertRaisesRegex(RegistryError, r'(?s)TB2.*Next free.*"tm.was" "TB2"'):
+            reg.c4_approve(session(), "demo", NOTE, expected_sha256=p["sha256"])
+        claimed = TEXT.replace('"tm.enforced_by" "Security groups"\n',
+                               '"tm.enforced_by" "Security groups"\n                    "tm.was" "TB2"\n')
+        self.assertNotEqual(claimed, TEXT)
+        write_model(reg, "demo", claimed.encode())
+        p = reg.c4_preview("demo")
+        self.assertEqual((p["problems"], p["reused"]), ([], []))
+        self.assertEqual(approve_model(reg, "demo")["id"], "MODEL-2")
+
+    def test_promotion_from_trial_to_real(self):
+        real, trial = self._pair()
+        write_model(trial, "demo")
+        approve_model(trial, "demo")
+        p = real.c4_preview("demo")
+        self.assertEqual(p["reused"], [])
+        self.assertEqual(approve_model(real, "demo")["id"], "MODEL-1")
+
+    def test_problems_come_before_a_stale_sha(self):
+        reg = self.reg()
+        bad = edited('"tm.auth" "Session cookie"', '"tm.auth" ""')
+        write_model(reg, "demo", bad)
+        with self.assertRaises(RegistryError) as cm:
+            reg.c4_approve(session(), "demo", NOTE, expected_sha256="0" * 64)
+        self.assertNotIsInstance(cm.exception, StaleRecord)
+        self.assertIn("tm.auth", str(cm.exception))
+
+    def test_parse_errors_are_prefixed(self):
+        reg = self.reg()
+        write_model(reg, "demo", b"workspace {")
+        self.assertTrue(reg.c4_preview("demo")["error"].startswith("workspace.dsl: line "))
+        with self.assertRaisesRegex(RegistryError, "^workspace.dsl: line "):
+            reg.c4_checked_bytes("demo")
+        with self.assertRaisesRegex(RegistryError, "^workspace.dsl: line "):
+            reg.c4_approve(session(), "demo", NOTE, expected_sha256=sha(b"workspace {"))
 
 
 if __name__ == "__main__":

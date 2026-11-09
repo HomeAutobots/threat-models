@@ -632,10 +632,10 @@ class Registry:
             if not db.system_exists(conn, slug):
                 return [], []
             dfds = list(ledger.read_rows(conn, slug, "dfd_approvals").values())
-            try:
-                models = list(ledger.read_rows(conn, slug, "model_approvals").values())
-            except sqlite3.OperationalError:
-                models = []  # a v1 database: no model approvals yet
+            has_table = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                                     (db.table(slug, "model_approvals"),)).fetchone()
+            # Only a missing table means a v1 database; every other error fails closed below.
+            models = list(ledger.read_rows(conn, slug, "model_approvals").values()) if has_table else []
             return models, dfds
         except (sqlite3.Error, ValueError) as e:
             raise RegistryError(f"cannot read {path.name}, so the IDs it used are unknown: {e}") from None
@@ -643,31 +643,37 @@ class Registry:
             if conn is not None:
                 conn.close()
 
+    def _c4_problems(self, slug: str, model) -> list[str]:
+        """c4.problems plus the system.toml check, which only core can make."""
+        found = c4.problems(model)
+        try:
+            declared = c4.to_record(model)["dataclasses"]
+            for name in self.system(slug).personal_data_classes:
+                if name not in declared:
+                    found.append(f"system.toml personal_data_classes names {name}, "
+                                 "which workspace.dsl does not declare")
+        except RegistryError as e:
+            found.append(f"system.toml cannot be loaded: {e}")
+        return found
+
     def _c4_assess(self, slug: str, data: bytes) -> dict:
         """Everything the preview shows, for these bytes. The caller read the file once."""
         latest = self._latest_model(slug)
         text = data.decode("utf-8-sig", errors="replace")
         out = {"sha256": hashlib.sha256(data).hexdigest(), "text": text, "model": None,
                "record": None, "error": None, "problems": [], "added": [], "removed": [],
-               "changed": {}, "warnings": [], "next_ids": {}, "reused": [], "adoption": None,
+               "changed": {}, "warnings": [], "next_ids": {}, "reused": [], "reused_dfd": [], "adoption": None,
                "diff": list(difflib.unified_diff(
                    (latest["source"] if latest else "").splitlines(), text.splitlines(),
                    "approved", "current", lineterm=""))}
         try:
             model = c4.parse(data)
         except c4.C4Error as e:
-            out["error"] = str(e)
+            out["error"] = f"workspace.dsl: {e}"
             return out
         record = c4.to_record(model)
         out["model"], out["record"] = model, record
-        out["problems"] = c4.problems(model)
-        try:
-            for name in self.system(slug).personal_data_classes:
-                if name not in record["dataclasses"]:
-                    out["problems"].append(f"system.toml personal_data_classes names {name}, "
-                                           "which workspace.dsl does not declare")
-        except RegistryError as e:
-            out["problems"].append(f"system.toml cannot be loaded: {e}")
+        out["problems"] = self._c4_problems(slug, model)
         delta = c4.changes(latest["model"] if latest else None, record)
         out.update(added=delta["added"], removed=delta["removed"], changed=delta["changed"])
         if latest is not None:
@@ -679,11 +685,11 @@ class Registry:
                 if cited:
                     out["warnings"].append(
                         f"{r['id']} cites {', '.join(cited)}, which this model no longer has")
-        used, out["reused"] = self._c4_used(slug, model, latest)
+        used, out["reused"], out["reused_dfd"] = self._c4_used(slug, model, latest)
         out["next_ids"] = c4.next_free(model, used)
         return out
 
-    def _c4_used(self, slug: str, model, latest: dict | None) -> tuple[dict[str, set[int]], list[str]]:
+    def _c4_used(self, slug: str, model, latest: dict | None) -> tuple[dict[str, set[int]], list[str], list[str]]:
         """P7: the numbers of every ID ever used, and the file's IDs that were used before but
         are not in the latest approval of this register."""
         sib_models, sib_dfds = self._sibling_history(slug)
@@ -699,18 +705,20 @@ class Registry:
         dfd_tbs = {i for row in dfds for i in (row.get("ids") or {}).get("TB", ())}
         file_ids = model.all_ids()
         reused = (file_ids & retired) - (_model_ids(latest) if latest else set())
-        if latest is None:
-            for tb in file_ids & dfd_tbs:
-                item = model.items.get(tb)
-                claimed = [p.strip() for p in (item.properties.get("tm.was", "") if item else "").split(",")]
-                if tb not in claimed:
-                    reused.add(tb)
+        from_dfd = set()  # old DFD boundaries stay used after a model approval (R18)
+        for tb in (file_ids & dfd_tbs) - (_model_ids(latest) if latest else set()):
+            item = model.items.get(tb)
+            claimed = [p.strip() for p in (item.properties.get("tm.was", "") if item else "").split(",")]
+            if tb not in claimed:
+                from_dfd.add(tb)
+        reused |= from_dfd
         used: dict[str, set[int]] = {}
         for iid in prior | dfd_tbs | file_ids:
             m = _C4_ID_RE.fullmatch(iid)
             if m:
                 used.setdefault(m.group(1), set()).add(int(m.group(2)))
-        return used, sorted(reused, key=c4._id_order)
+        key = c4._id_order
+        return used, sorted(reused, key=key), sorted(from_dfd, key=key)
 
     def c4_preview(self, slug) -> dict:
         """The current workspace.dsl, read once, with what an approval would record."""
@@ -720,19 +728,21 @@ class Registry:
         except RegistryError as e:
             return {"sha256": None, "text": "", "model": None, "record": None, "error": str(e),
                     "problems": [], "added": [], "removed": [], "changed": {}, "warnings": [],
-                    "next_ids": {}, "reused": [], "diff": [], "adoption": None}
+                    "next_ids": {}, "reused": [], "reused_dfd": [], "diff": [], "adoption": None}
         return self._c4_assess(slug, data)
 
     def c4_checked_bytes(self, slug) -> tuple[bytes, "c4.Model"]:
         """The file's bytes and model, only if it parses and has no problems."""
         self._require(slug)
         data = self._c4_read(slug)
-        info = self._c4_assess(slug, data)
-        if info["error"]:
-            raise RegistryError(info["error"])
-        if info["problems"]:
-            raise RegistryError("workspace.dsl has problems: " + "; ".join(info["problems"]))
-        return data, info["model"]
+        try:
+            model = c4.parse(data)
+        except c4.C4Error as e:
+            raise RegistryError(f"workspace.dsl: {e}") from None
+        found = self._c4_problems(slug, model)  # light: no sibling read, no diff, no risks
+        if found:
+            raise RegistryError("workspace.dsl has problems: " + "; ".join(found))
+        return data, model
 
     def c4_approve(self, session, slug, note, *, expected_sha256: str) -> dict:
         """Record an approval of workspace.dsl, bound to the sha256 the reviewer was shown."""
@@ -747,7 +757,13 @@ class Registry:
             if info["problems"]:
                 raise RegistryError("workspace.dsl has problems: " + "; ".join(info["problems"]))
             if info["reused"]:
-                raise RegistryError("workspace.dsl reuses retired IDs: " + ", ".join(info["reused"]))
+                msg = ("workspace.dsl reuses retired IDs: " + ", ".join(info["reused"])
+                       + ". Next free: " + ", ".join(info["next_ids"].values()))
+                if info["reused_dfd"]:
+                    tb = info["reused_dfd"][0]
+                    msg += (f'. For a boundary from the old DFD, add "tm.was" "{tb}" if this is the '
+                            f'same boundary, or take {info["next_ids"]["TB"]}')
+                raise RegistryError(msg)
             if info["sha256"] != expected_sha256:
                 raise StaleRecord("workspace.dsl changed since it was shown; review it again")
             latest = self._latest_model(slug)
