@@ -40,7 +40,8 @@ export function ReportsPage() {
       document.body.appendChild(a)
       a.click()
       a.remove()
-      URL.revokeObjectURL(href)
+      // Revoking in the same tick can cancel the download before the browser reads the Blob.
+      setTimeout(() => URL.revokeObjectURL(href), 1000)
     } catch (e) {
       setError(visible(e instanceof Error ? e.message : String(e)))
     } finally {

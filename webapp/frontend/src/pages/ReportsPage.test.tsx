@@ -59,16 +59,24 @@ describe('ReportsPage', () => {
     expect(frame.getAttribute('srcdoc')).toBe('<h1>Report</h1>')
   })
 
-  it('Download fetches with the header and saves through an object URL', async () => {
+  it('Download fetches with the header, saves through an object URL, and revokes it later', async () => {
     renderPage()
     await screen.findByText('| a | b |')
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    // A microtask queued by the click runs once the click's own task is done: the URL must still
+    // be live then, so the browser can start reading the Blob.
+    let revokedInClickTick: number | null = null
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {
+      queueMicrotask(() => {
+        revokedInClickTick = vi.mocked(URL.revokeObjectURL).mock.calls.length
+      })
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Download' }))
-    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled())
+    await waitFor(() => expect(click).toHaveBeenCalled())
     const dl = calls.find((c) => c.url.includes('download=true'))
     expect(dl?.headers.get('X-CSRF-Token')).toBe('tok-1')
-    expect(click).toHaveBeenCalled()
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:x')
+    expect(URL.createObjectURL).toHaveBeenCalled()
+    await waitFor(() => expect(revokedInClickTick).toBe(0))
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:x'), { timeout: 3000 })
   })
 
   it('include switches go into the query', async () => {
