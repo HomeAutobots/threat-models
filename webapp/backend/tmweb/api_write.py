@@ -1,10 +1,14 @@
 """The POST routes. One Registry call each; every rule lives in tmreg."""
-from fastapi import APIRouter, Depends
+import hashlib
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from tmreg.core import Registry, ReviewerSession, StaleRecord
 
+from . import diagrams
 from .api_read import _row
 from .registry_dep import get_registry
 
@@ -109,3 +113,18 @@ async def c4_approve(slug: str, body: ModelApproveBody,
                              "current_sha256": registry.c4_status(slug).current_sha256},
                             status_code=409)
     return {"approval": _row(row)}
+
+
+@router.post("/{reg}/systems/{slug}/c4/export")
+async def c4_export(reg: str, slug: str, request: Request,
+                    registry: Registry = Depends(get_registry)):
+    # Read and checked once, here on the event loop with the registry; Docker sees only these
+    # bytes. A file that fails the check raises RegistryError, a 422.
+    data, _ = registry.c4_checked_bytes(slug)
+    sha256 = hashlib.sha256(data).hexdigest()
+    try:
+        result = await run_in_threadpool(diagrams.export, request.app.state.root, reg, slug,
+                                         data, sha256)
+    except diagrams.DiagramsUnavailable as e:
+        return JSONResponse({"detail": str(e)}, status_code=503)
+    return {"sha256": sha256, **diagrams.shown(reg, slug, sha256, result)}

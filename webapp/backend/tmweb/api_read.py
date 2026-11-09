@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from tmreg import config, model
 from tmreg.core import Registry, RegistryError
 
+from . import diagrams
 from .registry_dep import db_path, get_registry
 
 router = APIRouter(prefix="/api")
@@ -93,22 +94,19 @@ async def verify(slug: str, registry: Registry = Depends(get_registry)):
     return {"problems": registry.verify(slug)}
 
 
-def _structurizr_not_checked() -> dict:
-    return {"state": "not-checked", "message": None, "base": None, "views": []}
-
-
 @router.get("/{reg}/systems/{slug}/c4")
-async def c4_model(slug: str, registry: Registry = Depends(get_registry)):
+async def c4_model(reg: str, slug: str, request: Request,
+                   registry: Registry = Depends(get_registry)):
     status = registry.c4_status(slug)
     approvals = [_row(a) for a in registry.model_approvals(slug)]
-    preview = error = None
+    preview = error = sha256 = None
     text = ""
     try:
         p = registry.c4_preview(slug)
     except RegistryError as e:  # the sibling register cannot be read
         error = str(e)
     else:
-        error, text = p["error"], p["text"]
+        error, text, sha256 = p["error"], p["text"], p["sha256"]
         if p["model"] is not None:
             preview = {"sha256": p["sha256"], "version": p["model"].version,
                        "ids": p["model"].ids(), "record": p["record"], "added": p["added"],
@@ -125,7 +123,8 @@ async def c4_model(slug: str, registry: Registry = Depends(get_registry)):
         "text": text,
         "counts": registry.open_risk_counts(slug),
         "latest_record": status.latest["model"] if status.latest else None,
-        "structurizr": _structurizr_not_checked(),
+        # Structurizr's verdict on the bytes shown (the same read as text and preview).
+        "structurizr": diagrams.verdict(request.app.state.root, reg, slug, sha256),
     }
 
 
