@@ -1,4 +1,5 @@
 import { Alert, Anchor, Button, Group, Loader, Text, Title } from '@mantine/core'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAction, useMeta, useRisk, useRiskHistory, useRisks } from '../api/queries'
@@ -19,6 +20,13 @@ export function ReviewPage() {
   const { reg, slug } = useParams()
   const [params, setParams] = useSearchParams()
   const risks = useRisks(reg as Reg, slug ?? '')
+
+  // Pin the shown item into the URL, so a background refetch of the list cannot switch it.
+  const firstPending = (risks.data ?? []).find((r) => r.review_state === 'pending')?.id
+  const unpinned = !params.get('id') && !!firstPending
+  useEffect(() => {
+    if (unpinned && firstPending) setParams({ id: firstPending }, { replace: true })
+  }, [unpinned, firstPending, setParams])
 
   if (risks.isLoading) return <Loader m="xl" aria-label="Loading" />
   if (risks.error) return <Alert color="red">{risks.error.message}</Alert>
@@ -80,14 +88,26 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
     setShown(next)
   }
 
-  const data = fetched.data
-  useEffect(() => {
-    if (!data || inFlight.current) return
+  const client = useQueryClient()
+  const [reloadFailed, setReloadFailed] = useState(false)
+
+  // Compare a fetched record with the pinned one. Equal: keep the pinned object and take the
+  // fresh context. Different: swap it in and show the banner.
+  const reconcile = (data: RiskDetail | undefined) => {
+    if (!data) return
     const prev = shownRef.current
     if (!prev) return show(data)
     if (JSON.stringify(prev.risk) === JSON.stringify(data.risk)) return show({ ...data, risk: prev.risk })
     setStale(true)
     show(data)
+  }
+  const latest = () => client.getQueryData<RiskDetail>([reg, slug, 'risk', id])
+
+  const data = fetched.data
+  useEffect(() => {
+    if (inFlight.current) return
+    reconcile(data)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])
 
   if (fetched.error) return <Alert color="red">{fetched.error.message}</Alert>
@@ -112,8 +132,18 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
         const current = (e.body as Conflict409 | null)?.current
         if (current) show({ ...shown, risk: current as Risk })
         setStale(true)
+        // The context (elements, duplicate, DFD) belongs to the old record: reload it before any
+        // decision, and keep every button disabled until it is here.
+        try {
+          await client.refetchQueries({ queryKey: [reg, slug, 'risk', id], exact: true }, { throwOnError: true })
+          reconcile(latest())
+        } catch {
+          setReloadFailed(true)
+          setError('Could not reload this risk. Reload the page before deciding.')
+        }
       } else {
-        setError(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e))
+        setError(visible(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)))
+        reconcile(latest())
       }
     } finally {
       inFlight.current = false
@@ -177,7 +207,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
             isReReview={isReReview}
             duplicateId={risk.possible_duplicate_of ? visible(risk.possible_duplicate_of) : null}
             noteMin={meta.data.note_min}
-            busy={busy}
+            busy={busy || reloadFailed}
             error={error}
             note={note}
             onNote={setNote}

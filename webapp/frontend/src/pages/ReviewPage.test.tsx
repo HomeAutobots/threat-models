@@ -58,6 +58,7 @@ interface Post {
 let details: Record<string, RiskDetail>
 let queue: Risk[]
 let posts: Post[]
+let getGate: Promise<void> | null = null
 let postReply: (post: Post) => Response | Promise<Response>
 
 function mockApi() {
@@ -72,6 +73,7 @@ function mockApi() {
       if (url === '/api/meta') return json(meta)
       if (url.endsWith('/history')) return json([])
       const m = url.match(/\/risks\/([^/]+)$/)
+      if (m && getGate) await getGate
       if (m) return details[decodeURIComponent(m[1])] ? json(details[decodeURIComponent(m[1])]) : json({ detail: 'none' }, 404)
       if (url.endsWith('/risks')) return json(queue)
       return json({}, 404)
@@ -109,6 +111,7 @@ async function type(note = NOTE) {
 
 beforeEach(() => {
   posts = []
+  getGate = null
   queue = [mkRisk('T-1'), mkRisk('T-2'), mkRisk('T-3')]
   details = Object.fromEntries(queue.map((r) => [r.id, mkDetail(r)]))
   postReply = (p) => json({ risk: { ...p.body.seen, review_state: 'approved' } })
@@ -174,7 +177,11 @@ describe('ReviewPage', () => {
     postReply = (p) =>
       p.body.seen.notes === 'changed by AI'
         ? json({ risk: { ...p.body.seen, review_state: 'approved' } })
-        : json({ detail: 'stale', current: mkRisk('T-1', { notes: 'changed by AI' }) }, 409)
+        : (() => {
+            const current = mkRisk('T-1', { notes: 'changed by AI' })
+            details['T-1'] = mkDetail(current) // the server now serves the new record
+            return json({ detail: 'stale', current }, 409)
+          })()
     renderPage()
     const box = await type()
     fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
@@ -215,13 +222,13 @@ describe('ReviewPage', () => {
     expect(screen.queryByText(STALE)).not.toBeInTheDocument()
   })
 
-  it('shows core 422 detail as given in the panel and keeps the note', async () => {
-    postReply = () => json({ detail: 'Core says: <b>no</b> ‮ approve' }, 422)
+  it('shows core 422 detail in the panel (control and bidi characters escaped) and keeps the note', async () => {
+    postReply = () => json({ detail: 'Core says: <b>no</b> \u202e approve' }, 422)
     renderPage()
     const box = await type()
     fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
     const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toContain('Core says: <b>no</b> ‮ approve')
+    expect(alert.textContent).toContain('Core says: <b>no</b> \\u202e approve')
     expect(box.value).toBe(NOTE)
     expect(screen.queryByText(STALE)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeEnabled()
@@ -298,6 +305,81 @@ describe('ReviewPage', () => {
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: 'Edit before deciding' }))
     expect((await screen.findAllByTestId('where')).at(-1)?.textContent).toBe('/main/demo/risks/T-1/edit?return=review')
+  })
+
+  it('after a 409 the duplicate comparison and elements follow current, and Merge waits for them', async () => {
+    const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['P7'] })
+    queue = [r]
+    details = {
+      'T-1': mkDetail(r, {
+        elements: { P7: { name: 'Seven', type: 'Process' } },
+        duplicate: mkRisk('T-0', { review_state: 'approved', title: 'Zero title' }),
+      }),
+    }
+    let release: () => void = () => {}
+    postReply = () => {
+      const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['P7', 'P9'] })
+      details = {
+        'T-1': mkDetail(current, {
+          elements: { P7: { name: 'Seven', type: 'Process' }, P9: { name: 'Nine', type: 'Process' } },
+          duplicate: mkRisk('T-5', { review_state: 'approved', title: 'Five title' }),
+        }),
+      }
+      getGate = new Promise<void>((res) => (release = res))
+      return json({ detail: 'stale', current }, 409)
+    }
+    renderPage()
+    await type()
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+    expect(await screen.findByText(STALE)).toBeInTheDocument()
+    // The context is still being reloaded: nothing can be decided.
+    expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeDisabled()
+    await act(async () => release())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
+    const dup = document.getElementById('dup') as HTMLElement
+    expect(dup.textContent).toContain('T-5')
+    expect(dup.textContent).toContain('Five title')
+    expect(dup.textContent).not.toContain('Zero title')
+    expect(screen.getByText('Nine')).toBeInTheDocument()
+    expect(document.getElementById('where')?.textContent).not.toContain('Not in the current DFD')
+    expect(screen.getByText(STALE)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Merge into T-5' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1].body.into).toBe('T-5')
+  })
+
+  it('a fetch that landed during a failed request is checked when it fails', async () => {
+    const client = makeQueryClient()
+    postReply = async () => {
+      details['T-1'] = mkDetail(mkRisk('T-1', { notes: 'changed while posting' }))
+      await client.invalidateQueries({ queryKey: ['main', 'demo', 'risk', 'T-1'] })
+      return json({ detail: 'core refused' }, 422)
+    }
+    renderPage('/main/demo/review', client)
+    const box = await type()
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+    expect(await screen.findByText(STALE)).toBeInTheDocument()
+    expect(screen.getByText('changed while posting')).toBeInTheDocument()
+    expect(screen.getByText('core refused')).toBeInTheDocument()
+    expect(box.value).toBe(NOTE)
+  })
+
+  it('pins the shown item into the URL, so a list refetch cannot switch it', async () => {
+    const client = renderPage()
+    const box = await type()
+    expect(await screen.findByText('Original notes of T-1')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/main/demo/review?id=T-1'))
+    const fresh = mkRisk('T-0')
+    details['T-0'] = mkDetail(fresh)
+    queue = [fresh, ...queue]
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['main', 'demo', 'risks'] })
+    })
+    expect(await screen.findByText('2 of 4 pending')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeInTheDocument()
+    expect(box.value).toBe(NOTE)
+    expect(screen.getByTestId('where').textContent).toBe('/main/demo/review?id=T-1')
   })
 
   it('uses no raw HTML', () => {
