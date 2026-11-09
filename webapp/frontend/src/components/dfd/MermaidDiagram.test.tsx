@@ -36,4 +36,15 @@ describe('MermaidDiagram', () => {
     expect(await screen.findByText(/bad syntax/)).toBeInTheDocument()
     expect(screen.getByText('not a diagram')).toBeInTheDocument()
   })
+
+  it('on error shows the source and the error with invisible and control characters escaped', async () => {
+    renderFn.mockRejectedValue(new Error('bad \u202esyntax'))
+    render(
+      <MantineProvider>
+        <MermaidDiagram source={'graph TD; A-->B\u200b\u001b'} />
+      </MantineProvider>,
+    )
+    expect(await screen.findByText('Diagram error: bad \\u202esyntax')).toBeInTheDocument()
+    expect(screen.getByText('graph TD; A-->B\\u200b\\x1b')).toBeInTheDocument()
+  })
 })

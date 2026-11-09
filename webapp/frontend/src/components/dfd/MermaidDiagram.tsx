@@ -1,5 +1,6 @@
 import { Code, Stack, Text } from '@mantine/core'
 import { useEffect, useId, useState } from 'react'
+import { visible } from '../../lib/visible'
 
 let counter = 0
 
@@ -32,9 +33,9 @@ export function MermaidDiagram({ source }: { source: string }) {
     return (
       <Stack gap="xs">
         <Text c="red" size="sm" style={{ overflowWrap: 'anywhere' }}>
-          Diagram error: {error}
+          Diagram error: {visible(error)}
         </Text>
-        <Code block>{source}</Code>
+        <Code block>{visible(source)}</Code>
       </Stack>
     )
   }
