@@ -589,8 +589,7 @@ class Registry:
     def edit_risk(self, slug, risk_id, fields: dict, *, run_id: str | None,
                   seen: dict | None = None, note: str = "") -> dict:
         self._require(slug)
-        note = (note or "").strip()
-        _no_controls("note", note)
+        note = _no_controls("note", note or "").strip()
         with self._write():
             actor = self._actor(slug, run_id)
             cur = self._risk(slug, risk_id)

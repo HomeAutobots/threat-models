@@ -400,6 +400,11 @@ class EditRuleTest(TmpTestCase):
         with tty():
             self.assertEqual(self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None, seen=seen)["owner"], "A")
 
+    def test_edit_note_normalizes_crlf_before_storing(self):
+        with tty():
+            self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None, note="a\r\nb")
+        self.assertEqual(self.reg.history("demo", "T-01")[-1]["note"], "a\nb")
+
     def test_edit_note_refuses_control_characters(self):
         with tty(), self.assertRaisesRegex(RegistryError, "note"):
             self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None, note="ok\x1b[2J")
