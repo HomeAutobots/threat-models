@@ -732,7 +732,40 @@ class Registry:
                         f"{r['id']} cites {', '.join(cited)}, which this model no longer has")
         used, out["reused"], out["reused_dfd"] = self._c4_used(slug, model, latest)
         out["next_ids"] = c4.next_free(model, used)
+        if latest is None and self._latest_dfd(slug) is not None:
+            out["adoption"] = self._adoption(slug, record)
         return out
+
+    def _adoption(self, slug: str, record: dict) -> dict:
+        """What the first model approval of a DFD-era register does to its live risks (spec 7.6):
+        old IDs no item claims, pending re-reviews (both block it), and the rewrites it would make."""
+        was = c4.was_map(record)
+        live = [r for r in self.list_risks(slug)
+                if r["review_state"] != "rejected" and r["status"] != "retired"
+                and not r.get("merged_into")]
+        cited: dict[str, list[str]] = {}
+        rewrites: dict[str, dict] = {}
+        for r in live:
+            old = list(r["elements"] or ())
+            new: list[str] = []
+            for e in old:
+                if e not in was:
+                    cited.setdefault(e, []).append(r["id"])
+                for n in was.get(e, ()):
+                    if n not in new:
+                        new.append(n)
+            if new != old and all(e in was for e in old):
+                rewrites[r["id"]] = {"from": old, "to": new}
+        order = {k: i for i, k in enumerate(("E", "P", "D", "F", "TB"))}
+
+        def old_key(iid: str):
+            m = re.fullmatch(r"([A-Za-z]+)(\d+)", iid)
+            return (order.get(m.group(1), len(order)), int(m.group(2)), iid) if m else (len(order) + 1, 0, iid)
+
+        return {"gaps": [{"id": i, "cited_by": cited[i]} for i in sorted(cited, key=old_key)],
+                "pending_rereviews": [r["id"] for r in live
+                                      if r["review_state"] == "pending" and r.get("last_approved")],
+                "rewrites": rewrites}
 
     def _c4_used(self, slug: str, model, latest: dict | None) -> tuple[dict[str, set[int]], list[str], list[str]]:
         """P7: the numbers of every ID ever used, and the file's IDs that were used before but
@@ -809,6 +842,14 @@ class Registry:
                     msg += (f'. For a boundary from the old DFD, add "tm.was" "{tb}" if this is the '
                             f'same boundary, or take {info["next_ids"]["TB"]}')
                 raise RegistryError(msg)
+            adoption = info["adoption"]
+            if adoption:
+                found = [f"adoption: {g['id']} is cited by {', '.join(g['cited_by'])} and claimed by nothing"
+                         for g in adoption["gaps"]]
+                found += [f"adoption: {rid} awaits re-review; approve or reject it first"
+                          for rid in adoption["pending_rereviews"]]
+                if found:
+                    raise RegistryError("; ".join(found))
             if info["sha256"] != expected_sha256:
                 raise StaleRecord("workspace.dsl changed since it was shown; review it again")
             latest = self._latest_model(slug)
@@ -822,6 +863,14 @@ class Registry:
                 "model": info["record"], "source": info["text"],
                 "approved_by": session.name, "approved_at": db.now(), "note": note,
             }, op="model-approve", actor=f"human:{session.name}")
+            if adoption:
+                was = c4.was_map(info["record"])
+                for rid, change in adoption["rewrites"].items():
+                    note_ = (f"Adopted the C4 model {approval_id}: "
+                             + ", ".join(f"{o}→{'/'.join(was[o])}" for o in change["from"]))
+                    ledger.write_row(self.conn, slug, "risks", rid, {
+                        "elements": change["to"], "model_approval_id": approval_id,
+                        "updated_at": db.now()}, op="edit", actor=f"human:{session.name}", note=note_)
         self._write_register(slug, approval_id)
         return ledger.read_rows(self.conn, slug, "model_approvals")[approval_id]
 

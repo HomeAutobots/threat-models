@@ -94,7 +94,7 @@ class C4CoreTest(TmpTestCase):
         self.assertEqual(p["sha256"], sha(p["text"].encode()))
         self.assertEqual(p["record"], c4.to_record(p["model"]))
         self.assertIsNone(p["error"])
-        self.assertIsNone(p["adoption"])
+        self.assertEqual(p["adoption"], {"gaps": [], "pending_rereviews": [], "rewrites": {}})
 
     def test_approve_records_model_and_source(self):
         reg = self.reg()
