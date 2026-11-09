@@ -36,11 +36,14 @@ export function makeQueryClient(): QueryClient {
   return new QueryClient({
     queryCache: new QueryCache({ onError: markSignedOut }),
     mutationCache: new MutationCache({ onError: markSignedOut }),
+    // The server is on this machine, so a window `offline` event must not pause requests.
     defaultOptions: {
       queries: {
+        networkMode: 'always',
         refetchOnWindowFocus: false,
         retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 1,
       },
+      mutations: { networkMode: 'always' },
     },
   })
 }
