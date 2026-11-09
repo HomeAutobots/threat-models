@@ -1,5 +1,6 @@
 """Start the local web app. Refuses without an interactive terminal or under Claude Code."""
 import argparse
+import logging
 import secrets
 import socket
 import sys
@@ -35,6 +36,8 @@ def main(argv: list[str] | None = None, *, root: Path = REPO_ROOT) -> int:
         )
         return 1
     port = sock.getsockname()[1]
+    # Unhandled API errors are logged to "tmweb" (app.py) with their traceback; print them here.
+    logging.basicConfig(level=logging.WARNING, format="%(name)s %(levelname)s: %(message)s")
 
     try:
         import uvicorn

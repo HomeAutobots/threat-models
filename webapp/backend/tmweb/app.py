@@ -1,4 +1,5 @@
 """The FastAPI app: the lock, the one-time sign-in, the session probe, and the SPA."""
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -19,6 +20,8 @@ from .security import (
     allowed_hosts,
     allowed_origins,
 )
+
+log = logging.getLogger("tmweb")
 
 SIGNIN_REFUSED = (
     "This sign-in link has been used or is not valid. "
@@ -61,6 +64,8 @@ def create_app(
             try:
                 response = await _api_checked(request, call_next)
             except Exception:
+                # The traceback goes to the Terminal; the browser gets no detail.
+                log.exception("unhandled error in %s %s", request.method, path)
                 response = JSONResponse({"detail": "internal error"}, status_code=500)
         if is_api:
             response.headers["Cache-Control"] = "no-store"

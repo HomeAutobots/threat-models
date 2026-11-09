@@ -211,7 +211,9 @@ def test_main_default_port_is_8765(project, capsys, human):
     run.assert_not_called()
 
 
-def test_unhandled_error_is_500_no_store_without_leak(project):
+def test_unhandled_error_is_500_no_store_without_leak(project, caplog):
+    import logging
+
     from fastapi.testclient import TestClient
 
     from tmweb.app import create_app
@@ -230,6 +232,12 @@ def test_unhandled_error_is_500_no_store_without_leak(project):
     assert r.json() == {"detail": "internal error"}
     assert r.headers["cache-control"] == "no-store"
     assert "secret-detail" not in r.text
+    # The traceback goes to the Terminal through the tmweb logger, not to the browser.
+    (record,) = [rec for rec in caplog.records if rec.name == "tmweb"]
+    assert record.levelno == logging.ERROR
+    assert record.exc_info and record.exc_info[0] is RuntimeError
+    assert "GET /api/boom" in record.getMessage()
+    assert "RuntimeError: secret-detail" in caplog.text
 
 
 def test_unknown_scope_types_are_not_passed_to_the_app():
