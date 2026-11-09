@@ -1,0 +1,306 @@
+import { MantineProvider } from '@mantine/core'
+import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import reviewPageSrc from './ReviewPage.tsx?raw'
+import panelSrc from '../components/review/DecisionPanel.tsx?raw'
+import diffSrc from '../components/review/ReReviewDiff.tsx?raw'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeQueryClient } from '../api/queries'
+import type { Risk, RiskDetail } from '../api/types'
+import { ReviewPage } from './ReviewPage'
+
+const STALE = 'This risk changed after you opened it. Review the current version.'
+const NOTE = 'This is a careful review note.'
+
+const meta = {
+  fields: [],
+  editable: ['title', 'notes'],
+  labels: { title: 'Title', notes: 'Notes' },
+  stride: {},
+  linddun: [],
+  note_min: 20,
+}
+
+function mkRisk(id: string, over: Partial<Risk> = {}): Risk {
+  return {
+    id,
+    title: `Title of ${id}`,
+    notes: `Original notes of ${id}`,
+    review_state: 'pending',
+    last_approved: null,
+    possible_duplicate_of: null,
+    elements: [],
+    ...over,
+  } as Risk
+}
+
+function mkDetail(risk: Risk, over: Partial<RiskDetail> = {}): RiskDetail {
+  return {
+    risk,
+    elements: {},
+    dfd: { state: 'current', latest_id: 'DFD-1', written_against: 'DFD-1', error: null },
+    editors_since_approval: [],
+    duplicate: null,
+    ...over,
+  }
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
+
+interface Post {
+  url: string
+  body: { note: string; seen: Risk; into?: string }
+}
+
+let details: Record<string, RiskDetail>
+let queue: Risk[]
+let posts: Post[]
+let postReply: (post: Post) => Response | Promise<Response>
+
+function mockApi() {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        const post = { url, body: JSON.parse(String(init.body)) } as Post
+        posts.push(post)
+        return postReply(post)
+      }
+      if (url === '/api/meta') return json(meta)
+      if (url.endsWith('/history')) return json([])
+      const m = url.match(/\/risks\/([^/]+)$/)
+      if (m) return details[decodeURIComponent(m[1])] ? json(details[decodeURIComponent(m[1])]) : json({ detail: 'none' }, 404)
+      if (url.endsWith('/risks')) return json(queue)
+      return json({}, 404)
+    }),
+  )
+}
+
+function Where() {
+  const loc = useLocation()
+  return <div data-testid="where">{loc.pathname + loc.search}</div>
+}
+
+function renderPage(initial = '/main/demo/review', client: QueryClient = makeQueryClient()) {
+  render(
+    <MantineProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[initial]}>
+          <Routes>
+            <Route path="/:reg/:slug/review" element={<ReviewPage />} />
+            <Route path="*" element={<Where />} />
+          </Routes>
+          <Where />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </MantineProvider>,
+  )
+  return client
+}
+
+async function type(note = NOTE) {
+  const box = await screen.findByLabelText('Review note')
+  fireEvent.change(box, { target: { value: note } })
+  return box as HTMLTextAreaElement
+}
+
+beforeEach(() => {
+  posts = []
+  queue = [mkRisk('T-1'), mkRisk('T-2'), mkRisk('T-3')]
+  details = Object.fromEntries(queue.map((r) => [r.id, mkDetail(r)]))
+  postReply = (p) => json({ risk: { ...p.body.seen, review_state: 'approved' } })
+  mockApi()
+})
+
+describe('ReviewPage', () => {
+  it('shows the first pending risk and the position, in API order', async () => {
+    queue = [mkRisk('T-9', { review_state: 'approved' }), ...queue]
+    renderPage()
+    expect(await screen.findByText('1 of 3 pending')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeInTheDocument()
+  })
+
+  it('?id= selects the item, and Previous and Next only navigate', async () => {
+    renderPage('/main/demo/review?id=T-2')
+    expect(await screen.findByText('2 of 3 pending')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(await screen.findByText('3 of 3 pending')).toBeInTheDocument()
+    expect(screen.getByTestId('where').textContent).toContain('id=T-3')
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
+    expect(await screen.findByText('2 of 3 pending')).toBeInTheDocument()
+    expect(posts).toHaveLength(0)
+  })
+
+  it('approve posts note and the record exactly as received, then moves to the next', async () => {
+    postReply = (p) => {
+      queue = queue.slice(1) // the write lands before the refetch
+      return json({ risk: { ...p.body.seen, review_state: 'approved' } })
+    }
+    renderPage()
+    await type()
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+    await waitFor(() => expect(posts).toHaveLength(1))
+    expect(posts[0].url).toBe('/api/main/systems/demo/risks/T-1/approve')
+    expect(posts[0].body).toEqual({ note: NOTE, seen: details['T-1'].risk })
+    expect(await screen.findByRole('button', { name: 'Approve T-2' })).toBeInTheDocument()
+    expect(screen.getByTestId('where').textContent).toContain('id=T-2')
+    expect((screen.getByLabelText('Review note') as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('says so when no risks are waiting after the last decision', async () => {
+    queue = [mkRisk('T-1')]
+    details = { 'T-1': mkDetail(queue[0]) }
+    postReply = (p) => {
+      queue = [] // the write lands before the refetch
+      return json({ risk: { ...p.body.seen, review_state: 'approved' } })
+    }
+    renderPage()
+    await type()
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+    expect(await screen.findByText('No risks are waiting for review.')).toBeInTheDocument()
+    expect(screen.queryByText(STALE)).not.toBeInTheDocument()
+  })
+
+  it('says so at once when the queue is empty', async () => {
+    queue = []
+    renderPage()
+    expect(await screen.findByText('No risks are waiting for review.')).toBeInTheDocument()
+  })
+
+  it('stale keeps the note', async () => {
+    postReply = (p) =>
+      p.body.seen.notes === 'changed by AI'
+        ? json({ risk: { ...p.body.seen, review_state: 'approved' } })
+        : json({ detail: 'stale', current: mkRisk('T-1', { notes: 'changed by AI' }) }, 409)
+    renderPage()
+    const box = await type()
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+    expect(await screen.findByText(STALE)).toBeInTheDocument()
+    expect(box.value).toBe(NOTE)
+    expect(screen.getByText('changed by AI')).toBeInTheDocument()
+    expect(screen.queryByText('Original notes of T-1')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve T-1' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1].body.seen.notes).toBe('changed by AI')
+    expect(posts[1].body.note).toBe(NOTE)
+  })
+
+  it('a later fetch that differs without a 409 is swapped in with the stale banner', async () => {
+    const client = renderPage()
+    await type()
+    expect(await screen.findByText('Original notes of T-1')).toBeInTheDocument()
+    expect(screen.queryByText(STALE)).not.toBeInTheDocument()
+    details['T-1'] = mkDetail(mkRisk('T-1', { notes: 'rewritten behind your back' }))
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['main', 'demo', 'risk', 'T-1'] })
+    })
+    expect(await screen.findByText(STALE)).toBeInTheDocument()
+    expect(screen.getByText('rewritten behind your back')).toBeInTheDocument()
+    expect((screen.getByLabelText('Review note') as HTMLTextAreaElement).value).toBe(NOTE)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve T-1' }))
+    await waitFor(() => expect(posts).toHaveLength(1))
+    expect(posts[0].body.seen.notes).toBe('rewritten behind your back')
+  })
+
+  it('a refetch that changes nothing shows no banner', async () => {
+    const client = renderPage()
+    await screen.findByText('Original notes of T-1')
+    details['T-1'] = mkDetail(mkRisk('T-1'))
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['main', 'demo', 'risk', 'T-1'] })
+    })
+    expect(screen.queryByText(STALE)).not.toBeInTheDocument()
+  })
+
+  it('shows core 422 detail as given in the panel and keeps the note', async () => {
+    postReply = () => json({ detail: 'Core says: <b>no</b> ‮ approve' }, 422)
+    renderPage()
+    const box = await type()
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Core says: <b>no</b> ‮ approve')
+    expect(box.value).toBe(NOTE)
+    expect(screen.queryByText(STALE)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeEnabled()
+  })
+
+  it('disables every button while a request is in flight, so a double click sends once', async () => {
+    let release: (r: Response) => void = () => {}
+    postReply = () => new Promise<Response>((res) => (release = res))
+    renderPage()
+    await type()
+    const approve = await screen.findByRole('button', { name: 'Approve T-1' })
+    fireEvent.click(approve)
+    fireEvent.click(approve)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reject T-1' })).toBeDisabled())
+    for (const name of ['Approve T-1', 'Edit before deciding', 'Previous', 'Next']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    fireEvent.click(approve)
+    expect(posts).toHaveLength(1)
+    await act(async () => release(json({ detail: 'nope' }, 422)))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeEnabled())
+  })
+
+  it('reject posts to reject', async () => {
+    renderPage()
+    await type()
+    fireEvent.click(await screen.findByRole('button', { name: 'Reject T-1' }))
+    await waitFor(() => expect(posts).toHaveLength(1))
+    expect(posts[0].url).toBe('/api/main/systems/demo/risks/T-1/reject')
+  })
+
+  it('a re-review shows the diff above the record, and restores on reject', async () => {
+    const r = mkRisk('T-1', { notes: 'proposed notes', last_approved: { title: 'Title of T-1', notes: 'approved notes' } })
+    queue = [r]
+    details = { 'T-1': mkDetail(r) }
+    renderPage()
+    const reject = await screen.findByRole('button', { name: 'Reject and restore last approved' })
+    expect(reject).toBeInTheDocument()
+    expect(screen.getByText('approved notes')).toBeInTheDocument()
+    expect(screen.getByText('1 other fields unchanged')).toBeInTheDocument()
+    const diff = screen.getByText('Last approved')
+    const record = document.getElementById('glance') as HTMLElement
+    expect(diff.compareDocumentPosition(record) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('merge posts the duplicate as into, with a link to #dup', async () => {
+    const r = mkRisk('T-1', { possible_duplicate_of: 'T-0' })
+    queue = [r]
+    details = { 'T-1': mkDetail(r, { duplicate: mkRisk('T-0', { review_state: 'approved' }) }) }
+    renderPage()
+    await type()
+    const link = await screen.findByRole('link', { name: 'Possible duplicate of T-0.' })
+    expect(link).toHaveAttribute('href', '#dup')
+    fireEvent.click(screen.getByRole('button', { name: 'Merge into T-0' }))
+    await waitFor(() => expect(posts).toHaveLength(1))
+    expect(posts[0].url).toBe('/api/main/systems/demo/risks/T-1/merge')
+    expect(posts[0].body.into).toBe('T-0')
+  })
+
+  it('warns when the DFD has moved on, with a link to the DFD page', async () => {
+    details['T-1'] = mkDetail(queue[0], {
+      dfd: { state: 'changed', latest_id: 'DFD-2', written_against: 'DFD-1', error: null },
+    })
+    renderPage()
+    expect(
+      await screen.findByText(
+        'DFD has moved on. This draft was written against DFD-1, and dfd.md has changed since. Element IDs may be out of date.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open the DFD page' })).toHaveAttribute('href', '/main/demo/dfd')
+  })
+
+  it('Edit before deciding goes to the edit page and returns to review', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit before deciding' }))
+    expect((await screen.findAllByTestId('where')).at(-1)?.textContent).toBe('/main/demo/risks/T-1/edit?return=review')
+  })
+
+  it('uses no raw HTML', () => {
+    for (const src of [reviewPageSrc, panelSrc, diffSrc]) expect(src).not.toContain('dangerouslySetInnerHTML')
+  })
+})
