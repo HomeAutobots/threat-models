@@ -1,0 +1,106 @@
+export interface Section {
+  id: string
+  n: number
+  title: string
+  fields: string[]
+}
+
+/** The nine cards of the full-record view, in the order the owner approved. */
+export const SECTIONS: Section[] = [
+  {
+    id: 'glance',
+    n: 1,
+    title: 'At a glance',
+    fields: ['category', 'impact_rating', 'likelihood', 'score', 'treatment', 'status'],
+  },
+  { id: 'where', n: 2, title: 'Where it happens', fields: ['elements'] },
+  { id: 'threat', n: 3, title: 'The threat', fields: ['description', 'attack_scenario', 'attack_path'] },
+  {
+    id: 'impact',
+    n: 4,
+    title: 'Impact and likelihood',
+    fields: ['impact', 'impact_rating', 'likelihood', 'likelihood_rationale', 'score', 'score_method'],
+  },
+  {
+    id: 'controls',
+    n: 5,
+    title: 'Controls and assumptions',
+    fields: ['implemented_controls', 'recommended_controls', 'control_refs', 'assumptions'],
+  },
+  {
+    id: 'treatment',
+    n: 6,
+    title: 'Treatment and ownership',
+    fields: ['treatment', 'decision_requested', 'exception_ref', 'owner', 'due', 'status', 'status_reason'],
+  },
+  {
+    id: 'evidence',
+    n: 7,
+    title: 'Evidence and tracking',
+    fields: ['evidence', 'origin', 'origin_ref', 'method', 'test', 'ticket', 'notes'],
+  },
+  { id: 'dup', n: 8, title: 'Possible duplicate', fields: ['possible_duplicate_of'] },
+  {
+    id: 'record',
+    n: 9,
+    title: 'Record and history',
+    fields: [
+      'review_state',
+      'drafted_by',
+      'ai_confidence',
+      'reviewed_by',
+      'reviewed_at',
+      'review_note',
+      'last_approved',
+      'merged_into',
+      'dfd_approval_id',
+      'detail_complete',
+      'created_at',
+      'updated_at',
+    ],
+  },
+]
+
+export const FIELD_LABELS: Record<string, string> = {
+  category: 'Category',
+  impact_rating: 'Impact rating',
+  likelihood: 'Likelihood',
+  score: 'Score',
+  treatment: 'Treatment',
+  status: 'Status',
+  description: 'Description',
+  attack_scenario: 'Attack scenario',
+  attack_path: 'Attack path',
+  impact: 'Impact',
+  likelihood_rationale: 'Likelihood rationale',
+  score_method: 'Score method',
+  implemented_controls: 'Implemented controls',
+  recommended_controls: 'Recommended controls',
+  control_refs: 'Control references',
+  assumptions: 'Assumptions',
+  decision_requested: 'Decision requested',
+  exception_ref: 'Exception reference',
+  owner: 'Owner',
+  due: 'Due',
+  status_reason: 'Status reason',
+  evidence: 'Evidence',
+  origin: 'Origin',
+  origin_ref: 'Origin reference',
+  method: 'Method',
+  test: 'Test',
+  ticket: 'Ticket',
+  notes: 'Notes',
+  possible_duplicate_of: 'Possible duplicate of',
+  review_state: 'Review state',
+  drafted_by: 'Drafted by',
+  ai_confidence: 'AI confidence',
+  reviewed_by: 'Reviewed by',
+  reviewed_at: 'Reviewed at',
+  review_note: 'Review note',
+  last_approved: 'Last approved version',
+  merged_into: 'Merged into',
+  dfd_approval_id: 'Written against',
+  detail_complete: 'Detail complete',
+  created_at: 'Created',
+  updated_at: 'Updated',
+}
