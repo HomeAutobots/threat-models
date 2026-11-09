@@ -1,5 +1,6 @@
 import os
 import re
+import socket
 from unittest import mock
 
 
@@ -149,7 +150,7 @@ def test_spa_fallback(project, tmp_path):
 
 def test_main_refuses_without_terminal(tmp_path, capsys):
     with mock.patch.object(tmreg.core, "_has_tty", return_value=False), \
-         mock.patch("uvicorn.run") as run:
+         mock.patch("uvicorn.Server.run") as run:
         assert main([], root=tmp_path) == 1
     assert "needs an interactive terminal" in capsys.readouterr().err
     run.assert_not_called()
@@ -157,18 +158,57 @@ def test_main_refuses_without_terminal(tmp_path, capsys):
 
 def test_main_refuses_under_claude_code(tmp_path, capsys, human):
     with mock.patch.dict(os.environ, {"CLAUDECODE": "1"}), \
-         mock.patch("uvicorn.run") as run:
+         mock.patch("uvicorn.Server.run") as run:
         assert main([], root=tmp_path) == 1
     assert "started by Claude Code" in capsys.readouterr().err
     run.assert_not_called()
 
 
-def test_main_prints_one_time_link(project, capsys, human):
-    with mock.patch("uvicorn.run") as run:
-        assert main([], root=project) == 0
-    out = capsys.readouterr().out
-    assert re.search(r"http://127\.0\.0\.1:8765/signin\?token=\S{40,}", out)
-    assert run.call_args.kwargs["host"] == "127.0.0.1"
+def test_main_prints_one_time_link_after_binding(project, capsys, human):
+    seen = {}
+
+    def fake_run(server, sockets):
+        # The link is already printed, and the server gets the socket main() bound.
+        seen["out"] = capsys.readouterr().out
+        (sock,) = sockets
+        seen["addr"] = sock.getsockname()
+        seen["reuse"] = sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)
+
+    # Port 0: the OS picks a free port, so the test never collides with a running app.
+    with mock.patch("uvicorn.Server.run", autospec=True, side_effect=fake_run) as run:
+        assert main(["--port", "0"], root=project) == 0
+    run.assert_called_once()
+    host, port = seen["addr"]
+    assert host == "127.0.0.1" and port != 0
+    assert seen["reuse"] == 0
+    assert re.search(rf"http://127\.0\.0\.1:{port}/signin\?token=\S{{40,}}", seen["out"])
+
+
+def test_main_refuses_when_port_is_taken(project, capsys, human):
+    held = socket.socket()
+    held.bind(("127.0.0.1", 0))
+    held.listen()
+    port = held.getsockname()[1]
+    try:
+        with mock.patch("uvicorn.Server.run") as run:
+            assert main(["--port", str(port)], root=project) == 1
+    finally:
+        held.close()
+    captured = capsys.readouterr()
+    assert captured.err == (
+        f"tmweb: port {port} is in use. Is the app already running in another Terminal window?\n"
+    )
+    assert "token=" not in captured.out
+    run.assert_not_called()
+
+
+def test_main_default_port_is_8765(project, capsys, human):
+    with mock.patch.object(socket.socket, "bind", side_effect=OSError(48, "in use")) as bind, \
+         mock.patch("uvicorn.Server.run") as run:
+        assert main([], root=project) == 1
+    assert bind.call_args.args == (("127.0.0.1", 8765),)
+    assert "tmweb: port 8765 is in use." in capsys.readouterr().err
+    run.assert_not_called()
 
 
 def test_unhandled_error_is_500_no_store_without_leak(project):
