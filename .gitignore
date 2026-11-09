@@ -20,7 +20,7 @@ systems/*/dfd.md
 systems/*/workspace.dsl
 !systems/ordering-platform/workspace.dsl
 systems/*/workspace.json
-diagrams/
+/diagrams/
 
 # Web app build output and local tool scratch; never risk data.
 webapp/backend/.venv/

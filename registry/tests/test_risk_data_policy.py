@@ -32,7 +32,8 @@ FORBIDDEN = [
 ALLOWED = [
     "systems/ordering-platform/workspace.dsl", "systems/ordering-platform/system.toml",
     "systems/acme/system.toml", "registry/tmreg/core.py", "registry/tmreg/schema.sql",
-    "README.md", "project.example.toml", ".githooks/pre-commit",
+    "README.md", "project.example.toml", ".githooks/pre-commit", "sub/diagrams/x",
+    "docs/diagrams/flow.svg",
 ]
 
 
@@ -78,7 +79,9 @@ class PolicyTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(git("check-ignore", "--no-index", "-q", path, cwd=ROOT,
                                      check_=False).returncode, 0, f"{path} is not git-ignored")
-        for path in ("systems/ordering-platform/workspace.dsl", "systems/acme/system.toml"):
+        # Only the root diagrams/ holds exports; a folder of that name elsewhere is source.
+        for path in ("systems/ordering-platform/workspace.dsl", "systems/acme/system.toml",
+                     "sub/diagrams/x", "docs/diagrams/flow.svg"):
             with self.subTest(path=path):
                 self.assertEqual(git("check-ignore", "--no-index", "-q", path, cwd=ROOT,
                                      check_=False).returncode, 1, f"{path} is git-ignored")

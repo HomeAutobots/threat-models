@@ -206,7 +206,7 @@ workspace "Ordering platform" "The guide's reference system: a made-up web and m
                 "tm.data.sent" "none"
                 "tm.data.returned" "PII"
                 "tm.auth" "unknown — ask the platform team"
-                "tm.assumed" "The guide gives neither the protocol nor how a consumer is authenticated."
+                "tm.assumed" "The guide gives neither the protocol nor how a consumer is authenticated. Its DFD drew this flow from the queue to the worker; the arrow here starts at the worker, which consumes from the queue, because a path starts at the side that starts the exchange."
                 "tm.was" "F6"
             }
         }
