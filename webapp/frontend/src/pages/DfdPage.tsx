@@ -149,6 +149,14 @@ export function DfdPage() {
               <Markdown
                 remarkPlugins={[remarkGfm]}
                 components={{
+                  // Never render an <img>: a remote image in AI-writable content is a beacon.
+                  img({ alt }) {
+                    return (
+                      <Text span c="dimmed" fs="italic">
+                        Image not loaded: {visible(alt ?? '')}
+                      </Text>
+                    )
+                  },
                   code({ className, children, ...rest }) {
                     if (/language-mermaid/.test(className ?? '')) {
                       return <MermaidDiagram source={String(children).replace(/\n$/, '')} />

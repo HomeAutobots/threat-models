@@ -215,3 +215,28 @@ def test_unknown_scope_types_are_not_passed_to_the_app():
     asyncio.run(run())
     assert calls == ["http", "lifespan"]
     assert sent == [{"type": "websocket.close", "code": 1008}]
+
+
+def test_csp_header_on_every_kind_of_response(project, client, anon, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from tmweb.app import CSP, create_app
+
+    assert client.get("/api/session").headers["content-security-policy"] == CSP
+    assert anon.get("/api/session").headers["content-security-policy"] == CSP
+    refused = anon.get("/signin", params={"token": "wrong"})
+    assert refused.status_code == 403
+    assert refused.headers["content-security-policy"] == CSP
+    bad_host = anon.get("/api/session", headers={"Host": "evil.example:8765"})
+    assert bad_host.status_code == 400
+    assert bad_host.headers["content-security-policy"] == CSP
+
+    static = tmp_path / "dist"
+    (static / "assets").mkdir(parents=True)
+    (static / "assets" / "a.js").write_text("1")
+    (static / "index.html").write_text("<html>SPA</html>")
+    app = create_app(project, port=8765, signin_token="T0KEN", static_dir=static)
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        assert c.get("/").headers["content-security-policy"] == CSP
+        assert c.get("/assets/a.js").headers["content-security-policy"] == CSP
+    assert "script-src 'self';" in CSP and "img-src 'self' data: blob:;" in CSP

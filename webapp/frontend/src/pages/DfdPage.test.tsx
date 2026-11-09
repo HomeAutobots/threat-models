@@ -117,6 +117,13 @@ describe('DfdPage', () => {
     expect(document.querySelector('img')).toBeNull()
   })
 
+  it('a remote markdown image renders no img, only a placeholder', async () => {
+    dfd = mk('before ![logo\u001b](https://attacker.example/p.png?leak) after')
+    renderPage()
+    expect(await screen.findByText('Image not loaded: logo\\x1b')).toBeInTheDocument()
+    expect(document.querySelector('img')).toBeNull()
+  })
+
   it('the Exact view shows control characters escaped', async () => {
     dfd = mk('a\u001bb')
     renderPage()

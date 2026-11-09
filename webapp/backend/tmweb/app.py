@@ -25,6 +25,14 @@ SIGNIN_REFUSED = (
     "Close the app's Terminal window and start it again for a new link."
 )
 
+# Nothing from the network loads at run time. Styles need 'unsafe-inline' (Mantine's style tag,
+# mermaid's SVG); scripts stay 'self' only.
+CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+)
+
 
 def create_app(
     root: Path,
@@ -56,6 +64,12 @@ def create_app(
                 response = JSONResponse({"detail": "internal error"}, status_code=500)
         if is_api:
             response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.middleware("http")
+    async def csp(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = CSP
         return response
 
     async def _api_checked(request: Request, call_next):
