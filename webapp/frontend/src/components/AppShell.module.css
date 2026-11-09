@@ -17,9 +17,9 @@
 
 /*
  * A closed mobile navbar is only moved off screen. Hide it too, so its links leave the tab order
- * and the accessibility tree.
+ * and the accessibility tree. The range is `width < sm`, so the rule stops at exactly 768px.
  */
-@media (max-width: $mantine-breakpoint-sm) {
+@media (width < $mantine-breakpoint-sm) {
   .navbar[data-collapsed] {
     visibility: hidden;
   }

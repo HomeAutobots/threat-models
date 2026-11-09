@@ -2,7 +2,7 @@ import { MantineProvider } from '@mantine/core'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useNavigate } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeQueryClient } from '../api/queries'
 import type { Reg } from '../api/types'
@@ -31,6 +31,11 @@ function mockApi() {
   )
 }
 
+function GoTo({ to }: { to: string }) {
+  const navigate = useNavigate()
+  return <button onClick={() => navigate(to)}>go {to}</button>
+}
+
 function renderShell(reg: Reg) {
   return render(
     <MantineProvider>
@@ -38,6 +43,8 @@ function renderShell(reg: Reg) {
         <MemoryRouter initialEntries={[`/${reg}/demo/register`]}>
           <AppShell reg={reg} slug="demo">
             <p>page body</p>
+            <GoTo to="/main/demo/review?id=T-2" />
+            <GoTo to="/main/demo/register#x" />
           </AppShell>
         </MemoryRouter>
       </QueryClientProvider>
@@ -79,6 +86,16 @@ describe('AppShell', () => {
     await user.click(screen.getByRole('link', { name: /Review queue/ }))
     expect(burger).toHaveAttribute('aria-expanded', 'false')
     expect(navbar).toHaveAttribute('data-collapsed', 'true')
+  })
+
+  it('closes the navbar on any location change, not only a nav-link click', async () => {
+    const user = userEvent.setup()
+    renderShell('main')
+    const burger = screen.getByRole('button', { name: 'Toggle navigation' })
+    await user.click(burger)
+    expect(burger).toHaveAttribute('aria-expanded', 'true')
+    await user.click(screen.getByRole('button', { name: 'go /main/demo/review?id=T-2' }))
+    expect(burger).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('renders one main landmark and leaves the page its own h1', async () => {

@@ -425,3 +425,38 @@ def test_outer_500_on_api_path_is_no_store_with_csp(project):
     assert response.headers["content-security-policy"] == CSP
     assert response.headers["cache-control"] == "no-store"
     assert b"secret-detail" not in response.body
+
+
+def test_favicon_is_served_from_static_dir_only(project, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from tmweb.app import create_app
+
+    static = tmp_path / "dist"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html>SPA</html>")
+    (static / "favicon.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
+    (static / "secret.txt").write_text("not served")
+    app = create_app(project, port=8765, signin_token="T0KEN", static_dir=static)
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        r = c.get("/favicon.svg")
+        assert r.status_code == 200
+        assert r.headers["content-type"].split(";")[0] == "image/svg+xml"
+        assert "<svg" in r.text
+        # No other root file is served: the catch-all still gives the SPA page.
+        other = c.get("/secret.txt")
+        assert "not served" not in other.text
+        assert other.text == "<html>SPA</html>"
+
+
+def test_missing_favicon_falls_back_to_not_found_not_the_page(project, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from tmweb.app import create_app
+
+    static = tmp_path / "dist"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html>SPA</html>")
+    app = create_app(project, port=8765, signin_token="T0KEN", static_dir=static)
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        assert c.get("/favicon.svg").status_code == 404

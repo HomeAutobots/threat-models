@@ -1,6 +1,6 @@
 import { AppShell as MantineAppShell, Alert, Badge, Burger, Group, NavLink, SegmentedControl, Select, Text } from '@mantine/core'
 import { useDisclosure, useElementSize } from '@mantine/hooks'
-import { useId, type ReactNode } from 'react'
+import { useEffect, useId, type ReactNode } from 'react'
 import { NavLink as RouterLink, useLocation, useNavigate } from 'react-router'
 import { useRisks, useSession, useSystems } from '../api/queries'
 import type { Reg } from '../api/types'
@@ -22,10 +22,15 @@ export function AppShell({ reg, slug, children }: Props) {
   const systems = useSystems(reg)
   const risks = useRisks(reg, slug ?? '')
   const navigate = useNavigate()
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
   // Below the `sm` breakpoint the navbar covers the page, so it starts closed behind a Burger.
   const [navOpened, nav] = useDisclosure(false)
   const navbarId = useId()
+  // Any navigation closes the mobile navbar, not only a click on one of its links.
+  const closeNav = nav.close
+  useEffect(() => {
+    closeNav()
+  }, [pathname, search, closeNav])
   // The header wraps at narrow widths, so its height follows its content.
   const { ref: headerRef, height: headerContentHeight } = useElementSize()
   const headerHeight = Math.max(HEADER_MIN_HEIGHT, Math.ceil(headerContentHeight) + 16)

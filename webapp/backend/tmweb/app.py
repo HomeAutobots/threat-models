@@ -131,6 +131,14 @@ def create_app(
         if (static_dir / "assets").is_dir():
             app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
 
+        @app.get("/favicon.svg", include_in_schema=False)
+        def favicon():
+            # Only this one file is served from the root; everything else falls to the SPA page.
+            icon = static_dir / "favicon.svg"
+            if not icon.is_file():
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+            return FileResponse(icon, media_type="image/svg+xml")
+
         @app.get("/{full_path:path}", include_in_schema=False)
         def spa(full_path: str):
             if full_path == "api" or full_path.startswith("api/"):
