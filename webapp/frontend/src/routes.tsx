@@ -6,7 +6,7 @@ import { AppShell } from './components/AppShell'
 import { DfdPage } from './pages/DfdPage'
 import { EditRiskPage } from './pages/EditRiskPage'
 import { HistoryPage } from './pages/HistoryPage'
-import { Home } from './pages/Home'
+import { Home, RegisterHome } from './pages/Home'
 import { RegisterPage } from './pages/RegisterPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { ReviewPage } from './pages/ReviewPage'
@@ -36,7 +36,8 @@ export const routes: RouteObject[] = [
     path: '/',
     element: <Root />,
     children: [
-      { index: true, element: <Home /> },
+      { index: true, element: <Home reg="main" /> },
+      { path: ':reg', element: <RegisterHome /> },
       {
         path: ':reg/:slug',
         element: <SystemLayout />,
