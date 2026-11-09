@@ -491,5 +491,29 @@ class EditTest(TmpTestCase):
         self.assertEqual(r["dfd_approval_id"], "DFD-2")
 
 
+class ReadHelpersTest(TmpTestCase):
+    def setUp(self):
+        super().setUp()
+        self.reg = make_registry(self.tmp)
+
+    def test_list_systems(self):
+        rows = self.reg.list_systems()
+        self.assertEqual([(r["slug"], r["name"]) for r in rows], [("demo", "Demo")])
+        self.assertIn("created_at", rows[0])
+
+    def test_dfd_approvals(self):
+        self.assertEqual([a["id"] for a in self.reg.dfd_approvals("demo")], ["DFD-1"])
+
+    def test_dfd_details(self):
+        self.assertEqual(self.reg.dfd_details("demo")["P2"]["name"], "Gateway")
+        (self.reg.root / "systems/demo/dfd.md").unlink()
+        with self.assertRaisesRegex(RegistryError, "no dfd.md"):
+            self.reg.dfd_details("demo")
+
+    def test_stride_names(self):
+        self.assertEqual(list(model.STRIDE_NAMES), list(model.STRIDE))
+        self.assertEqual(model.STRIDE_NAMES["I"], "Information disclosure")
+
+
 if __name__ == "__main__":
     unittest.main()

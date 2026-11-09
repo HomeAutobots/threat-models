@@ -449,6 +449,17 @@ class Registry:
         rows = ledger.read_rows(self.conn, slug, "dfd_approvals")
         return max(rows.values(), key=_approval_number) if rows else None
 
+    def list_systems(self) -> list[dict]:
+        return db.list_systems(self.conn)
+
+    def dfd_details(self, slug: str) -> dict[str, dict[str, str]]:
+        """Element names and types from the current dfd.md, for display only."""
+        return self._parse_dfd(slug).details
+
+    def dfd_approvals(self, slug: str) -> list[dict]:
+        rows = ledger.read_rows(self.conn, slug, "dfd_approvals")
+        return sorted(rows.values(), key=_approval_number)
+
     def _require_dfd(self, slug: str) -> dict:
         latest = self._latest_dfd(slug)
         if latest is None:

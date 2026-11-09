@@ -52,6 +52,11 @@ def system_exists(conn: sqlite3.Connection, slug: str) -> bool:
     return conn.execute("SELECT 1 FROM systems WHERE slug = ?", (slug,)).fetchone() is not None
 
 
+def list_systems(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute("SELECT slug, name, created_at FROM systems ORDER BY slug").fetchall()
+    return [{"slug": r[0], "name": r[1], "created_at": r[2]} for r in rows]
+
+
 def create_system(conn: sqlite3.Connection, slug: str, name: str) -> None:
     p = _prefix(slug)
     if system_exists(conn, slug):

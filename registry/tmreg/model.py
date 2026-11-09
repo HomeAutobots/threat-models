@@ -40,6 +40,9 @@ MIN_LENGTHS = {"description": 80, "attack_scenario": 80}
 NOTE_MIN = 20
 
 STRIDE = ("S", "T", "R", "I", "D", "E")
+STRIDE_NAMES = {"S": "Spoofing", "T": "Tampering", "R": "Repudiation",
+                "I": "Information disclosure", "D": "Denial of service",
+                "E": "Elevation of privilege"}
 LINDDUN = (
     "Linking", "Identifying", "Non-repudiation", "Detecting", "Data disclosure",
     "Unawareness and unintervenability", "Non-compliance",

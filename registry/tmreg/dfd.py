@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ID_RE = r"^(E|P|D|F|TB)[0-9]+$"
@@ -31,6 +31,7 @@ class Dfd:
     version: str
     sha256: str
     ids: dict[str, list[str]]
+    details: dict[str, dict[str, str]] = field(default_factory=dict)  # display only
 
     def all_ids(self) -> set[str]:
         return {i for lst in self.ids.values() for i in lst}
@@ -114,6 +115,7 @@ def parse(data: bytes) -> Dfd:
     version = None
     ids: dict[str, list[str]] = {k: [] for k in KINDS}
     seen: set[str] = set()
+    details: dict[str, dict[str, str]] = {}
     flows: list[tuple[str, str, str]] = []  # (flow id, from cell, to cell)
     header: list[str] | None = None  # normalized header of the current table, None outside
 
@@ -149,6 +151,23 @@ def parse(data: bytes) -> Dfd:
         seen.add(rid)
         kind = re.match(r"[A-Z]+", rid).group()
         ids[kind].append(rid)
+
+        def col(*names: str) -> str:
+            for nm in names:
+                if nm in header and header.index(nm) < len(cells):
+                    return cells[header.index(nm)]
+            return ""
+
+        if kind in ("E", "P", "D"):
+            name = col("element") or (cells[1] if len(cells) > 1 else "")
+            details[rid] = {"name": name, "type": col("type"),
+                            "description": col("notes") or col("description")}
+        elif kind == "F":
+            details[rid] = {"name": col("label"), "type": "Data flow", "description": "",
+                            "from": col("from"), "to": col("to")}
+        elif kind == "TB":
+            details[rid] = {"name": col("boundary"), "type": "Trust boundary",
+                            "description": col("what enforces it")}
         if kind == "F":
             if "from" not in header or "to" not in header:
                 raise DfdError("flows table needs From and To columns")
@@ -174,7 +193,7 @@ def parse(data: bytes) -> Dfd:
 
     for lst in ids.values():
         lst.sort(key=_num)
-    return Dfd(version=version, sha256=sha, ids=ids)
+    return Dfd(version=version, sha256=sha, ids=ids, details=details)
 
 
 def load(path: Path) -> Dfd:

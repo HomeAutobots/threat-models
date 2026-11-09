@@ -44,6 +44,23 @@ class DfdTest(unittest.TestCase):
         self.assertEqual(d.all_ids(), {"E1", "P1", "P2", "D1", "F1", "F2", "F3", "TB1"})
         self.assertEqual(d.sha256, hashlib.sha256(DFD).hexdigest())
 
+    def test_details_from_sample(self):
+        d = dfd.parse(DFD)
+        self.assertEqual(d.details["P1"], {"name": "Web", "type": "Process", "description": ""})
+        self.assertEqual(d.details["F2"], {"name": "REST", "type": "Data flow", "description": "",
+                                           "from": "P1", "to": "P2 (via CDN)"})
+        self.assertEqual(d.details["TB1"], {"name": "Internet to edge", "type": "Trust boundary",
+                                            "description": "WAF"})
+        self.assertNotIn("E99", d.details)  # the fenced row stays ignored
+        self.assertEqual(d.sha256, hashlib.sha256(DFD).hexdigest())
+
+    def test_details_read_notes_column(self):
+        data = DFD.replace(b"| ID | Element | Type |\n|---|---|---|",
+                           b"| ID | Element | Type | Notes |\n|---|---|---|---|") \
+                  .replace(b"| E1 | Customer | External entity |",
+                           b"| E1 | Customer | External entity | Signs in first |")
+        self.assertEqual(dfd.parse(data).details["E1"]["description"], "Signs in first")
+
     def test_numeric_sort(self):
         data = DFD + b"\n| ID | From | To |\n|---|---|---|\n| F10 | P1 | P2 |\n"
         self.assertEqual(dfd.parse(data).ids["F"], ["F1", "F2", "F3", "F10"])
