@@ -1,11 +1,14 @@
-import { Loader, Text } from '@mantine/core'
+import { Loader } from '@mantine/core'
 import { Navigate, Outlet, useParams, type RouteObject } from 'react-router'
 import { useSession, useSignedOut } from './api/queries'
 import type { Reg } from './api/types'
 import { AppShell } from './components/AppShell'
+import { DfdPage } from './pages/DfdPage'
 import { EditRiskPage } from './pages/EditRiskPage'
+import { HistoryPage } from './pages/HistoryPage'
 import { Home } from './pages/Home'
 import { RegisterPage } from './pages/RegisterPage'
+import { ReportsPage } from './pages/ReportsPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { RiskPage } from './pages/RiskPage'
 import { SignedOut } from './pages/SignedOut'
@@ -28,11 +31,6 @@ function SystemLayout() {
   )
 }
 
-// Tasks 9 to 12 replace these placeholders with the pages.
-function Placeholder({ name }: { name: string }) {
-  return <Text>{name}</Text>
-}
-
 export const routes: RouteObject[] = [
   {
     path: '/',
@@ -49,9 +47,9 @@ export const routes: RouteObject[] = [
           { path: 'risks/new', element: <EditRiskPage mode="add" /> },
           { path: 'risks/:id', element: <RiskPage /> },
           { path: 'risks/:id/edit', element: <EditRiskPage mode="edit" /> },
-          { path: 'dfd', element: <Placeholder name="DFD" /> },
-          { path: 'history', element: <Placeholder name="History" /> },
-          { path: 'reports', element: <Placeholder name="Reports" /> },
+          { path: 'dfd', element: <DfdPage /> },
+          { path: 'history', element: <HistoryPage /> },
+          { path: 'reports', element: <ReportsPage /> },
         ],
       },
     ],

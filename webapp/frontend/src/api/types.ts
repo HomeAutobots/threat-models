@@ -145,7 +145,7 @@ export interface DfdResponse {
   preview: {
     version: string | null
     sha256: string
-    ids: string[]
+    ids: Record<string, string[]>
     details: Record<string, ElementDetail>
     added: string[]
     removed: string[]

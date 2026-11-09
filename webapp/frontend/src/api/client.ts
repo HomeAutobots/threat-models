@@ -99,6 +99,27 @@ export function apiGet<T>(path: string): Promise<T> {
   return request<T>(path, { method: 'GET' })
 }
 
+/** Like `apiGet`, but returns the raw response text (reports are not JSON). */
+export async function apiGetText(path: string): Promise<string> {
+  const headers = new Headers()
+  headers.set(HEADER, csrf)
+  const response = await fetch(path, { method: 'GET', headers, credentials: 'same-origin' })
+  const text = await response.text()
+  if (!response.ok) {
+    let body: unknown = text
+    let detail = response.statusText || `HTTP ${response.status}`
+    try {
+      body = JSON.parse(text)
+      const d = (body as { detail?: unknown } | null)?.detail
+      if (typeof d === 'string') detail = d
+    } catch {
+      // Not JSON; keep the status text.
+    }
+    throw new ApiError(response.status, detail, body)
+  }
+  return text
+}
+
 export function apiPost<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, {
     method: 'POST',
