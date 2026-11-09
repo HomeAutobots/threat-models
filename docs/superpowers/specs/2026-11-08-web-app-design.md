@@ -124,7 +124,8 @@ Every `/api/` route, read or write, requires a valid session. On top of that:
 - **Host check.** Requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` are
   refused, which blocks DNS rebinding from a web page.
 - **Content-Security-Policy and `no-store`.** Every response carries a Content-Security-Policy that
-  allows only the app's own scripts, images, fonts, and connections. Every `/api` response carries
+  allows the app's own origin only, plus `data:` and `blob:` images, `data:` fonts, and inline
+  styles; scripts and connections are own-origin only. Every `/api` response carries
   `Cache-Control: no-store`. Only http and lifespan connections are served; websockets are refused.
 - **No other way in.** No API keys, bearer tokens, or stored passwords. No CORS.
 - **One item per write.** Every write route names one system and at most one risk ID in its path.

@@ -137,8 +137,9 @@ A local web app for reading and reviewing the register. It calls the same `Regis
 reference mockups: `webapp/mockups/`. It needs `uv` and Node.
 
 - **Start it** in your own terminal: double-click `webapp/start.command`, or run `make web`. The
-  first start installs the pinned dependencies and builds the front end; later starts skip what is
-  current. It refuses to start in a Claude Code shell.
+  first start installs the pinned dependencies and builds the front end. Later starts skip only
+  `npm ci`, when `package-lock.json` hasn't changed; the Python sync and the front-end build run
+  every time. It refuses to start in a Claude Code shell.
 - **Sign in** with the one-time link the server prints in that window
   (`http://127.0.0.1:8765/signin?token=...`). The link works once. Restarting prints a new one.
   If port 8765 is taken, by the app in another window or briefly by one you just stopped, the
@@ -249,8 +250,9 @@ Also:
   and is held in memory.
 - It binds `127.0.0.1` and refuses any other `Host`, which blocks DNS rebinding. Writes also need an
   `Origin` equal to the app's own. There is no CORS, and no API key or stored password.
-- Every response carries a Content-Security-Policy that allows only the app's own scripts, images,
-  fonts, and connections. Every `/api` response is `Cache-Control: no-store`. Websockets are refused.
+- Every response carries a Content-Security-Policy that allows the app's own origin only, plus
+  `data:` and `blob:` images, `data:` fonts, and inline styles. Scripts and connections are
+  own-origin only. Every `/api` response is `Cache-Control: no-store`. Websockets are refused.
 - Each write route names one system and at most one risk. There is no approve-all.
 - `Edit(/webapp/**)` is a deny rule in `.claude/settings.json`, and the guard's allow-list already
   blocks starting the server and every command that makes web requests. The browser and desktop
