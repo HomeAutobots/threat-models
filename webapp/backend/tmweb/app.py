@@ -9,6 +9,7 @@ from tmreg import config
 
 from . import errors
 from .api_read import router as read_router
+from .api_write import router as write_router
 from .security import (
     COOKIE,
     CSRF_HEADER,
@@ -88,6 +89,7 @@ def create_app(
         return {"reviewer": project.reviewer_name, "trial": trial}
 
     app.include_router(read_router)
+    app.include_router(write_router)
     errors.install(app)
 
     if static_dir is not None:
