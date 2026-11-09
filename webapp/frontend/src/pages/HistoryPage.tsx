@@ -12,7 +12,9 @@ export function HistoryPage() {
 
   return (
     <Stack>
-      <Title order={2}>History</Title>
+      <Title order={1} size="h3">
+        History
+      </Title>
       {verify.isLoading ? (
         <Loader size="sm" aria-label="Verifying" />
       ) : verify.error ? (

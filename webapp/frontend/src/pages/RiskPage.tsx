@@ -8,7 +8,6 @@ import { ChangeStatusModal } from '../components/manage/ChangeStatusModal'
 import { RetireModal } from '../components/manage/RetireModal'
 import { RiskRecord, visibleSections } from '../components/record/RiskRecord'
 import { SectionOutline } from '../components/record/SectionOutline'
-import { visible } from '../lib/visible'
 
 export function RiskPage() {
   const { reg, slug, id } = useParams()
@@ -30,13 +29,10 @@ export function RiskPage() {
 
   return (
     <div>
-      <Title order={1} size="h3" mb="md">
-        {visible(risk.id)}
-      </Title>
       <div className={classes.layout}>
-        <main>
+        <div>
           <RiskRecord detail={detail} meta={meta.data} history={history.data ?? []} />
-        </main>
+        </div>
         <aside className={classes.rail}>
           <SectionOutline sections={visibleSections(risk)} />
           <Paper withBorder p="md">

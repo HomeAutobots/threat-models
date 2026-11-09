@@ -50,7 +50,9 @@ export function ReportsPage() {
 
   return (
     <Stack>
-      <Title order={2}>Reports</Title>
+      <Title order={1} size="h3">
+        Reports
+      </Title>
       <Group align="flex-end">
         <SegmentedControl
           value={format}

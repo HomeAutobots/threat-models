@@ -68,6 +68,15 @@ describe('RiskPage', () => {
     expect(screen.getByRole('button', { name: 'Retire' })).toBeInTheDocument()
   })
 
+  it('renders no nested main landmark, and one h1 with the ID and title', async () => {
+    renderPage()
+    expect(await screen.findByRole('link', { name: 'Edit' })).toBeInTheDocument()
+    expect(document.querySelector('main')).toBeNull()
+    const h1s = screen.getAllByRole('heading', { level: 1 })
+    expect(h1s).toHaveLength(1)
+    expect(h1s[0]).toHaveTextContent('T-1A title')
+  })
+
   it('retired: none of Edit, Change status, Retire, and the read-only line', async () => {
     risk = mk({ status: 'retired' })
     renderPage()

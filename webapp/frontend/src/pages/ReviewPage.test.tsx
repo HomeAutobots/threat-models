@@ -126,6 +126,13 @@ describe('ReviewPage', () => {
     expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeInTheDocument()
   })
 
+  it('renders no nested main landmark, and the record title is the only h1', async () => {
+    renderPage()
+    expect(await screen.findByText('1 of 3 pending')).toBeInTheDocument()
+    expect(document.querySelector('main')).toBeNull()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+
   it('?id= selects the item, and Previous and Next only navigate', async () => {
     renderPage('/main/demo/review?id=T-2')
     expect(await screen.findByText('2 of 3 pending')).toBeInTheDocument()

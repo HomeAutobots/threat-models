@@ -1,4 +1,4 @@
-import { Alert, Anchor, Button, Group, Loader, Text, Title } from '@mantine/core'
+import { Alert, Anchor, Button, Group, Loader, Text } from '@mantine/core'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
@@ -155,9 +155,9 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
   return (
     <div>
       <Group justify="space-between" mb="md" wrap="wrap">
-        <Title order={1} size="h3">
+        <Text fw={700} fz="h3">
           Review queue
-        </Title>
+        </Text>
         <Group gap="xs">
           <Text size="sm">
             {position} of {total} pending
@@ -172,7 +172,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
       </Group>
 
       <div className={classes.layout}>
-        <main>
+        <div>
           {stale && (
             <Alert color="yellow" mb="md">
               {STALE_TEXT}
@@ -199,7 +199,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
           )}
           {isReReview && <ReReviewDiff risk={risk} editable={meta.data.editable} labels={meta.data.labels} />}
           <RiskRecord detail={shown} meta={meta.data} history={history.data ?? []} />
-        </main>
+        </div>
         <aside className={classes.rail}>
           <SectionOutline sections={visibleSections(risk)} />
           <DecisionPanel

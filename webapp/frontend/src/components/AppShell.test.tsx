@@ -1,6 +1,7 @@
 import { MantineProvider } from '@mantine/core'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeQueryClient } from '../api/queries'
@@ -60,5 +61,30 @@ describe('AppShell', () => {
     expect(screen.queryByText(BANNER)).not.toBeInTheDocument()
     expect(screen.getByText('Threat models')).toBeInTheDocument()
     expect(screen.getByText('page body')).toBeInTheDocument()
+  })
+
+  it('has a labeled Burger that opens the navbar below the breakpoint, and choosing a page closes it', async () => {
+    const user = userEvent.setup()
+    renderShell('main')
+    const burger = screen.getByRole('button', { name: 'Toggle navigation' })
+    const navbar = document.getElementById(burger.getAttribute('aria-controls') ?? '')
+    expect(navbar).toHaveAttribute('aria-label', 'Pages')
+    expect(burger).toHaveAttribute('aria-expanded', 'false')
+    expect(navbar).toHaveAttribute('data-collapsed', 'true')
+
+    await user.click(burger)
+    expect(burger).toHaveAttribute('aria-expanded', 'true')
+    expect(navbar).not.toHaveAttribute('data-collapsed')
+
+    await user.click(screen.getByRole('link', { name: /Review queue/ }))
+    expect(burger).toHaveAttribute('aria-expanded', 'false')
+    expect(navbar).toHaveAttribute('data-collapsed', 'true')
+  })
+
+  it('renders one main landmark and leaves the page its own h1', async () => {
+    renderShell('main')
+    expect(await screen.findByText('Signed in as Sam Reviewer')).toBeInTheDocument()
+    expect(document.querySelectorAll('main')).toHaveLength(1)
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
   })
 })

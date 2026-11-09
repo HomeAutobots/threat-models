@@ -7,7 +7,7 @@
 
 .rail {
   position: sticky;
-  top: 80px;
+  top: calc(var(--app-shell-header-height, 4rem) + 16px);
   display: flex;
   flex-direction: column;
   gap: 16px;

@@ -1,12 +1,15 @@
-import { AppShell as MantineAppShell, Alert, Badge, Group, NavLink, SegmentedControl, Select, Text, Title } from '@mantine/core'
-import type { ReactNode } from 'react'
+import { AppShell as MantineAppShell, Alert, Badge, Burger, Group, NavLink, SegmentedControl, Select, Text } from '@mantine/core'
+import { useDisclosure, useElementSize } from '@mantine/hooks'
+import { useId, type ReactNode } from 'react'
 import { NavLink as RouterLink, useLocation, useNavigate } from 'react-router'
 import { useRisks, useSession, useSystems } from '../api/queries'
 import type { Reg } from '../api/types'
+import classes from './AppShell.module.css'
 
 export const TRIAL_BANNER = 'Trial register: practice data, not the real register'
 
 const SECTIONS = ['register', 'review', 'dfd', 'history', 'reports']
+const HEADER_MIN_HEIGHT = 64
 
 interface Props {
   reg: Reg
@@ -20,6 +23,12 @@ export function AppShell({ reg, slug, children }: Props) {
   const risks = useRisks(reg, slug ?? '')
   const navigate = useNavigate()
   const { pathname } = useLocation()
+  // Below the `sm` breakpoint the navbar covers the page, so it starts closed behind a Burger.
+  const [navOpened, nav] = useDisclosure(false)
+  const navbarId = useId()
+  // The header wraps at narrow widths, so its height follows its content.
+  const { ref: headerRef, height: headerContentHeight } = useElementSize()
+  const headerHeight = Math.max(HEADER_MIN_HEIGHT, Math.ceil(headerContentHeight) + 16)
 
   // The page the owner is on, kept when the system or register changes.
   const section = SECTIONS.find((s) => pathname.split('/')[3] === s) ?? 'register'
@@ -35,11 +44,27 @@ export function AppShell({ reg, slug, children }: Props) {
   ]
 
   return (
-    <MantineAppShell header={{ height: 64 }} navbar={{ width: 220, breakpoint: 'sm' }} padding="md">
-      <MantineAppShell.Header>
-        <Group h="100%" px="md" justify="space-between" wrap="nowrap">
-          <Group wrap="nowrap">
-            <Title order={1} size="h3">Threat models</Title>
+    <MantineAppShell
+      header={{ height: headerHeight }}
+      navbar={{ width: 220, breakpoint: 'sm', collapsed: { mobile: !navOpened } }}
+      padding="md"
+    >
+      <MantineAppShell.Header px="md" className={classes.header}>
+        <Group ref={headerRef} w="100%" justify="space-between" gap="sm" wrap="wrap">
+          <Group gap="sm" wrap="wrap">
+            <Burger
+              className={classes.burger}
+              opened={navOpened}
+              onClick={nav.toggle}
+              size="sm"
+              aria-label="Toggle navigation"
+              aria-expanded={navOpened}
+              aria-controls={navbarId}
+            />
+            {/* The app's name, not a heading: each page has its own h1. */}
+            <Text component="span" fw={700} fz="h3">
+              Threat models
+            </Text>
             <Select
               aria-label="System"
               placeholder="Choose a system"
@@ -63,19 +88,24 @@ export function AppShell({ reg, slug, children }: Props) {
           {session.data && <Text size="sm">Signed in as {session.data.reviewer}</Text>}
         </Group>
       </MantineAppShell.Header>
-      <MantineAppShell.Navbar p="sm">
-        <nav aria-label="Pages">
-          {base &&
-            links.map(([path, label, right]) => (
-              <NavLink
-                key={path}
-                component={RouterLink}
-                to={`${base}/${path}`}
-                label={label}
-                rightSection={right}
-              />
-            ))}
-        </nav>
+      <MantineAppShell.Navbar
+        p="sm"
+        id={navbarId}
+        aria-label="Pages"
+        className={classes.navbar}
+        mod={{ collapsed: !navOpened }}
+      >
+        {base &&
+          links.map(([path, label, right]) => (
+            <NavLink
+              key={path}
+              component={RouterLink}
+              to={`${base}/${path}`}
+              label={label}
+              rightSection={right}
+              onClick={nav.close}
+            />
+          ))}
       </MantineAppShell.Navbar>
       <MantineAppShell.Main>
         {reg === 'trial' && (

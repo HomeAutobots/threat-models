@@ -71,13 +71,17 @@ export function DfdPage() {
   return (
     <Stack>
       <Group>
-        <Title order={2}>DFD</Title>
+        <Title order={1} size="h3">
+          DFD
+        </Title>
         <Badge color={data.status.state === 'current' ? 'green' : data.status.state === 'changed' ? 'yellow' : 'gray'}>
           {data.status.state}
         </Badge>
       </Group>
 
-      <Title order={4}>Approvals</Title>
+      <Title order={2} size="h4">
+        Approvals
+      </Title>
       {data.approvals.length === 0 ? (
         <Text size="sm">No approvals yet.</Text>
       ) : (
@@ -110,7 +114,9 @@ export function DfdPage() {
       {data.preview_error && <Alert color="red" title="The file cannot be approved">{visible(data.preview_error)}</Alert>}
       {data.preview && (
         <Stack gap="xs">
-          <Title order={4}>Preview of the current file</Title>
+          <Title order={2} size="h4">
+            Preview of the current file
+          </Title>
           <Text size="sm">Added IDs: {data.preview.added.length === 0 && 'none'}</Text>
           <List size="sm">
             {data.preview.added.map((id) => (

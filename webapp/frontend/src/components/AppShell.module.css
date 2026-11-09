@@ -1,0 +1,26 @@
+/* The header's height follows its wrapped content (AppShell.tsx); this centers that content. */
+.header {
+  display: flex;
+  align-items: center;
+}
+
+/*
+ * Mantine's AppShell switches the navbar to its mobile layout at (max-width: 48em), the `sm`
+ * breakpoint, inclusive. The Burger hides only strictly above it, so it is never missing while
+ * the mobile navbar is closed.
+ */
+@media (width > $mantine-breakpoint-sm) {
+  .burger {
+    display: none;
+  }
+}
+
+/*
+ * A closed mobile navbar is only moved off screen. Hide it too, so its links leave the tab order
+ * and the accessibility tree.
+ */
+@media (max-width: $mantine-breakpoint-sm) {
+  .navbar[data-collapsed] {
+    visibility: hidden;
+  }
+}
