@@ -7,5 +7,6 @@ hooks:
 
 test-web:
 	cd webapp/backend && uv run --frozen pytest -q
+	cd webapp/frontend && npm test
 
 .PHONY: test test-web hooks
