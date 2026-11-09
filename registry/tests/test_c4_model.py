@@ -8,6 +8,23 @@ from tmreg import c4
 FIXTURES = Path(__file__).parent / "fixtures"
 SHOP = (FIXTURES / "c4/shop.dsl").read_bytes()
 I16, I20, I24 = " " * 16, " " * 20, " " * 24
+_ENV1_END = f"{I16}softwareSystemInstance S2\n            }}\n        }}\n"
+_SEQ1 = '        dynamic C2 "SEQ1" {'
+# mutate() pairs that add ENV2 "Staging": TB8 holds every container; A1 and S2 are outside, and
+# A2 sits in TB8. The result has no problems.
+ENV2 = ((_ENV1_END, _ENV1_END + '        ENV2 = deploymentEnvironment "ENV2 Staging" {\n'
+         '            TB8 = deploymentNode "TB8 Staging" "One box." "VM" "Trust boundary" {\n'
+         f'{I16}properties {{\n{I20}"tm.enforced_by" "Firewall"\n{I16}}}\n'
+         f'{I16}containerInstance C1\n{I16}containerInstance C2\n'
+         f'{I16}containerInstance C3\n            }}\n        }}\n'),
+        ('"tm.zone.ENV1" "TB1"', '"tm.zone.ENV1" "TB1"\n"tm.zone.ENV2" "outside"'),
+        ('"tm.zone.ENV1" "TB5"', '"tm.zone.ENV1" "TB5"\n"tm.zone.ENV2" "TB8"'),
+        ('"Takes card payments." "External"',
+         '"Takes card payments." "External" {\n            properties {\n'
+         '                "tm.zone.ENV2" "outside"\n            }\n        }'),
+        (_SEQ1, '        deployment * ENV2 "deployment-ENV2" {\n'
+         '            title "Deployment diagram for S1 Shop in ENV2 Staging"\n'
+         '            include *\n        }\n' + _SEQ1))
 
 
 def mutate(*pairs: tuple[str, str]) -> bytes:
@@ -115,22 +132,7 @@ class ZonesTest(unittest.TestCase):
         self.assertEqual(c4.crossings(m)["R6"]["ENV1"], ["TB6"])
 
     def test_each_environment_is_separate(self):
-        env1_end = f"{I16}softwareSystemInstance S2\n            }}\n        }}\n"
-        env2 = ('        ENV2 = deploymentEnvironment "ENV2 Staging" {\n'
-                '            TB8 = deploymentNode "TB8 Staging" "One box." "VM" "Trust boundary" {\n'
-                f'{I16}properties {{\n{I20}"tm.enforced_by" "Firewall"\n{I16}}}\n'
-                f'{I16}containerInstance C1\n{I16}containerInstance C2\n'
-                f'{I16}containerInstance C3\n            }}\n        }}\n')
-        seq1 = '        dynamic C2 "SEQ1" {'
-        data = mutate((env1_end, env1_end + env2),
-                      ('"tm.zone.ENV1" "TB1"', '"tm.zone.ENV1" "TB1"\n"tm.zone.ENV2" "outside"'),
-                      ('"tm.zone.ENV1" "TB5"', '"tm.zone.ENV1" "TB5"\n"tm.zone.ENV2" "TB8"'),
-                      ('"Takes card payments." "External"',
-                       '"Takes card payments." "External" {\n            properties {\n'
-                       '                "tm.zone.ENV2" "outside"\n            }\n        }'),
-                      (seq1, '        deployment * ENV2 "deployment-ENV2" {\n'
-                       '            title "Deployment diagram for S1 Shop in ENV2 Staging"\n'
-                       '            include *\n        }\n' + seq1))
+        data = mutate(*ENV2)
         m = c4.parse(data)
         self.assertEqual(c4.problems(m), [])
         x = c4.crossings(m)
@@ -187,6 +189,16 @@ class ProblemsTest(unittest.TestCase):
              c1, ["C1", "X2"]),
             ("placement", [('"tm.zone.ENV1" "TB1"', '"tm.zone.ENV1" "TB1"\n"tm.owner" "Me"')],
              "A1 = ", ["A1", "tm.owner"]),
+            ("enforced_by off a TB node", [('"tm.owner" "Web team"',
+                                            '"tm.owner" "Web team"\n"tm.enforced_by" "x"')],
+             c1, ["C1", "tm.enforced_by"]),
+            ("zone off a person or External system", [('"tm.owner" "Web team"',
+                                                       '"tm.owner" "Web team"\n'
+                                                       '"tm.zone.ENV1" "outside"')],
+             c1, ["C1", "tm.zone.ENV1"]),
+            ("bare inspection name", [('"tm.version" "1.0"',
+                                       '"tm.version" "1.0"\n"structurizr.inspection." "ignore"')],
+             'workspace "Shop"', ["workspace", "structurizr.inspection."]),
             ("data class name", [('"tm.version" "1.0"',
                                   '"tm.version" "1.0"\n"tm.dataclass.A, B" "x"')],
              'workspace "Shop"', ["workspace", "A, B"]),
@@ -215,10 +227,13 @@ class ProblemsTest(unittest.TestCase):
             # Scope
             ("two systems in scope", [('"Takes card payments." "External"',
                                        '"Takes card payments."')], "S2 = ", ["S2", "External"]),
-            ("the scope is the one with containers", [  # S3 comes first, but S1 has containers
-                ("        S1 = softwareSystem", '        S3 = softwareSystem "S3 Shop" "Old."\n'
+            ("the scope is the one with containers", [  # S2 comes first, but S1 has containers
+                ('        S2 = softwareSystem "S2 Payment provider" "Takes card payments." '
+                 '"External"\n', ""),
+                ("        S1 = softwareSystem", '        S2 = softwareSystem "S2 Payment provider" '
+                                                '"Takes card payments."\n'
                                                 "        S1 = softwareSystem")],
-             "S3 = ", ["S3", "S1 is the system in scope"]),
+             "S2 = ", ["S2", "S1 is the system in scope"]),
             ("external with containers", [('"Takes card payments." "External"\n',
                                            '"Takes card payments." "External" {\n'
                                            'C9 = container "C9 Gateway" "Takes calls." "Java" {\n'
@@ -232,6 +247,8 @@ class ProblemsTest(unittest.TestCase):
              ["A2", "N1"]),
             ("zone names no ENV", [('"tm.zone.ENV1" "TB5"', '"tm.zone.ENV1" "TB5"\n'
                                     '"tm.zone.ENV2" "outside"')], "A2 = ", ["A2", "ENV2"]),
+            ("zone from another ENV", [*ENV2, ('"tm.zone.ENV1" "TB5"', '"tm.zone.ENV1" "TB8"')],
+             "A2 = ", ["A2", "TB8", "ENV1"]),
             ("zone and an instance", [('"Takes card payments." "External"',
                                        '"Takes card payments." "External" {\nproperties {\n'
                                        '"tm.zone.ENV1" "outside"\n}\n}')], "S2 = ",
@@ -249,6 +266,18 @@ class ProblemsTest(unittest.TestCase):
             ("path tagged Data store", [('"R4 Asks for a charge from" "In-process call" {',
                                          '"R4 Asks for a charge from" "In-process call" '
                                          '"Data store" {')], "R4 = ", ["R4", "Data store"]),
+            ("person on no path", [("        S1 = softwareSystem",
+                                    '        A3 = person "A3 Visitor" "Looks around." {\n'
+                                    '            properties {\n'
+                                    '                "tm.zone.ENV1" "outside"\n'
+                                    '            }\n        }\n        S1 = softwareSystem')],
+             "A3 = ", ["A3", "no path"]),
+            ("system on no path", [("        R1 = A1 -> C1",
+                                    '        S3 = softwareSystem "S3 Courier" "Ships parcels." '
+                                    '"External" {\n            properties {\n'
+                                    '                "tm.zone.ENV1" "outside"\n'
+                                    '            }\n        }\n        R1 = A1 -> C1')],
+             "S3 = ", ["S3", "no path"]),
             ("path props on a node", [('"tm.zone.ENV1" "TB1"', '"tm.zone.ENV1" "TB1"\n'
                                        '"tm.auth" "x"')], "A1 = ", ["A1", "tm.auth"]),
             # Zoom
@@ -262,6 +291,13 @@ class ProblemsTest(unittest.TestCase):
              c1, ["C1", "tm.zoom"]),
             # Deployment
             ("C1 instance removed", [(f"{I20}containerInstance C1\n", "")], c1, ["C1", "ENV1"]),
+            ("empty group", [(f'{I16}group "TB6 Admin handlers" {{\n',
+                              f'{I16}group "TB8 Empty" {{\n{I16}}}\n'
+                              f'{I16}group "TB6 Admin handlers" {{\n'),
+                             (f'{I20}"tm.enforced_by.TB6"',
+                              f'{I20}"tm.enforced_by.TB8" "Nothing yet"\n'
+                              f'{I20}"tm.enforced_by.TB6"')],
+             'group "TB8', ["TB8", "holds nothing"]),
             ("I1 removed", [(f'{I16}I1 = infrastructureNode "I1 VPN gateway" "Lets staff reach '
                              'the admin handlers." "WireGuard"\n', "")], "TB5 = ", ["TB5"]),
             # Views
@@ -275,6 +311,8 @@ class ProblemsTest(unittest.TestCase):
                                         '        }\n', "")], "C2 = ", ["C2", "components-C2"]),
             ("context view's kind", [('systemContext S1 "context"', 'container S1 "context"')],
              'container S1 "context"', ["context", "systemContext"]),
+            ("deployment view scoped to S1", [('deployment * ENV1', 'deployment S1 ENV1')],
+             'deployment S1 ENV1', ["deployment-ENV1", "deployment * ENV1"]),
             ("deployment-ENV1 removed", [('"deployment-ENV1"', '"deploy-1"')], "ENV1 = ",
              ["ENV1", "deployment-ENV1"]),
             ("extra view without a title", [('        dynamic C2 "SEQ1" {',
@@ -298,7 +336,8 @@ class ProblemsTest(unittest.TestCase):
             "line 1: the model has no deployment environment: add ENV1 with its trust "
             "boundaries, so that paths have known crossings",
             'line 1: the workspace needs the view systemContext <S> "context"',
-            'line 1: the workspace needs the view container <S> "containers"'])
+            'line 1: the workspace needs the view container <S> "containers"',
+            "line 7: A1 is connected to no path, so no diagram shows it"])
         self.assertEqual((c4.zones(m), c4.crossings(m)), ({"A1": {}}, {}))
         self.assertEqual(c4.to_record(m)["items"]["A1"]["zones"], {})
 
@@ -331,6 +370,11 @@ class RecordTest(unittest.TestCase):
             "group": "TB6", "role": "Process", "where": ["S1", "C2", "K3"],
             "zones": {"ENV1": ["TB2", "TB3", "TB6"]}})
         self.assertEqual(r["items"]["TB3"]["zones"], {})
+        # A group carries what enforces it, from its container, as a TB node does (R12).
+        self.assertEqual(r["items"]["TB6"]["properties"],
+                         {"tm.enforced_by": "Role check middleware; admin session from SSO"})
+        self.assertEqual(r["items"]["TB3"]["properties"],
+                         {"tm.enforced_by": "Security group: only the load balancer on 443"})
         self.assertEqual(r["items"]["C3"]["tags"], ["Data store"])
         self.assertEqual(sorted(r["items"]), sorted(c4.parse(SHOP).items))
         self.assertEqual(r["rels"]["R5"]["role"], "Data flow")
@@ -370,6 +414,15 @@ class RecordTest(unittest.TestCase):
             ('"R7 Reads and refunds orders in"', '"R8 Reads and refunds orders in"'))))
         ch = c4.changes(old, smaller)
         self.assertEqual((ch["added"], ch["removed"], ch["changed"]), (["R8"], ["R7"], {}))
+
+    def test_changes_to_a_group_and_a_sequence(self):
+        old = c4.to_record(c4.parse(SHOP))
+        enforced = c4.to_record(c4.parse(mutate(
+            ('"Role check middleware; admin session from SSO"', '"Role check middleware only"'))))
+        self.assertEqual(c4.changes(old, enforced)["changed"],
+                         {"C2": ["properties"], "TB6": ["properties"]})
+        rescoped = c4.to_record(c4.parse(mutate(('dynamic C2 "SEQ1"', 'dynamic S1 "SEQ1"'))))
+        self.assertEqual(c4.changes(old, rescoped)["changed"], {"SEQ1": ["scope"]})
 
     def test_was_map(self):
         rec = c4.to_record(c4.parse(mutate(

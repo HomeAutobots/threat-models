@@ -634,9 +634,9 @@ _TAG_PLACES = {"Data store": ("a container or component", _PROCESS),
                "Trust boundary": ("a deployment node", ("deploymentNode",))}
 _TITLES = {"systemContext": "System context diagram for", "container": "Container diagram for",
            "component": "Component diagram for", "deployment": "Deployment diagram for"}
-# What `changes` compares; properties leave out tm.was (spec section 7.4).
+# What `changes` compares; properties leave out tm.was (spec section 7.4). scope is a sequence's.
 _CHANGE_FIELDS = ("name", "description", "technology", "tags", "properties", "parent", "group",
-                  "source", "destination", "crossings", "zones", "title", "steps")
+                  "source", "destination", "crossings", "zones", "scope", "title", "steps")
 
 
 def _num(iid: str) -> int:
@@ -803,15 +803,22 @@ def where(m: Model, item_id: str) -> list[str]:
 
 
 def to_record(m: Model) -> dict:
-    """The model as canonical, JSON-safe data: what an approval stores and `changes` compares."""
+    """The model as canonical, JSON-safe data: what an approval stores and `changes` compares.
+
+    A TB group's properties hold tm.enforced_by, copied from its container's tm.enforced_by.<TB>,
+    so that a group looks like a TB node and a change to what enforces it changes the group.
+    """
     zs, xs, ids = zones(m), crossings(m), m.ids()
     items, rels = {}, {}
     for iid in (i for kind in KINDS for i in ids[kind] if i in m.items):
         it = m.items[iid]
+        props = dict(it.properties)
+        if it.kind == "group" and _ENFORCED + iid in m.items[it.parent].properties:
+            props["tm.enforced_by"] = m.items[it.parent].properties[_ENFORCED + iid]
         items[iid] = {"kind": it.kind, "name": it.name, "description": it.description,
-                      "technology": it.technology, "tags": list(it.tags),
-                      "properties": dict(it.properties), "parent": it.parent, "group": it.group,
-                      "role": role(m, iid), "where": where(m, iid), "zones": zs.get(iid, {})}
+                      "technology": it.technology, "tags": list(it.tags), "properties": props,
+                      "parent": it.parent, "group": it.group, "role": role(m, iid),
+                      "where": where(m, iid), "zones": zs.get(iid, {})}
     for rid in ids["R"]:
         r = m.rels[rid]
         rels[rid] = {"source": r.source, "destination": r.destination,
@@ -1048,6 +1055,12 @@ class _Rules:
             if self.in_scope in (r.source, r.destination):
                 self.add(r.line, f"{r.id} ends at {self.in_scope}, the system in scope: point it "
                          "at a container or component, so that its crossings are known")
+        # A system is connected through the paths of its containers and components too.
+        ends = {e for r in self.m.rels.values() for end in (r.source, r.destination)
+                for e in where(self.m, end)}
+        for it in self.m.items.values():
+            if it.kind in ("person", "softwareSystem") and it.id not in ends:
+                self.add(it.line, f"{it.id} is connected to no path, so no diagram shows it")
 
     def zoom(self) -> None:
         for c in self.m.items.values():
@@ -1069,10 +1082,14 @@ class _Rules:
         held = {i.node for i in self.m.instances} | {
             i.parent for i in self.m.items.values()
             if i.kind in ("deploymentNode", "infrastructureNode")}
+        filled = {i.group for i in self.m.items.values() if i.kind == "component"}
         for it in self.m.items.values():
             if _is_tb_node(self.m, it.id) and it.id not in held:
                 self.add(it.line, f"{it.id} holds nothing: a trust boundary holds at least one "
                          "node, instance or infrastructure node, or Structurizr does not draw it")
+            if it.kind == "group" and it.id not in filled:
+                self.add(it.line, f"{it.id} holds nothing: a trust boundary group holds at least "
+                         "one component, or Structurizr does not draw it")
 
     def views(self) -> None:
         m, s = self.m, self.in_scope
@@ -1087,7 +1104,7 @@ class _Rules:
         required += [(f"components-{c.id}", "component", {c.id}, None, c.id, c.line,
                       f'component {c.id} "components-{c.id}"')
                      for c in m.items.values() if c.kind == "container" and c.id in self.opened]
-        required += [(f"deployment-{e}", "deployment", {"*", s}, e, e, m.items[e].line,
+        required += [(f"deployment-{e}", "deployment", {"*"}, e, e, m.items[e].line,
                       f'deployment * {e} "deployment-{e}"') for e in self.envs]
         for key, kind, scopes, env, owner, line, form in required:
             v, scopes = m.views.get(key), scopes - {None}
