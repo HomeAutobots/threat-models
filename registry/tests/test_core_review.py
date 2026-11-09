@@ -179,14 +179,30 @@ class ReviewTest(TmpTestCase):
         self.assertEqual(self.reg.editors("demo", "T-01", since_last_approval=False), [ai])
         with human_terminal():
             self.reg.edit_risk("demo", "T-01", {"owner": "B"}, run_id=None)
+        self.assertEqual(since(), [])  # a human edit that leaves it approved is a new baseline
         self.edit("C")
-        self.assertEqual(since(), ["human:Test Reviewer", ai])
+        self.assertEqual(since(), [ai])
         self.reg.reject(session(), "demo", "T-01", "Owner change not agreed with Payments.")  # revert
         self.assertEqual(since(), [])
         self.assertEqual(self.reg.editors("demo", "T-01", since_last_approval=False),
                          [ai, "human:Test Reviewer"])
         with self.assertRaisesRegex(RegistryError, "no risk"):
             self.reg.editors("demo", "T-09", since_last_approval=True)
+
+    def test_editors_human_edit_that_stays_approved_resets_the_baseline(self):
+        ai = f"ai:{self.run}"
+        self.add_approved()
+        with human_terminal():
+            self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None)
+            self.reg.edit_risk("demo", "T-01", {"owner": "B"}, run_id=None)
+        self.assertEqual(self.reg.editors("demo", "T-01", since_last_approval=True), [])
+        self.assertEqual(self.reg.editors("demo", "T-01", since_last_approval=False),
+                         ["human:Test Reviewer"])
+        self.edit("C")  # AI edit: pending
+        with human_terminal():  # human edit of a pending risk leaves it pending: not a baseline
+            self.reg.edit_risk("demo", "T-01", {"owner": "D"}, run_id=None)
+        self.assertEqual(self.reg.editors("demo", "T-01", since_last_approval=True),
+                         [ai, "human:Test Reviewer"])
 
     def test_merge(self):
         self.add_approved()

@@ -167,6 +167,9 @@ an adversarial review before commit:
    `approve` uses for imported one-liners: if `detail_complete` is 0 and every `AI_REQUIRED` field
    is now filled, it sets `detail_complete` to 1. That way an imported catalog row the owner fills
    in stops being reported as "detail incomplete".
+   Such an edit moves `dfd_approval_id` to the latest DFD approval only when it changes
+   `elements`. Otherwise the risk keeps the DFD it was written against, so "the DFD has moved on"
+   still shows. AI edits and edits of pending risks always move it.
 2. **Edit takes `seen` and a reason.** `edit_risk` gains keyword-only `seen` (as on `approve`,
    raising `StaleRecord` if the row changed since it was shown) and an optional `note`, stored as
    the change log's note. The web app always passes `seen`. The CLI keeps working without either.

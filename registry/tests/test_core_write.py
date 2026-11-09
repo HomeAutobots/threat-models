@@ -187,6 +187,27 @@ class DfdTest(TmpTestCase):
         self.assertEqual(prev["warnings"], ["T-01 cites F3, which this DFD no longer has"])
 
 
+    def test_dfd_status_with_unreadable_dfd_has_no_current_hash(self):
+        reg = make_registry(self.tmp)
+        path = reg.root / "systems/demo/dfd.md"
+        path.unlink()
+        path.mkdir()
+        status = reg.dfd_status("demo")
+        self.assertIsNone(status.current_sha256)
+        self.assertEqual(status.state, "changed")
+
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads any file")
+    def test_dfd_status_with_permission_denied_dfd_has_no_current_hash(self):
+        reg = make_registry(self.tmp)
+        path = reg.root / "systems/demo/dfd.md"
+        path.chmod(0)
+        self.addCleanup(path.chmod, 0o644)
+        status = reg.dfd_status("demo")
+        self.assertIsNone(status.current_sha256)
+        self.assertEqual(status.state, "changed")
+
+
 class SessionTest(unittest.TestCase):
     def test_session_requires_terminal(self):
         with no_tty():
@@ -374,6 +395,36 @@ class EditRuleTest(TmpTestCase):
         self.assertEqual((last["op"], last["actor"], last["note"]),
                          ("edit", "human:Test Reviewer", "Owner confirmed in the November review."))
         self.assertEqual(self.reg.verify("demo"), [])
+
+    def _approve_newer_dfd(self):
+        (self.reg.root / "systems/demo/dfd.md").write_bytes(SAMPLE_DFD + b"\n")
+        self.assertEqual(self.reg.dfd_approve(session(), "demo", NOTE)["id"], "DFD-2")
+
+    def test_human_edit_of_other_field_keeps_old_dfd_approval(self):  # D1
+        self._approve_newer_dfd()
+        with tty():
+            r = self.reg.edit_risk("demo", "T-01", {"owner": "A. Okafor"}, run_id=None)
+        self.assertEqual((r["review_state"], r["dfd_approval_id"]), ("approved", "DFD-1"))
+
+    def test_human_edit_of_elements_moves_dfd_approval(self):  # D1
+        self._approve_newer_dfd()
+        with tty():
+            r = self.reg.edit_risk("demo", "T-01", {"elements": ["P2", "F3"]}, run_id=None)
+        self.assertEqual((r["review_state"], r["dfd_approval_id"]), ("approved", "DFD-2"))
+
+    def test_human_edit_of_pending_and_ai_edit_still_move_dfd_approval(self):  # D1 unchanged
+        self._approve_newer_dfd()
+        self.reg.add_risk("demo", ai_fields(), run_id=self.run)  # T-02, pending
+        with tty():
+            r = self.reg.edit_risk("demo", "T-02", {"owner": "A"}, run_id=None)
+        self.assertEqual(r["dfd_approval_id"], "DFD-2")
+        r = self.reg.edit_risk("demo", "T-01", {"owner": "B"}, run_id=self.run)
+        self.assertEqual((r["review_state"], r["dfd_approval_id"]), ("pending", "DFD-2"))
+
+    def test_edit_note_must_be_text(self):
+        for bad in (5, ["a"], {"a": 1}):
+            with self.subTest(bad=bad), tty(), self.assertRaisesRegex(RegistryError, "note must be text"):
+                self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None, note=bad)
 
     def test_ai_edit_after_human_edit_snapshots_the_human_version(self):
         with tty():

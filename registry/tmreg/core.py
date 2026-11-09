@@ -279,9 +279,17 @@ _APPROVAL_OPS = ("approve", "revert", "import")
 
 
 def _editors(changes: list[dict], since_last_approval: bool) -> list[str]:
-    """Distinct actors of the edit ops in one risk's changes, in order of first edit."""
+    """Distinct actors of the edit ops in one risk's changes, in order of first edit.
+
+    With since_last_approval, the baseline is the latest approve, revert, or import, or a human
+    edit that left the risk approved. Whether it is approved is tracked through the diffs."""
     if since_last_approval:
-        last = max((i for i, c in enumerate(changes) if c["op"] in _APPROVAL_OPS), default=-1)
+        state, last = "pending", -1
+        for i, c in enumerate(changes):
+            state = (c["diff"].get("review_state") or [None, state])[1]
+            if c["op"] in _APPROVAL_OPS or (
+                    c["op"] == "edit" and not c["actor"].startswith("ai:") and state == "approved"):
+                last = i
         changes = changes[last + 1:]
     return list(dict.fromkeys(c["actor"] for c in changes if c["op"] == "edit"))
 
@@ -483,7 +491,10 @@ class Registry:
         self._require(slug)
         latest = self._latest_dfd(slug)
         path = self._dfd_path(slug)
-        current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        try:
+            current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        except OSError:
+            current = None  # unreadable: reported like a missing file
         if latest is None:
             state = "none"
         elif latest["sha256"] == current:
@@ -600,6 +611,8 @@ class Registry:
     def edit_risk(self, slug, risk_id, fields: dict, *, run_id: str | None,
                   seen: dict | None = None, note: str = "") -> dict:
         self._require(slug)
+        if note is not None and not isinstance(note, str):
+            raise RegistryError("note must be text")
         note = _no_controls("note", note or "").strip()
         with self._write():
             actor = self._actor(slug, run_id)
@@ -627,6 +640,7 @@ class Registry:
             update = {k: v for k, v in values.items() if cur.get(k) != v}
             if not update:
                 raise RegistryError("no changes")
+            keeps_approval = cur["review_state"] == "approved" and not actor.startswith("ai:")
             if cur["review_state"] == "approved":
                 if actor.startswith("ai:"):
                     update["last_approved"] = {f: cur[f] for f in SNAPSHOT_FIELDS}
@@ -634,7 +648,10 @@ class Registry:
                                   review_note=None)
                 elif _detail_now_complete(merged):
                     update["detail_complete"] = 1  # the owner filled an imported one-liner
-            update["dfd_approval_id"] = latest["id"]
+            if not keeps_approval or "elements" in update:
+                # An owner edit that keeps the approval moves the DFD basis only when it changes
+                # the elements; otherwise "the DFD has moved on" must keep showing.
+                update["dfd_approval_id"] = latest["id"]
             update["updated_at"] = db.now()
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op="edit", actor=actor,
                              note=note)
