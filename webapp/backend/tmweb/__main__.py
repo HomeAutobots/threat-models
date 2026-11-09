@@ -1,5 +1,6 @@
 """Start the local web app. Refuses without an interactive terminal or under Claude Code."""
 import argparse
+import errno
 import logging
 import secrets
 import socket
@@ -7,13 +8,24 @@ import sys
 from pathlib import Path
 
 from . import REPO_ROOT
+from .security import DEV_PORT
 
 from tmreg import core  # noqa: E402  (REPO_ROOT import puts registry/ on sys.path)
 
 
+def _port(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if not 1 <= value <= 65535:
+        raise argparse.ArgumentTypeError(f"{value} is not a port from 1 to 65535")
+    return value
+
+
 def main(argv: list[str] | None = None, *, root: Path = REPO_ROOT) -> int:
     parser = argparse.ArgumentParser(prog="tmweb")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=_port, default=8765)
     parser.add_argument("--dev", action="store_true")
     args = parser.parse_args(argv)
 
@@ -31,12 +43,16 @@ def main(argv: list[str] | None = None, *, root: Path = REPO_ROOT) -> int:
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind(("127.0.0.1", args.port))
-    except OSError:
+    except OSError as exc:
         sock.close()
-        print(
-            f"tmweb: port {args.port} is in use. Is the app already running in another Terminal window?",
-            file=sys.stderr,
-        )
+        if exc.errno == errno.EADDRINUSE:
+            print(
+                f"tmweb: port {args.port} is in use. Is the app already running in another Terminal window?",
+                file=sys.stderr,
+            )
+        else:
+            print(f"tmweb: cannot listen on 127.0.0.1:{args.port}: {exc.strerror or exc}",
+                  file=sys.stderr)
         return 1
     port = sock.getsockname()[1]
     # Unhandled API errors are logged to "tmweb" (app.py) with their traceback; print them here.
@@ -55,7 +71,7 @@ def main(argv: list[str] | None = None, *, root: Path = REPO_ROOT) -> int:
             static_dir=REPO_ROOT / "webapp/frontend/dist",
             dev=args.dev,
         )
-        host = "localhost:5173" if args.dev else f"127.0.0.1:{port}"
+        host = f"localhost:{DEV_PORT}" if args.dev else f"127.0.0.1:{port}"
         print(f"Sign in: http://{host}/signin?token={token}", flush=True)
         try:
             uvicorn.Server(uvicorn.Config(app, log_level="warning")).run(sockets=[sock])

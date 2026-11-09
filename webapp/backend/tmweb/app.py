@@ -28,6 +28,10 @@ SIGNIN_REFUSED = (
     "Close the app's Terminal window and start it again for a new link."
 )
 
+NOT_BUILT = (
+    "The app's pages aren't built yet. Start it with webapp/start.command or make web."
+)
+
 # Nothing from the network loads at run time. Styles need 'unsafe-inline' (Mantine's style tag,
 # mermaid's SVG); scripts stay 'self' only.
 CSP = (
@@ -77,6 +81,17 @@ def create_app(
         response.headers["Content-Security-Policy"] = CSP
         return response
 
+    @app.exception_handler(Exception)
+    async def outer_error(request: Request, exc: Exception):
+        # Runs in ServerErrorMiddleware, outside the middleware above, so set their headers here.
+        # Starlette re-raises after sending, so the server still logs the traceback.
+        response = JSONResponse({"detail": "internal error"}, status_code=500)
+        response.headers["Content-Security-Policy"] = CSP
+        path = request.url.path
+        if path == "/api" or path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     async def _api_checked(request: Request, call_next):
         sessions: SessionStore = request.app.state.sessions
         session_id = request.cookies.get(COOKIE)
@@ -120,6 +135,8 @@ def create_app(
         def spa(full_path: str):
             if full_path == "api" or full_path.startswith("api/"):
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
+            if not index.is_file():
+                return PlainTextResponse(NOT_BUILT, status_code=503)
             return FileResponse(index)
 
     app.add_middleware(HttpAndLifespanOnly)  # added last, so it runs first

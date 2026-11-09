@@ -9,6 +9,13 @@ import tmreg.core
 from conftest import api_routes
 from tmweb.__main__ import main
 
+def free_port() -> int:
+    """A port nothing listens on now. --port refuses 0, so tests ask the OS first."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 PARAMS = {"reg": "main", "slug": "demo", "id": "T-01"}
 
 
@@ -178,9 +185,9 @@ def test_main_prints_one_time_link_after_binding(project, capsys, human):
             sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT) if hasattr(socket, "SO_REUSEPORT") else 0
         )
 
-    # Port 0: the OS picks a free port, so the test never collides with a running app.
+    # A port the OS just reported free, so the test never collides with a running app.
     with mock.patch("uvicorn.Server.run", autospec=True, side_effect=fake_run) as run:
-        assert main(["--port", "0"], root=project) == 0
+        assert main(["--port", str(free_port())], root=project) == 0
     run.assert_called_once()
     host, port = seen["addr"]
     assert host == "127.0.0.1" and port != 0
@@ -320,3 +327,101 @@ def test_csp_header_on_every_kind_of_response(project, client, anon, tmp_path):
         assert c.get("/").headers["content-security-policy"] == CSP
         assert c.get("/assets/a.js").headers["content-security-policy"] == CSP
     assert "script-src 'self';" in CSP and "img-src 'self' data: blob:;" in CSP
+
+
+def test_missing_project_toml_is_422_on_meta_and_session(client, project):
+    (project / "project.toml").unlink()
+    for path in ("/api/meta", "/api/session"):
+        r = client.get(path)
+        assert r.status_code == 422, path
+        assert isinstance(r.json()["detail"], str) and r.json()["detail"]
+
+
+def test_front_end_not_built_is_503_plain_text(project, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from tmweb.app import create_app
+
+    static = tmp_path / "dist"
+    static.mkdir()
+    app = create_app(project, port=8765, signin_token="T0KEN", static_dir=static)
+    expected = (
+        "The app's pages aren't built yet. Start it with webapp/start.command or make web."
+    )
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        for path in ("/", "/main/demo/register"):
+            r = c.get(path)
+            assert r.status_code == 503, path
+            assert r.text == expected
+            assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_other_bind_errors_print_strerror(project, capsys, human):
+    import errno
+
+    err = OSError(errno.EACCES, "Permission denied")
+    with mock.patch.object(socket.socket, "bind", side_effect=err), \
+         mock.patch("uvicorn.Server.run") as run:
+        assert main(["--port", "80"], root=project) == 1
+    captured = capsys.readouterr()
+    assert captured.err == "tmweb: cannot listen on 127.0.0.1:80: Permission denied\n"
+    assert "token=" not in captured.out
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("port", ["0", "-1", "65536", "99999999999999999999", "abc"])
+def test_bad_port_is_an_argparse_error(project, capsys, port):
+    with pytest.raises(SystemExit) as exc:
+        main(["--port", port], root=project)
+    assert exc.value.code == 2
+    assert "--port" in capsys.readouterr().err
+
+
+def test_dev_uses_port_5199(project, capsys, human):
+    from tmweb.security import DEV_ORIGIN, allowed_origins
+
+    assert DEV_ORIGIN == "http://localhost:5199"
+    assert DEV_ORIGIN in allowed_origins(8765, True)
+    with mock.patch("uvicorn.Server.run"):
+        assert main(["--port", str(free_port()), "--dev"], root=project) == 0
+    assert re.search(r"Sign in: http://localhost:5199/signin\?token=\S{40,}", capsys.readouterr().out)
+
+
+def test_outer_500_keeps_csp_and_no_store(project):
+    from fastapi.testclient import TestClient
+
+    from tmweb.app import CSP, create_app
+
+    app = create_app(project, port=8765, signin_token="T0KEN")
+
+    @app.get("/outside")
+    def outside():
+        raise RuntimeError("secret-detail")
+
+    # The lock only catches errors inside /api; this one reaches ServerErrorMiddleware.
+    with TestClient(app, base_url="http://127.0.0.1:8765", raise_server_exceptions=False) as c:
+        r = c.get("/outside")
+    assert r.status_code == 500
+    assert r.headers["content-security-policy"] == CSP
+    assert "secret-detail" not in r.text
+
+
+def test_outer_500_on_api_path_is_no_store_with_csp(project):
+    from fastapi.responses import Response
+    from fastapi.testclient import TestClient
+
+    from tmweb.app import CSP, create_app
+
+    app = create_app(project, port=8765, signin_token="T0KEN")
+    handler = app.exception_handlers[Exception]
+    import asyncio
+
+    from starlette.requests import Request
+
+    scope = {"type": "http", "method": "GET", "path": "/api/x", "headers": [], "query_string": b""}
+    response = asyncio.run(handler(Request(scope), RuntimeError("secret-detail")))
+    assert isinstance(response, Response)
+    assert response.status_code == 500
+    assert response.headers["content-security-policy"] == CSP
+    assert response.headers["cache-control"] == "no-store"
+    assert b"secret-detail" not in response.body

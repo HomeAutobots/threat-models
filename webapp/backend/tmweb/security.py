@@ -4,7 +4,8 @@ import threading
 
 COOKIE = "tmweb_session"
 CSRF_HEADER = "X-CSRF-Token"
-DEV_ORIGIN = "http://localhost:5173"
+DEV_PORT = 5199  # Vite under --dev, with strictPort, so no other dev server shares the origin
+DEV_ORIGIN = f"http://localhost:{DEV_PORT}"
 
 
 def _same(a: str, b: str) -> bool:
