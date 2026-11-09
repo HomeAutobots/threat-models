@@ -5,4 +5,7 @@ test: hooks
 hooks:
 	@git config core.hooksPath .githooks 2>/dev/null || true
 
-.PHONY: test hooks
+test-web:
+	cd webapp/backend && uv run --frozen pytest -q
+
+.PHONY: test test-web hooks

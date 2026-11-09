@@ -1,0 +1,21 @@
+[project]
+name = "tmweb"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.162.2",
+    "uvicorn==0.54.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# Starlette 1.x warns that TestClient on httpx is deprecated; httpx2 is the replacement but is
+# not vetted or pinned here. Ignore only that one message.
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.2.0",
+]
