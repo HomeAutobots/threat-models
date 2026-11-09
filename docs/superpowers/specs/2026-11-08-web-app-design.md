@@ -266,8 +266,10 @@ previewed.
 - **Exact file**: the raw text, escaped, with non-printable characters shown as escapes, like the
   CLI's `visible()`.
 
-If the file holds anything the readable view does not show, such as HTML comments or raw HTML, a
-banner says so above Approve DFD and links to the Exact file view.
+If the file holds anything the readable view does not show or may display misleadingly, such as
+HTML comments, raw HTML, or invisible or control characters (any character `visible()` escapes,
+after CRLF line endings are normalized), a banner says so above Approve DFD and links to the Exact
+file view.
 
 ### 6.6 History and verify
 

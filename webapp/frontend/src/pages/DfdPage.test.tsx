@@ -102,6 +102,29 @@ describe('DfdPage', () => {
     expect(screen.queryByText(BANNER)).toBeNull()
   })
 
+  it('banner for a right-to-left override (U+202E), with the extended copy', async () => {
+    dfd = mk('flow F1 goes \u202eTPECCA\u202c to E2')
+    renderPage()
+    expect(
+      await screen.findByText(
+        "This file contains content the readable view doesn't show or may display misleadingly (HTML comments, raw HTML, or invisible or control characters). Check the Exact file view before approving.",
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('banner for a zero-width space (U+200B)', async () => {
+    dfd = mk('E1 is the\u200b store')
+    renderPage()
+    expect(await screen.findByText(BANNER)).toBeInTheDocument()
+  })
+
+  it('no banner for clean text with CRLF line endings', async () => {
+    dfd = mk('# Title\r\n\r\nclean text\r\n')
+    renderPage()
+    await screen.findByText('clean text')
+    expect(screen.queryByText(BANNER)).toBeNull()
+  })
+
   it('banner for raw HTML links to the Exact file tab', async () => {
     dfd = mk('<b>x</b>')
     renderPage()

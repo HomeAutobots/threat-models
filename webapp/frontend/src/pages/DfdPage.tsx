@@ -13,6 +13,16 @@ import { visible } from '../lib/visible'
 const STALE = 'dfd.md changed since it was shown. Review the current file.'
 const HIDDEN = /<!--|<\/?[A-Za-z][^>]*>/
 
+/**
+ * True when the readable view would hide or misrender part of the text: HTML comments, raw HTML,
+ * or any character visible() escapes (such as U+202E, which reorders text, or U+200B, which
+ * hides). CRLF line endings are normalized first, so they alone do not count.
+ */
+function hidesContent(text: string): boolean {
+  const t = text.replace(/\r\n/g, '\n')
+  return HIDDEN.test(t) || visible(t) !== t
+}
+
 export function DfdPage() {
   const { reg, slug } = useParams()
   const dfd = useDfd(reg as Reg, slug as string)
@@ -30,7 +40,7 @@ export function DfdPage() {
 
   const data = dfd.data
   const noteMin = meta.data?.note_min ?? 20
-  const hidden = data.text !== null && HIDDEN.test(data.text)
+  const hidden = data.text !== null && hidesContent(data.text)
   const canApprove =
     data.status.state !== 'current' &&
     !data.preview_error &&
@@ -188,8 +198,8 @@ export function DfdPage() {
       {hidden && (
         <Alert color="yellow">
           <Text span>
-            This file contains content the readable view doesn't show (HTML comments or raw HTML). Check the Exact file view
-            before approving.{' '}
+            This file contains content the readable view doesn't show or may display misleadingly (HTML comments, raw
+            HTML, or invisible or control characters). Check the Exact file view before approving.{' '}
           </Text>
           <Button variant="subtle" size="compact-sm" onClick={() => setTab('exact')}>
             Exact file view
