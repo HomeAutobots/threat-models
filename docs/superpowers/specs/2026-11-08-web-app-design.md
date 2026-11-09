@@ -147,7 +147,8 @@ As defense in depth, `threat-models/.claude/settings.json` gains a deny rule for
 `Edit(/webapp/**)`. The guard's allow-list already blocks starting the server and every web
 request command. The settings also deny the browser and desktop automation MCP servers
 (`mcp__claude-in-chrome`, `mcp__Claude_Browser`, `mcp__computer-use`, and `mcp__remote-devices`,
-which hosts the remote browser and computer tools), and `/tm-model` disallows them, so a guarded
+which hosts the remote browser and computer tools), and `/tm-model` disallows them for the turn that
+starts it; the deny rules in `.claude/settings.json` hold for the whole session, so a guarded
 session cannot drive the signed-in browser. A session started elsewhere can, which is why the
 rule above still holds.
 
