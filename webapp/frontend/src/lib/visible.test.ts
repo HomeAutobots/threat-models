@@ -19,4 +19,8 @@ describe('visible', () => {
   it('escapes astral non-printables with eight digits', () => {
     expect(visible('\u{e0001}')).toBe('\\U000e0001')
   })
+  it('escapes carriage return as \\r, like Python unicode_escape', () => {
+    expect(visible('a\rb')).toBe('a\\rb')
+    expect(visible('a\r\nb')).toBe('a\\r\nb')
+  })
 })

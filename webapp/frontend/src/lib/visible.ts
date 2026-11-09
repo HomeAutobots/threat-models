@@ -11,6 +11,10 @@ export function visible(text: string): string {
       out += ch
       continue
     }
+    if (ch === '\r') {
+      out += '\\r' // Python's unicode_escape writes CR as \r, not \x0d
+      continue
+    }
     const n = ch.codePointAt(0) as number
     if (n <= 0xff) out += '\\x' + n.toString(16).padStart(2, '0')
     else if (n <= 0xffff) out += '\\u' + n.toString(16).padStart(4, '0')
