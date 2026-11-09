@@ -2,6 +2,7 @@ import { Alert, Badge, Button, Group, Loader, Paper, Stack, Text, Title } from '
 import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useMeta, useRisk, useRiskHistory } from '../api/queries'
+import { visible } from '../lib/visible'
 import type { Reg } from '../api/types'
 import classes from '../components/layout/RecordLayout.module.css'
 import { ChangeStatusModal } from '../components/manage/ChangeStatusModal'
@@ -17,8 +18,8 @@ export function RiskPage() {
   const [statusOpen, setStatusOpen] = useState(false)
   const [retireOpen, setRetireOpen] = useState(false)
 
-  if (fetched.error) return <Alert color="red">{fetched.error.message}</Alert>
-  if (meta.error) return <Alert color="red">{meta.error.message}</Alert>
+  if (fetched.error) return <Alert color="red">{visible(fetched.error.message)}</Alert>
+  if (meta.error) return <Alert color="red">{visible(meta.error.message)}</Alert>
   if (!fetched.data || !meta.data) return <Loader m="xl" aria-label="Loading" />
 
   const detail = fetched.data

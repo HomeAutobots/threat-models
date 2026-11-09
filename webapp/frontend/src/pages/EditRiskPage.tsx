@@ -3,6 +3,7 @@ import { useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { apiPath } from '../api/client'
 import { useAction, useMeta, useRisk } from '../api/queries'
+import { visible } from '../lib/visible'
 import type { Meta, Reg, Risk, RiskWriteResponse } from '../api/types'
 import { failure, STALE_TEXT } from '../components/manage/errors'
 import {
@@ -25,11 +26,11 @@ export function EditRiskPage({ mode }: Props) {
   const meta = useMeta()
   const fetched = useRisk(reg as Reg, slug ?? '', mode === 'edit' ? (id ?? '') : '')
 
-  if (!meta.data) return meta.error ? <Alert color="red">{meta.error.message}</Alert> : <Loader m="xl" aria-label="Loading" />
+  if (!meta.data) return meta.error ? <Alert color="red">{visible(meta.error.message)}</Alert> : <Loader m="xl" aria-label="Loading" />
   if (mode === 'add') {
     return <Form key="add" mode="add" reg={reg as Reg} slug={slug as string} meta={meta.data} seen={null} />
   }
-  if (fetched.error) return <Alert color="red">{fetched.error.message}</Alert>
+  if (fetched.error) return <Alert color="red">{visible(fetched.error.message)}</Alert>
   if (!fetched.data) return <Loader m="xl" aria-label="Loading" />
   return <Form key={id} mode="edit" reg={reg as Reg} slug={slug as string} meta={meta.data} seen={fetched.data.risk} />
 }

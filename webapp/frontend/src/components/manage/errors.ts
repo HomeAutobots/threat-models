@@ -22,3 +22,8 @@ export function failure(e: unknown): Failure {
   }
   return { kind: 'error', message: refusalText(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)) }
 }
+
+/** The same record by content: the server sends fields in one order, so JSON text is enough. */
+export function sameRecord(a: Risk, b: Risk): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}

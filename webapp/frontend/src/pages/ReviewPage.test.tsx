@@ -92,6 +92,7 @@ let failList: boolean
 let failRisk: boolean
 let historyGets: number
 let historyGate: Promise<void> | null
+let failHistory: boolean
 let historyBody: unknown[]
 
 function mockApi() {
@@ -107,6 +108,7 @@ function mockApi() {
       if (url.endsWith('/history')) {
         historyGets++
         if (historyGate) await historyGate
+        if (failHistory) return json({ detail: 'history failed' }, 404)
         return json(historyBody)
       }
       const m = url.match(/\/risks\/([^/]+)$/)
@@ -158,6 +160,7 @@ beforeEach(() => {
   failRisk = false
   historyGets = 0
   historyGate = null
+  failHistory = false
   historyBody = []
   queue = [mkRisk('T-1'), mkRisk('T-2'), mkRisk('T-3')]
   details = Object.fromEntries(queue.map((r) => [r.id, mkDetail(r)]))
@@ -546,6 +549,9 @@ describe('ReviewPage', () => {
       expect(screen.getByRole('button', { name: 'Reject T-1' })).toBeDisabled()
       spy.mockRestore() // back online
       await invalidateRisk(client)
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: ['main', 'demo', 'risk', 'T-1', 'history'], exact: true })
+      })
       await waitFor(() => expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeEnabled())
     })
 
@@ -712,6 +718,48 @@ describe('ReviewPage', () => {
         const enabled = renders.panel.filter((x) => !x.busy)
         expect(enabled.length).toBeGreaterThan(0)
         for (const x of enabled) expect(x.dup).toBe('Five title')
+      })
+
+      it('a failing history refetch after a 409 keeps the buttons disabled and shows the failure', async () => {
+        setup()
+        const client = renderPage()
+        await type()
+        await screen.findByText('Zero title')
+        failHistory = true
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+        expect(await screen.findByText(/Could not reload this risk/)).toBeInTheDocument()
+        for (const name of ['Approve T-1', 'Reject T-1', 'Merge into T-5']) {
+          expect(screen.getByRole('button', { name })).toBeDisabled()
+        }
+        noOldContext()
+        failHistory = false
+        await invalidateRisk(client)
+        await act(async () => {
+          await client.invalidateQueries({ queryKey: ['main', 'demo', 'risk', 'T-1', 'history'], exact: true })
+        })
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
+      })
+
+      it('stays awaiting when the risk lands before the history, until the history lands', async () => {
+        setup()
+        const client = renderPage()
+        await type()
+        await screen.findByText('Zero title')
+        let release: () => void = () => {}
+        historyGate = new Promise<void>((res) => (release = res))
+        failRisk = true
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+        await screen.findByText(/Could not reload this risk/)
+        failRisk = false
+        await invalidateRisk(client) // the risk lands through the effect path, history still pending
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 50))
+        })
+        expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeDisabled()
+        noOldContext()
+        await act(async () => release())
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
+        expect(dup()).toContain('Five title')
       })
 
       it('in the failed state only the failure message shows, not the reloading text', async () => {

@@ -159,4 +159,29 @@ describe('RetireModal', () => {
     await waitFor(() => expect(posts).toHaveLength(2))
     expect(posts[1].body).toEqual({ reason, seen: refetched })
   })
+
+  it('a 409 without current adopts the newer record the page already holds', async () => {
+    const newer = { ...risk, status: 'accepted' } as Risk
+    const client = makeQueryClient()
+    const ui = (r: Risk) => (
+      <MantineProvider>
+        <QueryClientProvider client={client}>
+          <RetireModal reg="main" slug="demo" risk={r} noteMin={20} opened onClose={vi.fn()} />
+        </QueryClientProvider>
+      </MantineProvider>
+    )
+    const { rerender } = render(ui(risk))
+    reply409 = 'no-current'
+    const reason = 'y'.repeat(25)
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: reason } })
+    rerender(ui(newer)) // the page's refetch landed before the dialog was submitted
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    expect(await screen.findByText(/Current status: accepted\./)).toBeInTheDocument()
+    reply409 = null
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1].body).toEqual({ reason, seen: newer })
+  })
 })

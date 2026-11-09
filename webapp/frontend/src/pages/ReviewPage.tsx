@@ -115,9 +115,11 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
   const [shownAt, setShownAt] = useState(0)
   const [conflict, setConflict] = useState<{
     base: number
+    histBase: number
     failed: boolean
   } | null>(null)
   const riskKey = [reg, slug, 'risk', id]
+  const histKey = [...riskKey, 'history']
 
   // Compare a fetched record with the pinned one. Equal: keep the pinned object and take the
   // fresh context. Different: swap it in and show the banner.
@@ -144,7 +146,12 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
   if (fetched.error && !shown) return <Alert color="red">{visible(fetched.error.message)}</Alert>
   if (!shown || !meta.data) return <Loader m="xl" aria-label="Loading" />
 
-  const awaiting = conflict !== null && shownAt <= conflict.base
+  // The history must also have been refetched since the 409, or the old one would show as current.
+  // Reading `dataUpdatedAt` subscribes this component to a refetch that returns equal data, which
+  // the observer would otherwise not report.
+  void history.dataUpdatedAt
+  const histCount = client.getQueryState(histKey)?.dataUpdateCount ?? 0
+  const awaiting = conflict !== null && (shownAt <= conflict.base || histCount <= conflict.histBase)
   const reloadFailed = awaiting && conflict.failed
   const risk = shown.risk
   const isReReview = !!risk.last_approved
@@ -169,20 +176,19 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
         if (current) show({ ...shown, risk: current as Risk })
         setStale(true)
         const seenAt = client.getQueryState(riskKey)?.dataUpdateCount ?? 0
-        setConflict({ base: seenAt, failed: false })
+        const histSeenAt = client.getQueryState(histKey)?.dataUpdateCount ?? 0
+        setConflict({ base: seenAt, histBase: histSeenAt, failed: false })
         // The context (elements, duplicate, DFD) belongs to the old record: reload it before any
         // decision, and keep every button disabled until it is here.
         try {
-          const history = client.refetchQueries({
-            queryKey: [...riskKey, 'history'],
-            exact: true,
-          })
-          await client.refetchQueries({ queryKey: riskKey, exact: true }, { throwOnError: true })
-          await history
+          await Promise.all([
+            client.refetchQueries({ queryKey: histKey, exact: true }, { throwOnError: true }),
+            client.refetchQueries({ queryKey: riskKey, exact: true }, { throwOnError: true }),
+          ])
           // A paused refetch resolves without fetching: only a record newer than the 409 counts.
           if ((client.getQueryState(riskKey)?.dataUpdateCount ?? 0) > seenAt) reconcile(latest())
         } catch {
-          setConflict({ base: seenAt, failed: true })
+          setConflict({ base: seenAt, histBase: histSeenAt, failed: true })
         }
       } else {
         setError(refusalText(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)))

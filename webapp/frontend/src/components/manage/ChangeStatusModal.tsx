@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { apiPath } from '../../api/client'
 import { useAction } from '../../api/queries'
 import type { Meta, Reg, Risk } from '../../api/types'
-import { failure, STALE_TEXT } from './errors'
+import { failure, sameRecord, STALE_TEXT } from './errors'
 
 interface Props {
   reg: Reg
@@ -53,6 +53,7 @@ export function ChangeStatusModal({ reg, slug, risk, meta, opened, onClose }: Pr
       if (f.kind === 'stale') {
         setStale(true)
         if (f.current) setSeen(f.current)
+        else if (!sameRecord(risk, seen)) setSeen(risk) // the page already holds a newer one
         else setAdoptFrom(risk)
         void client.invalidateQueries({ queryKey: [reg, slug] })
       } else {

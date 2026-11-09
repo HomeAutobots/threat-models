@@ -129,6 +129,30 @@ describe('ChangeStatusModal', () => {
     expect(posts[1].body).toEqual({ fields: { status: 'mitigated' }, seen: refetched, reason: '' })
   })
 
+  it('a 409 without current adopts the newer record the page already holds', async () => {
+    const newer = { ...risk, status: 'accepted' } as Risk
+    const client = makeQueryClient()
+    const ui = (r: Risk) => (
+      <MantineProvider env="test">
+        <QueryClientProvider client={client}>
+          <ChangeStatusModal reg="main" slug="demo" risk={r} meta={meta} opened onClose={vi.fn()} />
+        </QueryClientProvider>
+      </MantineProvider>
+    )
+    reply = () => json({ detail: 'x' }, 409)
+    const { rerender } = render(ui(risk))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('combobox', { name: 'Status' }))
+    await user.click(await screen.findByRole('option', { name: 'mitigated' }))
+    rerender(ui(newer)) // the page's refetch landed before the dialog was submitted
+    await user.click(screen.getByRole('button', { name: 'Save status' }))
+    expect(await screen.findByText(/Current status: accepted\./)).toBeInTheDocument()
+    reply = () => json({ risk: newer })
+    await user.click(screen.getByRole('button', { name: 'Save status' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1].body.seen).toEqual(newer)
+  })
+
   it('shows core\'s message, then the Terminal hint, for a human-only or no-run refusal', async () => {
     reply = () => json({ detail: 'approve is human-only and needs an interactive terminal.' }, 422)
     renderModal()

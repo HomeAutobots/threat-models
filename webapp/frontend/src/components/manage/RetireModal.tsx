@@ -6,7 +6,7 @@ import { useAction } from '../../api/queries'
 import type { Reg, Risk } from '../../api/types'
 import { noteLength } from '../../lib/pyStrip'
 import { visible } from '../../lib/visible'
-import { failure, STALE_TEXT } from './errors'
+import { failure, sameRecord, STALE_TEXT } from './errors'
 
 interface Props {
   reg: Reg
@@ -60,6 +60,7 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
       if (f.kind === 'stale') {
         setStale(true)
         if (f.current) setSeen(f.current)
+        else if (!sameRecord(risk, seen)) setSeen(risk) // the page already holds a newer one
         else setAdoptFrom(risk)
         void client.invalidateQueries({ queryKey: [reg, slug] })
       } else {

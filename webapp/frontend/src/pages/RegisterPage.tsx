@@ -43,8 +43,8 @@ export function RegisterPage() {
     return c
   }, [all])
 
-  if (risks.error) return <Alert color="red">{risks.error.message}</Alert>
-  if (meta.error) return <Alert color="red">{meta.error.message}</Alert>
+  if (risks.error) return <Alert color="red">{visible(risks.error.message)}</Alert>
+  if (meta.error) return <Alert color="red">{visible(meta.error.message)}</Alert>
   if (risks.isLoading || !meta.data) return <Loader m="xl" aria-label="Loading" />
 
   const base = `/${reg}/${encodeURIComponent(slug as string)}`

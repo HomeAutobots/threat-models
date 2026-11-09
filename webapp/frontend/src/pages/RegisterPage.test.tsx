@@ -32,12 +32,12 @@ function Where() {
   return <div data-testid="where">{loc.pathname + loc.search}</div>
 }
 
-function renderPage(metaFails = false) {
+function renderPage(metaFails = false, metaDetail = 'meta is down') {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) =>
       url === '/api/meta' && metaFails
-        ? new Response(JSON.stringify({ detail: 'meta is down' }), { status: 422, headers: { 'Content-Type': 'application/json' } })
+        ? new Response(JSON.stringify({ detail: metaDetail }), { status: 422, headers: { 'Content-Type': 'application/json' } })
         : new Response(JSON.stringify(url === '/api/meta' ? meta : url.endsWith('/risks') ? risks : {}), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -83,6 +83,11 @@ describe('RegisterPage', () => {
   it('shows an alert when the metadata fails to load', async () => {
     renderPage(true)
     expect(await screen.findByRole('alert')).toHaveTextContent(/meta is down/)
+  })
+
+  it('escapes control and bidi characters in a metadata error', async () => {
+    renderPage(true, 'meta \u202e down')
+    expect(await screen.findByRole('alert')).toHaveTextContent('meta \\u202e down')
   })
 
   it('counts the tabs, and a retired risk is only under Retired', async () => {
