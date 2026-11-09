@@ -3,6 +3,7 @@ import { Navigate, Outlet, useParams, type RouteObject } from 'react-router'
 import { useSession, useSignedOut } from './api/queries'
 import type { Reg } from './api/types'
 import { AppShell } from './components/AppShell'
+import { EditRiskPage } from './pages/EditRiskPage'
 import { Home } from './pages/Home'
 import { RegisterPage } from './pages/RegisterPage'
 import { ReviewPage } from './pages/ReviewPage'
@@ -45,9 +46,9 @@ export const routes: RouteObject[] = [
           { index: true, element: <Navigate to="register" replace /> },
           { path: 'register', element: <RegisterPage /> },
           { path: 'review', element: <ReviewPage /> },
-          { path: 'risks/new', element: <Placeholder name="New risk" /> },
+          { path: 'risks/new', element: <EditRiskPage mode="add" /> },
           { path: 'risks/:id', element: <RiskPage /> },
-          { path: 'risks/:id/edit', element: <Placeholder name="Edit risk" /> },
+          { path: 'risks/:id/edit', element: <EditRiskPage mode="edit" /> },
           { path: 'dfd', element: <Placeholder name="DFD" /> },
           { path: 'history', element: <Placeholder name="History" /> },
           { path: 'reports', element: <Placeholder name="Reports" /> },

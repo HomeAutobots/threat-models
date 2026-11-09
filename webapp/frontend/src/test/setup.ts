@@ -34,6 +34,12 @@ class IntersectionObserverMock {
 globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver
 globalThis.IntersectionObserver = IntersectionObserverMock as unknown as typeof IntersectionObserver
 window.HTMLElement.prototype.scrollIntoView = vi.fn()
+// Mantine's autosizing Textarea listens for font loading.
+if (!('fonts' in document)) {
+  Object.defineProperty(document, 'fonts', {
+    value: { addEventListener() {}, removeEventListener() {} },
+  })
+}
 
 afterEach(() => {
   cleanup()

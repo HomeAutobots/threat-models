@@ -1,6 +1,6 @@
 import { MantineProvider } from '@mantine/core'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeQueryClient } from '../api/queries'
@@ -10,6 +10,7 @@ import { RiskPage } from './RiskPage'
 const meta = {
   fields: [],
   editable: ['title'],
+  statuses: ['open', 'mitigated'],
   labels: { title: 'Title' },
   stride: {},
   linddun: [],
@@ -94,5 +95,15 @@ describe('RiskPage', () => {
     expect(screen.getByRole('link', { name: 'Edit' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Change status' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retire' })).not.toBeInTheDocument()
+  })
+
+  it('Change status and Retire open their modals', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Change status' }))
+    expect(await screen.findByRole('button', { name: 'Save status' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    expect(await screen.findByLabelText('Reason')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retire T-1' })).toBeDisabled()
   })
 })
