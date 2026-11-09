@@ -42,24 +42,24 @@ function Heading({ s, suffix }: { s: Section; suffix?: ReactNode }) {
   )
 }
 
-function Fields({ fields, display }: { fields: string[]; display: (f: string) => unknown }) {
+function Fields({ fields, display, state }: { fields: string[]; display: (f: string) => unknown; state: string }) {
   return (
     <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 200px) minmax(0, 1fr)', gap: '10px 18px', margin: 0 }}>
       {fields.map((f) => (
-        <FieldRow key={f} field={f} value={display(f)} />
+        <FieldRow key={f} field={f} value={display(f)} state={state} />
       ))}
     </dl>
   )
 }
 
-function FieldRow({ field, value }: { field: string; value: unknown }) {
+function FieldRow({ field, value, state }: { field: string; value: unknown; state: string }) {
   return (
     <>
       <Text component="dt" size="sm" fw={600} c="dimmed">
         {FIELD_LABELS[field] ?? field}
       </Text>
       <dd style={{ margin: 0, maxWidth: '75ch', minWidth: 0 }}>
-        <FieldValue field={field} value={value} />
+        <FieldValue field={field} value={value} reviewState={state} />
       </dd>
     </>
   )
@@ -127,12 +127,12 @@ export function RiskRecord({
         return detail.duplicate ? (
           <DuplicateCompare risk={risk} other={detail.duplicate} meta={meta} />
         ) : (
-          <Fields fields={s.fields} display={display} />
+          <Fields fields={s.fields} display={display} state={risk.review_state} />
         )
       case 'record':
         return (
           <>
-            <Fields fields={s.fields} display={display} />
+            <Fields fields={s.fields} display={display} state={risk.review_state} />
             <Text size="xs" fw={600} c="dimmed" tt="uppercase" mt="md" mb="xs">
               History
             </Text>
@@ -140,7 +140,7 @@ export function RiskRecord({
           </>
         )
       default:
-        return <Fields fields={s.fields} display={display} />
+        return <Fields fields={s.fields} display={display} state={risk.review_state} />
     }
   }
 

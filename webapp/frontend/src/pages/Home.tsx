@@ -3,6 +3,7 @@ import { Navigate, useParams } from 'react-router'
 import { useSystems } from '../api/queries'
 import type { Reg } from '../api/types'
 import { AppShell } from '../components/AppShell'
+import { visible } from '../lib/visible'
 
 /** `/` and `/:reg`: open the register's first system, or say there is none. */
 export function Home({ reg }: { reg: Reg }) {
@@ -13,7 +14,7 @@ export function Home({ reg }: { reg: Reg }) {
   } else if (systems.data && systems.data.length > 0) {
     return <Navigate to={`/${reg}/${encodeURIComponent(systems.data[0].slug)}/register`} replace />
   } else if (systems.isError) {
-    body = <Text c="red">Could not load systems: {systems.error.message}</Text>
+    body = <Text c="red">{visible(`Could not load systems: ${systems.error.message}`)}</Text>
   } else {
     body = <Text>No systems yet. Create one in the terminal with ./tmreg init-system.</Text>
   }

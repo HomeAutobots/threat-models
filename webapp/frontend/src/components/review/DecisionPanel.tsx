@@ -1,10 +1,12 @@
-import { Alert, Button, Card, Group, Stack, Text, Textarea, Title } from '@mantine/core'
+import { Alert, Badge, Button, Card, Group, Stack, Text, Textarea, Title } from '@mantine/core'
 
 export interface DecisionPanelProps {
   riskId: string
   isReReview: boolean
   duplicateId: string | null
   noteMin: number
+  /** The trial register: practice data. */
+  trial?: boolean
   busy: boolean
   /** The risk is being reloaded after a 409; nothing can be decided yet. */
   reloading?: boolean
@@ -31,6 +33,11 @@ export function DecisionPanel(p: DecisionPanelProps) {
       <Title order={2} size="sm" tt="uppercase" c="dimmed" mb="xs" style={{ letterSpacing: '0.06em' }}>
         Your decision
       </Title>
+      {p.trial && (
+        <Badge color="orange" variant="filled" mb="xs">
+          Trial register
+        </Badge>
+      )}
       <Textarea
         label="Review note"
         placeholder="Why you're approving or rejecting this version"

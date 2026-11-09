@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { apiPath } from '../../api/client'
 import { useAction } from '../../api/queries'
 import type { Reg, Risk } from '../../api/types'
+import { visible } from '../../lib/visible'
 import { failure, STALE_TEXT } from './errors'
 
 interface Props {
@@ -21,6 +22,8 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
   // `seen` is the record this dialog acts on; a 409 replaces it with the current one.
   const [seen, setSeen] = useState<Risk>(risk)
   const [stale, setStale] = useState(false)
+  // A 409 without the current record: the page refetches it, and the next one to arrive replaces `seen`.
+  const [adoptFrom, setAdoptFrom] = useState<Risk | null>(null)
   const [reason, setReason] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -28,8 +31,15 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
   const inFlight = useRef(false)
 
   // The note rule is the core's: outer whitespace does not count, and length is in code points.
+  const id = visible(risk.id)
   const length = [...reason.trim()].length
   const ok = length >= noteMin
+
+  // Adjusted while rendering, not in an effect: the refetched record has arrived.
+  if (adoptFrom !== null && risk !== adoptFrom) {
+    setSeen(risk)
+    setAdoptFrom(null)
+  }
 
   const retire = async () => {
     if (inFlight.current) return
@@ -37,6 +47,7 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
     setBusy(true)
     setError(null)
     setStale(false)
+    setAdoptFrom(null)
     try {
       await action.mutateAsync({
         path: apiPath(reg, slug, 'risks', risk.id, 'retire'),
@@ -48,6 +59,7 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
       if (f.kind === 'stale') {
         setStale(true)
         if (f.current) setSeen(f.current)
+        else setAdoptFrom(risk)
         void client.invalidateQueries({ queryKey: [reg, slug] })
       } else {
         setError(f.message)
@@ -60,7 +72,7 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
   }
 
   return (
-    <Modal opened={opened} onClose={busy ? () => {} : onClose} title={`Retire ${risk.id}`} centered>
+    <Modal opened={opened} onClose={busy ? () => {} : onClose} title={`Retire ${id}`} centered>
       <Stack gap="sm">
         {stale && (
           <Alert color="yellow">
@@ -75,7 +87,7 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
         {confirming ? (
           <>
             <Text style={{ overflowWrap: 'anywhere' }}>
-              {`Retire ${risk.id}? It stays in the register under Retired and can't be edited.`}
+              {`Retire ${id}? It stays in the register under Retired and can't be edited.`}
             </Text>
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setConfirming(false)} disabled={busy}>
@@ -109,7 +121,7 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
                 Cancel
               </Button>
               <Button color="red" disabled={!ok} onClick={() => setConfirming(true)} style={{ overflowWrap: 'anywhere' }}>
-                Retire {risk.id}
+                Retire {id}
               </Button>
             </Group>
           </>

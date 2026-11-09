@@ -143,6 +143,24 @@ describe('EditRiskPage', () => {
     expect((await screen.findByTestId('where')).textContent).toBe('/main/demo/review?id=T-1')
   })
 
+  it('Cancel on an edit goes to the risk page', async () => {
+    renderPage('edit', '/main/demo/risks/T-1/edit')
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    expect((await screen.findByTestId('where')).textContent).toBe('/main/demo/risks/T-1')
+  })
+
+  it('Cancel with ?return=review goes back to that review', async () => {
+    renderPage('edit', '/main/demo/risks/T-1/edit?return=review')
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    expect((await screen.findByTestId('where')).textContent).toBe('/main/demo/review?id=T-1')
+  })
+
+  it('Cancel on add goes to the register', async () => {
+    renderPage('add', '/main/demo/risks/new')
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    expect((await screen.findByTestId('where')).textContent).toBe('/main/demo/register')
+  })
+
   it('add marks the human-required fields required and posts fields, then opens review', async () => {
     reply = () => json({ risk: mk({ id: 'T-9', review_state: 'pending' }) })
     renderPage('add', '/main/demo/risks/new')

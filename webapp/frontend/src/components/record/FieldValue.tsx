@@ -29,10 +29,10 @@ function display(value: unknown, field: string): string {
   return String(value)
 }
 
-export function FieldValue({ value, field }: { value: unknown; field: string }) {
+export function FieldValue({ value, field, reviewState }: { value: unknown; field: string; reviewState?: string }) {
   if (field === 'last_approved') {
     return value === null || value === undefined ? (
-      <NotProvided text="None" />
+      <NotProvided text={reviewState === 'pending' ? 'None (new draft)' : 'None (no re-review pending)'} />
     ) : (
       <span style={WRAP_STYLE}>Kept while this re-review is pending</span>
     )

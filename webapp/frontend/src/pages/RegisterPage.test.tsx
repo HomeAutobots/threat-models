@@ -32,11 +32,13 @@ function Where() {
   return <div data-testid="where">{loc.pathname + loc.search}</div>
 }
 
-function renderPage() {
+function renderPage(metaFails = false) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) =>
-      new Response(JSON.stringify(url === '/api/meta' ? meta : url.endsWith('/risks') ? risks : {}), {
+      url === '/api/meta' && metaFails
+        ? new Response(JSON.stringify({ detail: 'meta is down' }), { status: 422, headers: { 'Content-Type': 'application/json' } })
+        : new Response(JSON.stringify(url === '/api/meta' ? meta : url.endsWith('/risks') ? risks : {}), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -67,6 +69,22 @@ beforeEach(() => {
 })
 
 describe('RegisterPage', () => {
+  it('every tab points aria-controls at a real panel', async () => {
+    renderPage()
+    const tabs = await screen.findAllByRole('tab')
+    expect(tabs).toHaveLength(4)
+    for (const t of tabs) {
+      const panel = document.getElementById(t.getAttribute('aria-controls') ?? '')
+      expect(panel).not.toBeNull()
+      expect(panel).toHaveAttribute('role', 'tabpanel')
+    }
+  })
+
+  it('shows an alert when the metadata fails to load', async () => {
+    renderPage(true)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/meta is down/)
+  })
+
   it('counts the tabs, and a retired risk is only under Retired', async () => {
     renderPage()
     expect(await screen.findByRole('tab', { name: /Approved/ })).toHaveTextContent('Approved2')

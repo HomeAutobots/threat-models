@@ -7,10 +7,10 @@ import { ApiError, apiPath } from '../api/client'
 import type { Conflict409, Reg, Risk, RiskDetail } from '../api/types'
 import { ReReviewDiff } from '../components/review/ReReviewDiff'
 import { DecisionPanel } from '../components/review/DecisionPanel'
-import classes from '../components/review/review.module.css'
+import classes from '../components/layout/RecordLayout.module.css'
 import { RiskRecord, visibleSections } from '../components/record/RiskRecord'
 import { SectionOutline } from '../components/record/SectionOutline'
-import { STALE_TEXT } from '../components/manage/errors'
+import { refusalText, STALE_TEXT } from '../components/manage/errors'
 import { visible } from '../lib/visible'
 
 type Decision = 'approve' | 'reject' | 'merge'
@@ -185,7 +185,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
           setConflict({ base: seenAt, failed: true })
         }
       } else {
-        setError(visible(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)))
+        setError(refusalText(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e)))
         reconcile(latest())
       }
     } finally {
@@ -260,6 +260,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
             isReReview={isReReview}
             duplicateId={risk.possible_duplicate_of ? visible(risk.possible_duplicate_of) : null}
             noteMin={meta.data.note_min}
+            trial={reg === 'trial'}
             busy={busy || awaiting}
             reloading={awaiting && !reloadFailed}
             error={error ?? (reloadFailed ? 'Could not reload this risk. Reload the page before deciding.' : null)}

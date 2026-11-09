@@ -5,6 +5,23 @@ import { DecisionPanel } from './DecisionPanel'
 
 const NOTE = 'x'.repeat(20)
 
+function baseProps() {
+  return {
+    riskId: 'T-37',
+    isReReview: false,
+    duplicateId: null as string | null,
+    noteMin: 20,
+    busy: false,
+    error: null as string | null,
+    note: '',
+    onNote: vi.fn(),
+    onApprove: vi.fn(),
+    onReject: vi.fn(),
+    onMerge: vi.fn(),
+    onEdit: vi.fn(),
+  }
+}
+
 function renderPanel(over: Partial<Parameters<typeof DecisionPanel>[0]> = {}) {
   const props = {
     riskId: 'T-37',
@@ -55,6 +72,14 @@ describe('DecisionPanel', () => {
     expect(screen.getByRole('button', { name: 'Approve T-37' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Reject T-37' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Merge into T-33' })).toBeDisabled()
+  })
+
+  it('shows a Trial register badge only in trial', () => {
+    const { unmount } = render(<MantineProvider><DecisionPanel {...baseProps()} trial /></MantineProvider>)
+    expect(screen.getByText('Trial register')).toBeInTheDocument()
+    unmount()
+    render(<MantineProvider><DecisionPanel {...baseProps()} /></MantineProvider>)
+    expect(screen.queryByText('Trial register')).not.toBeInTheDocument()
   })
 
   it('re-review labels', () => {

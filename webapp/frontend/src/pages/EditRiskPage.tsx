@@ -1,6 +1,6 @@
 import { Alert, Button, Card, Group, Loader, Stack, Textarea, Title } from '@mantine/core'
 import { useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { apiPath } from '../api/client'
 import { useAction, useMeta, useRisk } from '../api/queries'
 import type { Meta, Reg, Risk, RiskWriteResponse } from '../api/types'
@@ -48,6 +48,7 @@ function initialValues(meta: Meta, risk: Risk | null): FormValues {
 
 function Form({ mode, reg, slug, meta, seen: initialSeen }: FormProps) {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const action = useAction(reg, slug)
   // `seen` is the record the owner is editing from. It changes only when a 409 hands us a newer one.
   const [seen, setSeen] = useState<Risk | null>(initialSeen)
@@ -59,6 +60,14 @@ function Form({ mode, reg, slug, meta, seen: initialSeen }: FormProps) {
   const inFlight = useRef(false)
 
   const base = `/${reg}/${encodeURIComponent(slug)}`
+  // Cancel stays in the app: back to the risk, to its review when that is where the owner came from,
+  // or to the register for a new risk.
+  const cancelTo =
+    mode === 'add'
+      ? `${base}/register`
+      : params.get('return') === 'review'
+        ? `${base}/review?id=${encodeURIComponent(seen!.id)}`
+        : `${base}/risks/${encodeURIComponent(seen!.id)}`
   const retired = seen !== null && seen.review_state === 'approved' && seen.status === 'retired'
   const rejected = seen !== null && seen.review_state === 'rejected'
   if (retired || rejected) {
@@ -178,7 +187,7 @@ function Form({ mode, reg, slug, meta, seen: initialSeen }: FormProps) {
           <Button type="submit" disabled={busy || nothingToSave}>
             Save
           </Button>
-          <Button variant="default" disabled={busy} onClick={() => navigate(-1)}>
+          <Button variant="default" disabled={busy} onClick={() => navigate(cancelTo)}>
             Cancel
           </Button>
         </Group>

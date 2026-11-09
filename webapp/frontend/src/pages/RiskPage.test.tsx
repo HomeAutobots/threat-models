@@ -19,13 +19,15 @@ const meta = {
 
 let risk: Risk
 
-function renderPage() {
+function renderPage(reg = 'main', metaFails = false) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
       const body =
         url === '/api/meta'
-          ? meta
+          ? metaFails
+            ? undefined
+            : meta
           : url.endsWith('/history')
             ? []
             : {
@@ -35,13 +37,14 @@ function renderPage() {
                 editors_since_approval: [],
                 duplicate: null,
               }
+      if (body === undefined) return new Response(JSON.stringify({ detail: 'meta is down' }), { status: 422, headers: { 'Content-Type': 'application/json' } })
       return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }),
   )
   render(
     <MantineProvider>
       <QueryClientProvider client={makeQueryClient()}>
-        <MemoryRouter initialEntries={['/main/demo/risks/T-1']}>
+        <MemoryRouter initialEntries={[`/${reg}/demo/risks/T-1`]}>
           <Routes>
             <Route path="/:reg/:slug/risks/:id" element={<RiskPage />} />
           </Routes>
@@ -104,6 +107,22 @@ describe('RiskPage', () => {
     expect(screen.getByRole('link', { name: 'Edit' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Change status' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retire' })).not.toBeInTheDocument()
+  })
+
+  it('shows a Trial register badge on the action panel in trial only', async () => {
+    renderPage('trial')
+    expect(await screen.findByText('Trial register')).toBeInTheDocument()
+  })
+
+  it('has no trial badge in main', async () => {
+    renderPage()
+    await screen.findByRole('link', { name: 'Edit' })
+    expect(screen.queryByText('Trial register')).not.toBeInTheDocument()
+  })
+
+  it('shows an alert when the metadata fails to load', async () => {
+    renderPage('main', true)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/meta is down/)
   })
 
   it('Change status and Retire open their modals', async () => {
