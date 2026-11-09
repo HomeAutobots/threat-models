@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from helpers import (SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
-                     make_registry, session, start, write_model)
+                     make_registry, seed_dfd_era, session, start, write_dfd, write_model)
 from tmreg import c4
 from tmreg.core import RegistryError, StaleRecord
 
@@ -42,8 +42,15 @@ def with_container(text: str, cid: str) -> str:
 
 
 class C4CoreTest(TmpTestCase):
-    def reg(self, **kw):
-        return make_registry(self.tmp, **kw)
+    def reg(self, *, dfd=True, **kw):
+        """A register from before the model: dfd.md, approved as DFD-1 unless dfd=False, and no
+        workspace.dsl yet."""
+        reg = make_registry(self.tmp, approve=False, **kw)
+        (reg.root / "systems/demo/workspace.dsl").unlink()
+        write_dfd(reg, "demo")
+        if dfd:
+            seed_dfd_era(reg, "demo")
+        return reg
 
     def test_sample_is_clean(self):
         self.assertEqual(c4.problems(c4.parse(SAMPLE_WORKSPACE)), [])
@@ -149,7 +156,7 @@ class C4CoreTest(TmpTestCase):
 
     def test_reuse_counts_the_sibling_register(self):
         real = self.reg()
-        trial = make_registry(self.tmp, root=real.root, trial=True)
+        trial = self.reg(root=real.root, trial=True)
         c9 = with_container(TEXT, "C9")
         self.assertEqual(c4.problems(c4.parse(c9.encode())), [])
         write_model(trial, "demo", c9.encode())
@@ -218,7 +225,7 @@ class C4CoreTest(TmpTestCase):
 
     def _pair(self):
         real = self.reg()
-        return real, make_registry(self.tmp, root=real.root, trial=True)
+        return real, self.reg(root=real.root, trial=True)
 
     def _trial_bytes(self, reg):
         p = reg.root / "registry" / "trial.db"
@@ -277,7 +284,7 @@ class C4CoreTest(TmpTestCase):
         self.assertTrue(p["warnings"][0].startswith(f"{live} cites TB1"))
 
     def test_old_dfd_boundary_stays_used_after_a_model_approval(self):
-        reg = self.reg(approve=False)
+        reg = self.reg(dfd=False)
         dfd = SAMPLE_DFD.replace(b"| TB1 | Internet to edge | WAF |\n",
                                  b"| TB1 | Internet to edge | WAF |\n| TB2 | Edge to cloud | SG |\n")
         (reg.root / "systems/demo/dfd.md").write_bytes(dfd)

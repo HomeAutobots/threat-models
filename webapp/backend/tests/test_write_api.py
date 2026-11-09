@@ -99,6 +99,8 @@ def test_reject_merge_retire(client, human, reg):
 
 
 def test_dfd_approve_and_stale_sha(client, human, project, reg):
+    helpers.write_dfd(reg, "demo")  # the DFD endpoints stay until the C4 API replaces them
+    helpers.seed_dfd_era(reg, "demo")
     path = project / "systems" / "demo" / "dfd.md"
     path.write_bytes(path.read_bytes() + b"\nA change.\n")
     sha = client.get("/api/main/systems/demo/dfd").json()["preview"]["sha256"]

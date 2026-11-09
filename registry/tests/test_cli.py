@@ -6,7 +6,8 @@ import sqlite3
 import unittest
 from unittest import mock
 
-from helpers import TmpTestCase, ai_fields, human_terminal, make_registry, start
+from helpers import (TmpTestCase, ai_fields, human_terminal, make_registry, seed_dfd_era,
+                     seed_dfd_risk, start, write_dfd)
 from tmreg import cli, ledger, model, report
 
 NOTE = "Checked against the DFD and the evidence."
@@ -17,6 +18,14 @@ class CliTest(TmpTestCase):
         super().setUp()
         self.reg = make_registry(self.tmp)
         self.root = self.reg.root
+
+    def dfd_era(self):
+        """Switch to a register from before the C4 model: SAMPLE_DFD in dfd.md, approved as DFD-1,
+        and no model approval. The dfd commands stay until Task 9 replaces them."""
+        self.reg = make_registry(self.tmp / "dfd", approve=False)
+        self.root = self.reg.root
+        write_dfd(self.reg, "demo")
+        seed_dfd_era(self.reg, "demo")
 
     def run_cli(self, *argv, tty=False, inputs=(), env=None):
         """env: variables to set for this call only, after CLAUDECODE has been dropped."""
@@ -243,6 +252,8 @@ class CliTest(TmpTestCase):
         code, _, _ = self.run_cli("retire", "demo", "T-01", "--reason", NOTE, tty=True, inputs=["T-01"])
         self.assertEqual((code, self.reg.get_risk("demo", "T-01")["status"]), (0, "retired"))
         # dfd approve: an unchanged DFD is refused before the preview and the prompts
+        write_dfd(self.reg, "demo")
+        seed_dfd_era(self.reg, "demo")
         code, out, err = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
         self.assertEqual((code, out), (1, ""))
         self.assertIn("already approved", err)
@@ -254,10 +265,12 @@ class CliTest(TmpTestCase):
         self.assertEqual((code, self.reg.dfd_status("demo").state), (0, "current"))
 
     def test_dfd_approve_unchanged_is_refused_before_any_prompt(self):  # I1
+        self.dfd_era()
         code, out, err = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[])
         self.assertEqual((code, out, err), (1, "", "tmreg: already approved as DFD-1\n"))
 
     def test_dfd_approve_refuses_dfd_changed_between_preview_and_confirm(self):  # I1
+        self.dfd_era()
         path = self.root / "systems/demo/dfd.md"
         path.write_bytes(path.read_bytes() + b"\nThe version the owner reads.\n")
 
@@ -319,6 +332,7 @@ class CliTest(TmpTestCase):
         self.assertEqual(self.run_cli("verify", "demo")[0], 0)
 
     def test_run_start_dfd_status_runs_history(self):
+        self.dfd_era()
         code, out, _ = self.run_cli("run", "start", "demo")
         lines = out.splitlines()
         self.assertEqual(len(lines[0].split()), 1)
@@ -344,13 +358,14 @@ class CliTest(TmpTestCase):
                                      "(evaluation mode)"])
 
     def test_dfd_check_prints_preview_and_ok_without_writing(self):
+        self.dfd_era()
         code, out, err = self.run_cli("dfd", "check", "demo")
         self.assertEqual((code, err), (0, ""))
         lines = out.splitlines()
         self.assertEqual(lines[0], "version: 1.0")
         self.assertRegex(lines[1], r"^sha256: [0-9a-f]{64}$")
         self.assertEqual(lines[2:], ["ids: E=1 P=2 D=1 F=3 TB=1", "added: none", "removed: none", "ok"])
-        self.ai_add()  # T-01 cites P2 and F2
+        seed_dfd_risk(self.reg, "T-01", ["P2", "F2"])  # add needs a model approval now
         path = self.root / "systems/demo/dfd.md"
         path.write_text(path.read_text().replace("| F2 | P1 | P2 (via CDN) | REST |\n", "")
                         .replace("| D1 | DB | Data store |\n", "| D1 | DB | Data store |\n| D2 | Cache | Data store |\n"))
@@ -362,6 +377,7 @@ class CliTest(TmpTestCase):
             "warning: T-01 cites F2, which this DFD no longer has", "ok"])
         self.assertEqual(len(self.reg.history("demo")), before)  # read-only
         fresh = make_registry(self.tmp / "fresh", approve=False)
+        write_dfd(fresh, "demo")
         self.root = fresh.root
         code, out, _ = self.run_cli("dfd", "check", "demo")
         self.assertEqual(out.splitlines()[3:], ["added: (no approved DFD yet)", "removed: none", "ok"])
@@ -374,6 +390,7 @@ class CliTest(TmpTestCase):
         self.assertEqual(err, "tmreg: dfd.md has no '| DFD version | x.y |' row\n")
 
     def test_dfd_gate_never_prints_raw_escape_codes(self):
+        self.dfd_era()
         path = self.root / "systems/demo/dfd.md"
         path.write_text(path.read_text().replace("| DFD version | 1.0 |",
                                                  "| DFD version | 1.1\x1b[8m |"))

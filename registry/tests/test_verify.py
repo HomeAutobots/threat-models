@@ -1,4 +1,4 @@
-from helpers import TmpTestCase, ai_fields, make_registry, session, start
+from helpers import TmpTestCase, ai_fields, make_registry, seed_dfd_era, session, start
 from tmreg.core import RegistryError
 
 
@@ -7,7 +7,7 @@ class VerifyTest(TmpTestCase):
         reg = make_registry(self.tmp)
         run = start(reg)
         self.rid = reg.add_risk("demo", ai_fields(), run_id=run)["id"]
-        reg.approve(session(), "demo", self.rid, "Confirmed on F2 against the design doc.")
+        reg.approve(session(), "demo", self.rid, "Confirmed on R2 against the design doc.")
         return reg
 
     def test_clean_registry_verifies(self):
@@ -74,11 +74,14 @@ class VerifyTest(TmpTestCase):
         reg.conn.commit()
         self.assertIn("sequence MODEL is behind MODEL-3", reg.verify("demo"))
 
-    def test_detects_schema_version_and_dfd_sequence(self):
+    def test_detects_schema_version_and_approval_sequences(self):
         reg = self._reg()
+        seed_dfd_era(reg, "demo")  # verify accepts both eras' approvals
+        self.assertEqual(reg.verify("demo"), [])
         reg.conn.execute("UPDATE meta SET value='9' WHERE key='schema_version'")
-        reg.conn.execute("UPDATE demo__sequences SET next=1 WHERE prefix='DFD'")
+        reg.conn.execute("UPDATE demo__sequences SET next=1 WHERE prefix IN ('DFD', 'MODEL')")
         reg.conn.commit()
         problems = reg.verify("demo")
         self.assertIn("schema_version is 9, expected 2", problems)
         self.assertIn("sequence DFD is behind DFD-1", problems)
+        self.assertIn("sequence MODEL is behind MODEL-1", problems)

@@ -13,6 +13,19 @@ def risk(reg):
     return reg.add_risk("demo", helpers.ai_fields(), run_id=run)
 
 
+@pytest.fixture
+def dfd_era(reg):
+    """dfd.md and DFD-1, for the DFD endpoints, which stay until the C4 API replaces them."""
+    helpers.write_dfd(reg, "demo")
+    helpers.seed_dfd_era(reg, "demo")
+
+
+@pytest.fixture
+def dfd_risk(reg, dfd_era):
+    """T-01 drafted against DFD-1, citing P2 and F2 (add needs a model approval now)."""
+    return helpers.seed_dfd_risk(reg, "T-01", ["P2", "F2"])
+
+
 def test_meta_values(client):
     meta = client.get("/api/meta").json()
     assert meta["note_min"] == 20
@@ -50,7 +63,7 @@ def test_risks_list(client, risk):
     assert [r["id"] for r in rows] == ["T-01"]
 
 
-def test_risk_detail_element_details(client, risk):
+def test_risk_detail_element_details(client, dfd_risk):
     body = client.get("/api/main/systems/demo/risks/T-01").json()
     assert body["risk"]["id"] == "T-01"
     assert body["elements"]["P2"] == {"name": "Gateway", "type": "Process", "description": ""}
@@ -60,7 +73,7 @@ def test_risk_detail_element_details(client, risk):
     assert isinstance(body["editors_since_approval"], list)
 
 
-def test_missing_ids_are_null(client, project, risk):
+def test_missing_ids_are_null(client, project, dfd_risk):
     path = project / "systems" / "demo" / "dfd.md"
     text = path.read_text()
     path.write_text("\n".join(l for l in text.splitlines() if not l.startswith("| F2 ")) + "\n")
@@ -92,7 +105,7 @@ def test_history_and_verify(client, risk):
     assert client.get("/api/main/systems/demo/verify").json() == {"problems": []}
 
 
-def test_dfd_endpoint(client):
+def test_dfd_endpoint(client, dfd_era):
     body = client.get("/api/main/systems/demo/dfd").json()
     assert body["status"]["state"] == "current"
     assert body["approvals"][0]["id"] == "DFD-1"

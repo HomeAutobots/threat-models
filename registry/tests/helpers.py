@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tmreg import db, ledger
 from tmreg.core import Registry, ReviewerSession
 
 # Copied from tests/test_dfd.py (the final, strict-parser fixture). The mermaid fence holds a
@@ -138,6 +139,9 @@ flowchart LR
 - Keep it in the repository.
 """
 
+# SAMPLE_DFD's IDs by kind, as dfd_approve would record them. seed_dfd_era writes them.
+SAMPLE_DFD_IDS = {"E": ["E1"], "P": ["P1", "P2"], "D": ["D1"], "F": ["F1", "F2", "F3"], "TB": ["TB1"]}
+
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_WORKSPACE = (FIXTURES / "c4" / "sample.dsl").read_bytes()
 
@@ -169,7 +173,7 @@ def make_project(tmp: Path) -> Path:
 
 def make_registry(tmp, *, slug="demo", approve=True, trial=False, legacy=False,
                   root: Path | None = None) -> Registry:
-    """A registry with one system and SAMPLE_DFD; approved as DFD-1 unless approve=False.
+    """A registry with one system and SAMPLE_WORKSPACE; approved as MODEL-1 unless approve=False.
 
     With root, reuse that project (for example, a trial database beside a real one).
     """
@@ -182,9 +186,9 @@ def make_registry(tmp, *, slug="demo", approve=True, trial=False, legacy=False,
     reg = Registry(root, trial=trial)
     _OPEN.append(reg)
     reg.init_system(slug, "Demo")
-    (root / "systems" / slug / "dfd.md").write_bytes(SAMPLE_DFD)
+    write_model(reg, slug)
     if approve:
-        reg.dfd_approve(session(), slug, "Checked against the DFD checklist.")
+        approve_model(reg, slug)
     return reg
 
 
@@ -196,6 +200,44 @@ def approve_model(reg: Registry, slug: str, note: str = "Checked against the DFD
     """Approve the current workspace.dsl, bound to its own sha256."""
     data = (reg.root / "systems" / slug / "workspace.dsl").read_bytes()
     return reg.c4_approve(session(), slug, note, expected_sha256=hashlib.sha256(data).hexdigest())
+
+
+def write_dfd(reg: Registry, slug: str, data: bytes = SAMPLE_DFD) -> None:
+    """For the DFD commands and endpoints, which stay until the DFD code is removed."""
+    (reg.root / "systems" / slug / "dfd.md").write_bytes(data)
+
+
+def seed_dfd_era(reg: Registry, slug: str = "demo") -> dict:
+    """Record DFD-1 (SAMPLE_DFD's IDs) the way dfd_approve did, without dfd.md: a register from
+    before the C4 model, for adoption and DFD-era tests. Bumps the DFD sequence, so verify stays clean."""
+    with reg.conn:
+        ledger.write_row(reg.conn, slug, "dfd_approvals", "DFD-1", {
+            "version": "1.0", "sha256": hashlib.sha256(SAMPLE_DFD).hexdigest(),
+            "ids": {k: list(v) for k, v in SAMPLE_DFD_IDS.items()},
+            "approved_by": "Test Reviewer", "approved_at": db.now(),
+            "note": "Checked against the DFD checklist.",
+        }, op="dfd-approve", actor="human:Test Reviewer")
+        reg.conn.execute(f"UPDATE {db.table(slug, 'sequences')} SET next = MAX(next, 2) "
+                         "WHERE prefix = 'DFD'")
+    return reg.dfd_approvals(slug)[0]
+
+
+def seed_dfd_risk(reg: Registry, risk_id: str, elements: list[str], *, slug: str = "demo",
+                  **fields) -> dict:
+    """A risk drafted against DFD-1, written through the ledger as add_risk once wrote it (add now
+    needs a model approval). fields override the row, e.g. review_state="approved". Bumps the
+    risk's sequence, so verify stays clean."""
+    at = db.now()
+    actor = fields.get("drafted_by", "ai:20261101-01")
+    row = {**ai_fields(elements=elements), "status": "open", "review_state": "pending",
+           "drafted_by": actor, "dfd_approval_id": "DFD-1", "detail_complete": 1,
+           "created_at": at, "updated_at": at, **fields}
+    prefix, n = risk_id.rsplit("-", 1)
+    with reg.conn:
+        ledger.write_row(reg.conn, slug, "risks", risk_id, row, op="add", actor=actor)
+        reg.conn.execute(f"UPDATE {db.table(slug, 'sequences')} SET next = MAX(next, ?) "
+                         "WHERE prefix = ?", (int(n) + 1, prefix))
+    return reg.get_risk(slug, risk_id)
 
 
 @contextlib.contextmanager
@@ -213,26 +255,27 @@ def session() -> ReviewerSession:
 
 
 def ai_fields(**overrides) -> dict:
-    """A valid AI-drafted candidate against SAMPLE_DFD (catalog-style T-17: P2 trusts forwarded headers)."""
+    """A valid AI-drafted candidate against SAMPLE_WORKSPACE (catalog-style T-17: C2 trusts
+    forwarded headers)."""
     base = {
-        "title": "P2 trusts client-supplied forwarded headers",
-        "elements": ["P2", "F2"],
+        "title": "C2 trusts client-supplied forwarded headers",
+        "elements": ["C2", "R2"],
         "category": "T",
         "method": "stride-per-element",
         "origin": "threat-model",
         "origin_ref": "tm-model run",
-        "description": ("P2 trusts the X-Forwarded-For and X-Forwarded-Host headers that arrive on F2, "
+        "description": ("C2 trusts the X-Forwarded-For and X-Forwarded-Host headers that arrive on R2, "
                         "so a caller can change routing or its apparent source address."),
-        "attack_scenario": ("An unauthenticated internet caller sends requests through P1 with forged "
-                            "forwarded headers; P2 uses them for routing and rate-limit keys, so the "
+        "attack_scenario": ("An unauthenticated internet caller sends requests through C1 with forged "
+                            "forwarded headers; C2 uses them for routing and rate-limit keys, so the "
                             "caller reaches internal routes and evades per-source limits. Path: direct."),
         "impact": "Requests reach internal-only routes; per-source rate limits and audit attribution fail.",
         "likelihood": "medium",
-        "likelihood_rationale": "Header spoofing needs no credentials, and P1 forwards headers unchanged.",
+        "likelihood_rationale": "Header spoofing needs no credentials, and C1 forwards headers unchanged.",
         "implemented_controls": "none identified",
-        "recommended_controls": "Strip and re-set forwarded headers at P1; P2 trusts them only from P1.",
-        "assumptions": "P1 does not already normalize forwarded headers.",
-        "evidence": "dfd.md v1.0 (F2, P2); guide catalog T-17.",
+        "recommended_controls": "Strip and re-set forwarded headers at C1; C2 trusts them only from C1.",
+        "assumptions": "C1 does not already normalize forwarded headers.",
+        "evidence": "workspace.dsl v1.0 (C2, R2); guide catalog T-17.",
         "ai_confidence": "medium",
     }
     return {**base, **overrides}

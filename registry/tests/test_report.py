@@ -7,7 +7,7 @@ from helpers import TmpTestCase, ai_fields, make_registry, session, start
 from tmreg import report
 from tmreg.core import RegistryError
 
-NOTE = "Confirmed on F2 against the design doc."
+NOTE = "Confirmed on R2 against the design doc."
 
 
 class ReportTest(TmpTestCase):
@@ -51,7 +51,7 @@ class ReportTest(TmpTestCase):
         self.assertIn("Mallory", both)
         self.assertIn("(PENDING)", both)
         self.assertEqual(both.count("### T-01"), 2)
-        self.assertLess(both.index("### T-01: P2 trusts client-supplied forwarded headers (re-review"),
+        self.assertLess(both.index("### T-01: C2 trusts client-supplied forwarded headers (re-review"),
                         both.index("headers (PENDING)"))
 
     def test_header_and_markers(self):
@@ -77,7 +77,7 @@ class ReportTest(TmpTestCase):
         out = self.reg.report("demo", "csv")
         rows = list(csv.reader(io.StringIO(out)))
         self.assertEqual(rows[0], report.CSV_HEADER)
-        self.assertEqual(rows[1][1], "P2;F2")
+        self.assertEqual(rows[1][1], "C2;R2")
 
     def test_csv_marks_re_review_and_pending(self):
         self.approved()
@@ -165,7 +165,7 @@ class ReportTest(TmpTestCase):
         self.approved()
         md = self.reg.report("demo")
         cells = re.split(r"(?<!\\)\|", next(l for l in md.splitlines() if l.startswith("| T-01 |")))
-        self.assertEqual(cells[4].strip(), "P2 trusts client-supplied forwarded headers")
+        self.assertEqual(cells[4].strip(), "C2 trusts client-supplied forwarded headers")
         self.assertIn("| Detail complete | yes |", md)
         (self.tmp / "legacy").mkdir()
         reg = make_registry(self.tmp / "legacy", legacy=True)
