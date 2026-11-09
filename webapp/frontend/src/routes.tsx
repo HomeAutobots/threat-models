@@ -4,7 +4,9 @@ import { useSession, useSignedOut } from './api/queries'
 import type { Reg } from './api/types'
 import { AppShell } from './components/AppShell'
 import { Home } from './pages/Home'
+import { RegisterPage } from './pages/RegisterPage'
 import { ReviewPage } from './pages/ReviewPage'
+import { RiskPage } from './pages/RiskPage'
 import { SignedOut } from './pages/SignedOut'
 
 function Root() {
@@ -41,10 +43,10 @@ export const routes: RouteObject[] = [
         element: <SystemLayout />,
         children: [
           { index: true, element: <Navigate to="register" replace /> },
-          { path: 'register', element: <Placeholder name="Register" /> },
+          { path: 'register', element: <RegisterPage /> },
           { path: 'review', element: <ReviewPage /> },
           { path: 'risks/new', element: <Placeholder name="New risk" /> },
-          { path: 'risks/:id', element: <Placeholder name="Risk" /> },
+          { path: 'risks/:id', element: <RiskPage /> },
           { path: 'risks/:id/edit', element: <Placeholder name="Edit risk" /> },
           { path: 'dfd', element: <Placeholder name="DFD" /> },
           { path: 'history', element: <Placeholder name="History" /> },
