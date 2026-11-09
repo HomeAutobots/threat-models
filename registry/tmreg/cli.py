@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from . import config, core
+from . import c4, config, core
 from .core import Registry, RegistryError, ReviewerSession, StaleRecord
 from .model import EDITABLE_FIELDS, LABELS, NOTE_MIN, REVIEW_STATES, RISK_FIELDS
 
@@ -86,11 +86,11 @@ def format_risk(reg: Registry, slug: str, risk: dict, editors=()) -> str:
         changed = [f for f in EDITABLE_FIELDS if snap.get(f) != risk.get(f)]
         for f in changed:
             lines += [f"{LABELS[f]}:", f"  - {_fmt(snap.get(f))}", f"  + {_fmt(risk.get(f))}"]
-    latest = reg.dfd_status(slug).latest
-    drafted = risk.get("dfd_approval_id")
-    if latest and drafted and drafted != latest["id"]:
+    moved = reg.moved_on(slug, risk)
+    if moved["moved_on"]:
         lines.append("")
-        lines.append(f"DFD has moved on: drafted against {_fmt(drafted)}, latest is {latest['id']}")
+        lines.append(f"Model has moved on: written against {moved['written_against']}, "
+                     f"latest is {moved['latest']} (changed: {', '.join(moved['changed'])})")
     return "\n".join(lines)
 
 
@@ -298,63 +298,127 @@ def cmd_runs(args, reg, root) -> int:
 
 def cmd_run_start(args, reg, root) -> int:
     run = reg.start_run(args.slug)
-    status = reg.dfd_status(args.slug)
-    dfd_line = "none" if status.latest is None else f"{status.latest['id']} ({status.state})"
+    latest = reg.c4_status(args.slug)
+    model_line = "none" if latest.latest is None else f"{latest.latest['id']} ({latest.state})"
     print(run["run_id"])
     print(f"methods: {run['methods']}")
-    print(f"dfd: {dfd_line}")
+    print(f"model: {model_line}")
     if run["evaluation"]:
         print("note: trial register is empty; the catalog is withheld (evaluation mode)")
     return 0
 
 
-def cmd_dfd_status(args, reg, root) -> int:
-    status = reg.dfd_status(args.slug)
+DFD_MOVED = "dfd was replaced by c4: use ./tmreg c4 status|check|approve <slug>"
+
+
+def cmd_dfd_moved(args, reg, root) -> int:
+    print(f"tmreg: {DFD_MOVED}", file=sys.stderr)
+    return 2
+
+
+def cmd_c4_status(args, reg, root) -> int:
+    status = reg.c4_status(args.slug)
     print(f"state: {status.state}")
     if status.latest:
         print(f"latest: {status.latest['id']} (version {visible(status.latest['version'])})")
     return 0
 
 
-def cmd_dfd_check(args, reg, root) -> int:
-    """Read-only: parse dfd.md and show what an approval would record. Prints ok last."""
-    preview = reg.dfd_preview(args.slug)
-    parsed = preview["dfd"]
-    print(f"version: {visible(parsed.version)}")
-    print(f"sha256: {parsed.sha256}")
-    print("ids: " + " ".join(f"{k}={len(v)}" for k, v in parsed.ids.items()))
-    if reg.dfd_status(args.slug).latest is None:
-        print("added: (no approved DFD yet)")
+def _c4_problem_lines(preview: dict) -> list[str]:
+    """One `problem:` line per content problem, parse error, or reused ID."""
+    lines = [f"problem: {visible(p)}" for p in preview["problems"]]
+    if preview["error"]:
+        lines.append(f"problem: {visible(preview['error'])}")
+    for iid in preview["reused"]:
+        kind = re.match(r"[A-Z]+", iid).group(0)
+        line = (f"problem: {iid} was used by an earlier approval; next free {kind}: "
+                f"{preview['next_ids'].get(kind, '?')}")
+        if iid in preview["reused_dfd"]:
+            line += f'; if it is the same boundary, add "tm.was" "{iid}" to it'
+        lines.append(line)
+    return lines
+
+
+def _c4_changed(changed: dict) -> str:
+    return ", ".join(f"{i} ({'+'.join(fields)})" for i, fields in changed.items()) or "none"
+
+
+def _c4_summary(slug: str, reg: Registry, preview: dict) -> None:
+    """The lines shared by `c4 check` and `c4 approve`, up to the warnings."""
+    model = preview["model"]
+    if preview["sha256"] is None:
+        return
+    if model is not None:
+        print(f"version: {visible(model.version)}")
+    print(f"sha256: {preview['sha256']}")
+    if model is None:
+        return
+    ids = model.ids()
+    print("ids: " + " ".join(f"{k}={len(ids[k])}" for k in c4.KINDS))
+    if reg.c4_status(slug).latest is None:
+        print("added: (no approved model yet)")
     else:
         print(f"added: {', '.join(preview['added']) or 'none'}")
     print(f"removed: {', '.join(preview['removed']) or 'none'}")
+    print(f"changed: {_c4_changed(preview['changed'])}")
+    print("next: " + " ".join(preview["next_ids"].values()))
     for w in preview["warnings"]:
         print(f"warning: {visible(w)}")
+
+
+def _c4_adoption_lines(preview: dict) -> list[str]:
+    adoption = preview["adoption"]
+    if adoption is None:
+        return []
+    lines = [f"adoption: {g['id']} is cited by {', '.join(g['cited_by'])} and claimed by nothing"
+             for g in adoption["gaps"]]
+    lines += [f"adoption: {rid} awaits re-review" for rid in adoption["pending_rereviews"]]
+    return lines
+
+
+def _c4_refuse(lines: list[str]) -> None:
+    for line in lines:
+        print(line)
+    raise RegistryError(f"{len(lines)} problem(s); fix workspace.dsl and check again")
+
+
+def cmd_c4_check(args, reg, root) -> int:
+    """Read-only: parse workspace.dsl and show what an approval would record. Prints ok last."""
+    preview = reg.c4_preview(args.slug)
+    _c4_summary(args.slug, reg, preview)
+    for line in _c4_adoption_lines(preview):
+        print(visible(line))
+    problems = _c4_problem_lines(preview)
+    if problems:
+        _c4_refuse(problems)
     print("ok")
     return 0
 
 
-def cmd_dfd_approve(args, reg, root) -> int:
-    session = human_session(reg, "dfd approve")
+def cmd_c4_approve(args, reg, root) -> int:
+    session = human_session(reg, "c4 approve")
     slug = args.slug
-    preview = reg.dfd_preview(slug)
-    parsed = preview["dfd"]
-    latest = reg.dfd_status(slug).latest
-    if latest is not None and latest["sha256"] == parsed.sha256:  # before any prompt
+    preview = reg.c4_preview(slug)
+    latest = reg.c4_status(slug).latest
+    # Refused before any prompt: an unchanged file, then one with problems or reused IDs.
+    if latest is not None and latest["sha256"] == preview["sha256"]:
         raise RegistryError(f"already approved as {latest['id']}")
-    print(f"version: {visible(parsed.version)}")
-    print(f"sha256: {parsed.sha256}")
-    print(f"If an AI run drafted this DFD, check that this sha256 matches the one quoted in "
-          f"systems/{slug}/runs/<run-id>/dfd-check.md.")
-    print("counts: " + ", ".join(f"{k} {len(v)}" for k, v in parsed.ids.items()))
-    print(f"added: {', '.join(preview['added']) or EMPTY}")
-    print(f"removed: {', '.join(preview['removed']) or EMPTY}")
-    for w in preview["warnings"]:
-        print(f"warning: {visible(w)}")
+    _c4_summary(slug, reg, preview)
+    problems = _c4_problem_lines(preview)
+    if problems:
+        _c4_refuse(problems)
+    print(f"If an AI run drafted this model, check that this sha256 matches the one quoted in "
+          f"systems/{slug}/runs/<run-id>/model-check.md.")
+    adoption = preview["adoption"]
+    blockers = _c4_adoption_lines(preview)
+    if blockers:
+        _c4_refuse(blockers)
+    if adoption is not None:
+        print(f"adoption: {len(adoption['rewrites'])} risk(s) will move to the new IDs")
     note = ask_note("Approval note: ")
     confirm(slug, "approve")
     # The approval records only the file previewed above; a file changed since is refused.
-    approval = reg.dfd_approve(session, slug, note, expected_sha256=parsed.sha256)
+    approval = reg.c4_approve(session, slug, note, expected_sha256=preview["sha256"])
     print(f"{approval['id']} approved")
     return 0
 
@@ -465,6 +529,9 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--trial", action="store_true", help="use registry/trial.db")
     common.add_argument("--db", metavar="PATH", help="use another database file")
+    db_only = argparse.ArgumentParser(add_help=False)  # c4 check reads only: no --trial
+    db_only.add_argument("--db", metavar="PATH", help="use another database file")
+    db_only.set_defaults(trial=False)
 
     p = argparse.ArgumentParser(prog="tmreg", description="Threat-model risk registry")
     sub = p.add_subparsers(dest="command", required=True, metavar="command")
@@ -505,16 +572,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_run_start, human=False)
     slug(sp)
 
-    dfd = sub.add_parser("dfd", help="DFD approvals").add_subparsers(dest="dfd_command", required=True,
-                                                                     metavar="subcommand")
-    sp = dfd.add_parser("status", parents=[common])
-    sp.set_defaults(func=cmd_dfd_status, human=False)
+    sp = sub.add_parser("dfd", help="replaced by c4")
+    sp.add_argument("rest", nargs=argparse.REMAINDER)
+    sp.set_defaults(func=cmd_dfd_moved, human=False)
+
+    c4p = sub.add_parser("c4", help="C4 model approvals").add_subparsers(dest="c4_command", required=True,
+                                                                        metavar="subcommand")
+    sp = c4p.add_parser("status", parents=[common])
+    sp.set_defaults(func=cmd_c4_status, human=False)
     slug(sp)
-    sp = dfd.add_parser("check", parents=[common], help="parse dfd.md and preview an approval")
-    sp.set_defaults(func=cmd_dfd_check, human=False)
+    sp = c4p.add_parser("check", parents=[db_only], help="parse workspace.dsl and preview an approval")
+    sp.set_defaults(func=cmd_c4_check, human=False)
     slug(sp)
-    sp = dfd.add_parser("approve", parents=[common], help="human-only")
-    sp.set_defaults(func=cmd_dfd_approve, human=True, human_name="dfd approve")
+    sp = c4p.add_parser("approve", parents=[common], help="human-only")
+    sp.set_defaults(func=cmd_c4_approve, human=True, human_name="c4 approve")
     slug(sp)
 
     sp = add("add", cmd_add)
@@ -565,6 +636,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None, *, project_root: Path | None = None) -> int:
     root = Path(project_root) if project_root is not None else Path(__file__).resolve().parents[2]
+    raw = sys.argv[1:] if argv is None else argv
+    if raw and raw[0] == "dfd":  # any arguments: the parser would reject a leading option
+        print(f"tmreg: {DFD_MOVED}", file=sys.stderr)
+        return 2
     args = build_parser().parse_args(argv)
     reg = None
     try:

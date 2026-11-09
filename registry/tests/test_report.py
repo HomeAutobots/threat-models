@@ -177,6 +177,11 @@ class ReportTest(TmpTestCase):
         self.assertNotIn("| Detail complete | 0 |", md)
         self.assertIn(" (detail incomplete)</td>", reg.report("demo", "html"))
 
+    def test_detail_table_shows_the_model_approval(self):
+        self.approved()
+        md = self.reg.report("demo")
+        self.assertIn("| Model approval | MODEL-1 |", md)
+
     def test_drafted_by_names_later_editors(self):  # I2
         (self.tmp / "legacy").mkdir()
         reg = make_registry(self.tmp / "legacy", legacy=True, trial=True)

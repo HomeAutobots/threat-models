@@ -6,8 +6,8 @@ import sqlite3
 import unittest
 from unittest import mock
 
-from helpers import (TmpTestCase, ai_fields, human_terminal, make_registry, seed_dfd_era,
-                     seed_dfd_risk, start, write_dfd)
+from helpers import (SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model, human_terminal,
+                     make_registry, seed_dfd_era, seed_dfd_risk, start, write_model)
 from tmreg import cli, ledger, model, report
 
 NOTE = "Checked against the DFD and the evidence."
@@ -19,13 +19,12 @@ class CliTest(TmpTestCase):
         self.reg = make_registry(self.tmp)
         self.root = self.reg.root
 
-    def dfd_era(self):
-        """Switch to a register from before the C4 model: SAMPLE_DFD in dfd.md, approved as DFD-1,
-        and no model approval. The dfd commands stay until Task 9 replaces them."""
-        self.reg = make_registry(self.tmp / "dfd", approve=False)
-        self.root = self.reg.root
-        write_dfd(self.reg, "demo")
-        seed_dfd_era(self.reg, "demo")
+    def dsl(self, old=None, new=None) -> bytes:
+        text = SAMPLE_WORKSPACE.decode()
+        if old is not None:
+            assert old in text
+            text = text.replace(old, new, 1)
+        return text.encode()
 
     def run_cli(self, *argv, tty=False, inputs=(), env=None):
         """env: variables to set for this call only, after CLAUDECODE has been dropped."""
@@ -51,7 +50,7 @@ class CliTest(TmpTestCase):
         for argv in [("review", "demo"), ("approve", "demo", "T-01"), ("reject", "demo", "T-01"),
                      ("merge", "demo", "T-01", "--into", "T-01"),
                      ("retire", "demo", "T-01", "--reason", "x" * 25),
-                     ("import-legacy", "demo"), ("dfd", "approve", "demo")]:
+                     ("import-legacy", "demo"), ("c4", "approve", "demo")]:
             with self.subTest(argv=argv):
                 code, out, err = self.run_cli(*argv)
                 self.assertEqual(code, 1)
@@ -62,7 +61,7 @@ class CliTest(TmpTestCase):
     def test_human_only_refused_in_a_claude_code_shell_even_with_a_terminal(self):  # I6
         self.ai_add()
         before = len(self.reg.history("demo"))
-        for argv in [("approve", "demo", "T-01"), ("review", "demo"), ("dfd", "approve", "demo")]:
+        for argv in [("approve", "demo", "T-01"), ("review", "demo"), ("c4", "approve", "demo")]:
             with self.subTest(argv=argv):
                 code, out, err = self.run_cli(*argv, tty=True, inputs=[NOTE, "T-01"],
                                               env={"CLAUDECODE": "1"})
@@ -232,7 +231,7 @@ class CliTest(TmpTestCase):
         code, _, err = self.run_cli("retire", "demo", "T-01", "--reason", NOTE, tty=True)
         self.assertEqual((code, "already retired" in err), (1, True))
 
-    def test_reject_merge_retire_dfd_import(self):
+    def test_reject_merge_retire(self):
         self.ai_add()
         self.ai_add()
         code, out, _ = self.run_cli("reject", "demo", "T-02", tty=True, inputs=[NOTE, "T-99"])
@@ -251,43 +250,6 @@ class CliTest(TmpTestCase):
         self.assertEqual(code, 1)
         code, _, _ = self.run_cli("retire", "demo", "T-01", "--reason", NOTE, tty=True, inputs=["T-01"])
         self.assertEqual((code, self.reg.get_risk("demo", "T-01")["status"]), (0, "retired"))
-        # dfd approve: an unchanged DFD is refused before the preview and the prompts
-        write_dfd(self.reg, "demo")
-        seed_dfd_era(self.reg, "demo")
-        code, out, err = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
-        self.assertEqual((code, out), (1, ""))
-        self.assertIn("already approved", err)
-        (self.root / "systems/demo/dfd.md").write_text(
-            (self.root / "systems/demo/dfd.md").read_text() + "\nMore prose.\n")
-        code, _, _ = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "wrong"])
-        self.assertEqual(code, 1)
-        code, _, _ = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
-        self.assertEqual((code, self.reg.dfd_status("demo").state), (0, "current"))
-
-    def test_dfd_approve_unchanged_is_refused_before_any_prompt(self):  # I1
-        self.dfd_era()
-        code, out, err = self.run_cli("dfd", "approve", "demo", tty=True, inputs=[])
-        self.assertEqual((code, out, err), (1, "", "tmreg: already approved as DFD-1\n"))
-
-    def test_dfd_approve_refuses_dfd_changed_between_preview_and_confirm(self):  # I1
-        self.dfd_era()
-        path = self.root / "systems/demo/dfd.md"
-        path.write_bytes(path.read_bytes() + b"\nThe version the owner reads.\n")
-
-        def hook(prompt):
-            if prompt.startswith("Type demo"):
-                path.write_bytes(path.read_bytes() + b"\nSwapped in after the preview.\n")
-                return "demo"
-            return NOTE
-        out, err = io.StringIO(), io.StringIO()
-        with human_terminal(), mock.patch("builtins.input", side_effect=hook), \
-                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = cli.main(["dfd", "approve", "demo"], project_root=self.root)
-        self.assertEqual(code, 1)
-        self.assertIn("runs/<run-id>/dfd-check.md", out.getvalue())
-        self.assertEqual(err.getvalue(), "tmreg: dfd.md changed since it was shown; review it again\n")
-        self.assertEqual(self.reg.dfd_status("demo").latest["id"], "DFD-1")
-        self.assertEqual([c["op"] for c in self.reg.history("demo")], ["dfd-approve"])
 
     def test_import_legacy_flow(self):
         reg = make_registry(self.tmp / "legacy", slug="demo", legacy=True)
@@ -331,16 +293,23 @@ class CliTest(TmpTestCase):
         self.assertEqual(list(json.loads(out)), list(model.EDITABLE_FIELDS))
         self.assertEqual(self.run_cli("verify", "demo")[0], 0)
 
-    def test_run_start_dfd_status_runs_history(self):
-        self.dfd_era()
+    def test_run_start_status_runs_history(self):
         code, out, _ = self.run_cli("run", "start", "demo")
         lines = out.splitlines()
         self.assertEqual(len(lines[0].split()), 1)
         self.assertTrue(lines[1].startswith("methods: "))
-        self.assertEqual(lines[2], "dfd: DFD-1 (current)")
-        self.assertTrue(self.run_cli("dfd", "status", "demo")[1].startswith("state: current"))
+        self.assertEqual(lines[2], "model: MODEL-1 (current)")
         self.assertIn(lines[0], self.run_cli("runs", "demo")[1])
         self.assertEqual(self.run_cli("history", "demo")[0], 0)
+
+    def test_run_start_model_line_none_and_changed(self):
+        write_model(self.reg, "demo", self.dsl("Answers the web app.", "Answers it well."))
+        self.assertEqual(self.run_cli("run", "start", "demo")[1].splitlines()[2],
+                         "model: MODEL-1 (changed)")
+        fresh = make_registry(self.tmp / "fresh", approve=False)
+        self.root = fresh.root
+        code, out, err = self.run_cli("run", "start", "demo")
+        self.assertEqual((code, out.splitlines()[2]), (0, "model: none"))
 
     def test_run_start_on_a_catalog_mirror(self):  # I4
         self.assertNotIn("note:", self.run_cli("run", "start", "demo", "--trial")[1])  # no legacy_catalog
@@ -357,50 +326,184 @@ class CliTest(TmpTestCase):
         self.assertEqual(lines[3:], ["note: trial register is empty; the catalog is withheld "
                                      "(evaluation mode)"])
 
-    def test_dfd_check_prints_preview_and_ok_without_writing(self):
-        self.dfd_era()
-        code, out, err = self.run_cli("dfd", "check", "demo")
+    # ---- c4 ------------------------------------------------------------------------------
+
+    def test_c4_status(self):
+        self.assertEqual(self.run_cli("c4", "status", "demo")[1],
+                         "state: current\nlatest: MODEL-1 (version 1.0)\n")
+        write_model(self.reg, "demo", self.dsl("Answers the web app.", "Answers it well."))
+        self.assertEqual(self.run_cli("c4", "status", "demo")[1].splitlines()[0], "state: changed")
+        fresh = make_registry(self.tmp / "fresh", approve=False)
+        self.root = fresh.root
+        self.assertEqual(self.run_cli("c4", "status", "demo")[1], "state: none\n")
+        self.assertEqual(self.run_cli("c4", "status", "demo", "--trial")[0], 1)  # no trial register
+
+    def test_c4_check_on_the_approved_model(self):
+        code, out, err = self.run_cli("c4", "check", "demo")
         self.assertEqual((code, err), (0, ""))
         lines = out.splitlines()
         self.assertEqual(lines[0], "version: 1.0")
         self.assertRegex(lines[1], r"^sha256: [0-9a-f]{64}$")
-        self.assertEqual(lines[2:], ["ids: E=1 P=2 D=1 F=3 TB=1", "added: none", "removed: none", "ok"])
-        seed_dfd_risk(self.reg, "T-01", ["P2", "F2"])  # add needs a model approval now
-        path = self.root / "systems/demo/dfd.md"
-        path.write_text(path.read_text().replace("| F2 | P1 | P2 (via CDN) | REST |\n", "")
-                        .replace("| D1 | DB | Data store |\n", "| D1 | DB | Data store |\n| D2 | Cache | Data store |\n"))
+        self.assertEqual(lines[2], "ids: A=1 S=1 C=3 K=0 R=3 TB=2 N=1 I=0 ENV=1 SEQ=0")
+        self.assertEqual(lines[3:6], ["added: none", "removed: none", "changed: none"])
+        self.assertEqual(lines[6], "next: A2 S2 C4 K1 R4 TB3 N2 I1 ENV2 SEQ1")
+        self.assertEqual(lines[-1], "ok")
+
+    def test_c4_check_shows_added_removed_and_changed_without_writing(self):
+        text = SAMPLE_WORKSPACE.decode()
+        edited = (text.replace('"Answers the web app." "Python"', '"Answers it well." "Python 3"')
+                  .replace('"SQL over TLS"', '"SQL over mTLS"'))
+        self.assertNotEqual(edited, text)
+        write_model(self.reg, "demo", edited.encode())
         before = len(self.reg.history("demo"))
-        code, out, _ = self.run_cli("dfd", "check", "demo")
-        self.assertEqual(code, 0)
-        self.assertEqual(out.splitlines()[2:], [
-            "ids: E=1 P=2 D=2 F=2 TB=1", "added: D2", "removed: F2",
-            "warning: T-01 cites F2, which this DFD no longer has", "ok"])
-        self.assertEqual(len(self.reg.history("demo")), before)  # read-only
+        code, out, err = self.run_cli("c4", "check", "demo")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("changed: C2 (description+technology), R3 (", out)
+        self.assertEqual(out.splitlines()[-1], "ok")
+        self.assertEqual(len(self.reg.history("demo")), before)
+
+    def test_c4_check_first_model_says_no_approved_model_yet(self):
         fresh = make_registry(self.tmp / "fresh", approve=False)
-        write_dfd(fresh, "demo")
         self.root = fresh.root
-        code, out, _ = self.run_cli("dfd", "check", "demo")
-        self.assertEqual(out.splitlines()[3:], ["added: (no approved DFD yet)", "removed: none", "ok"])
+        code, out, err = self.run_cli("c4", "check", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out.splitlines()[3], "added: (no approved model yet)")
 
-    def test_dfd_check_parse_error_exits_1(self):
-        (self.root / "systems/demo/dfd.md").write_text(
-            "| ID | Element | Type |\n|---|---|---|\n| E1 | Customer | External entity |\n")
-        code, out, err = self.run_cli("dfd", "check", "demo")
-        self.assertEqual((code, out), (1, ""))
-        self.assertEqual(err, "tmreg: dfd.md has no '| DFD version | x.y |' row\n")
+    def test_c4_check_exits_1_with_problems(self):
+        bad = SAMPLE_WORKSPACE.decode().replace('"tm.auth" "Service token"', '"tm.auth" ""')
+        write_model(self.reg, "demo", bad.encode())
+        code, out, err = self.run_cli("c4", "check", "demo")
+        self.assertEqual(code, 1)
+        problems = [l for l in out.splitlines() if l.startswith("problem: ")]
+        self.assertTrue(problems)
+        self.assertNotIn("ok", out.splitlines())
+        self.assertEqual(err, f"tmreg: {len(problems)} problem(s); fix workspace.dsl and check again\n")
 
-    def test_dfd_gate_never_prints_raw_escape_codes(self):
-        self.dfd_era()
-        path = self.root / "systems/demo/dfd.md"
-        path.write_text(path.read_text().replace("| DFD version | 1.0 |",
-                                                 "| DFD version | 1.1\x1b[8m |"))
-        code, out, err = self.run_cli("dfd", "check", "demo")
-        self.assertEqual((code, out), (1, ""))
-        self.assertIn("DFD version must be", err)
-        self.assertNotIn("\x1b", err)
-        code, out, err = self.run_cli("dfd", "approve", "demo", tty=True)
-        self.assertEqual((code, out), (1, ""))
-        self.assertNotIn("\x1b", err)
+    def test_c4_check_parse_error_and_missing_file(self):
+        write_model(self.reg, "demo", b"workspace {\n")
+        code, out, err = self.run_cli("c4", "check", "demo")
+        lines = out.splitlines()
+        self.assertEqual(code, 1)
+        self.assertRegex(lines[0], r"^sha256: [0-9a-f]{64}$")
+        self.assertTrue(lines[1].startswith("problem: "))
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(err, "tmreg: 1 problem(s); fix workspace.dsl and check again\n")
+        (self.root / "systems/demo/workspace.dsl").unlink()
+        code, out, err = self.run_cli("c4", "check", "demo")
+        self.assertEqual(code, 1)
+        self.assertTrue(out.startswith("problem: "))
+        self.assertNotIn("sha256", out)
+
+    def test_c4_check_takes_no_trial(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            self.run_cli("c4", "check", "demo", "--trial")
+
+    def test_c4_check_reports_a_reused_id(self):
+        write_model(self.reg, "demo", self.dsl("C3 = container", "C9 = container")
+                    .replace(b"C3", b"C9"))
+        approve_model(self.reg, "demo")
+        write_model(self.reg, "demo")  # C3 is back
+        code, out, err = self.run_cli("c4", "check", "demo")
+        self.assertEqual(code, 1)
+        self.assertIn("problem: C3 was used by an earlier approval; next free C: C10", out)
+
+    def test_c4_check_lists_adoption_gaps_and_pending_rereviews(self):
+        reg = make_registry(self.tmp / "era", approve=False)
+        self.root = reg.root
+        seed_dfd_era(reg, "demo")
+        seed_dfd_risk(reg, "T-01", ["P2", "F2"], review_state="approved")
+        seed_dfd_risk(reg, "T-02", ["P2"], review_state="pending", last_approved={"title": "x"})
+        write_model(reg, "demo", self.dsl('"tm.was" "F2"', '"tm.was" "F9"'))
+        code, out, err = self.run_cli("c4", "check", "demo")
+        self.assertIn("adoption: F2 is cited by T-01 and claimed by nothing", out)
+        self.assertIn("adoption: T-02 awaits re-review", out)
+
+    def test_c4_check_never_prints_raw_escape_codes(self):
+        bad = SAMPLE_WORKSPACE.decode().replace('"tm.version" "1.0"', '"tm.version" "1.0\x1b[8m"')
+        write_model(self.reg, "demo", bad.encode())
+        code, out, err = self.run_cli("c4", "check", "demo")
+        self.assertEqual(code, 1)
+        self.assertNotIn("\x1b", out + err)
+
+    def test_c4_approve_flow(self):
+        write_model(self.reg, "demo", self.dsl("Answers the web app.", "Answers it well."))
+        code, out, err = self.run_cli("c4", "approve", "demo", tty=True, inputs=[NOTE, "wrong"])
+        self.assertEqual((code, self.reg.c4_status("demo").latest["id"]), (1, "MODEL-1"))
+        code, out, err = self.run_cli("c4", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("changed: C2 (description)", out)
+        self.assertIn("If an AI run drafted this model, check that this sha256 matches the one quoted "
+                      "in systems/demo/runs/<run-id>/model-check.md.", out)
+        self.assertEqual(out.splitlines()[-1], "MODEL-2 approved")
+        self.assertEqual(self.reg.c4_status("demo").state, "current")
+
+    def test_c4_approve_unchanged_is_refused_before_any_prompt(self):
+        code, out, err = self.run_cli("c4", "approve", "demo", tty=True, inputs=[])
+        self.assertEqual((code, out, err), (1, "", "tmreg: already approved as MODEL-1\n"))
+
+    def test_c4_approve_refuses_problems_before_any_prompt(self):
+        write_model(self.reg, "demo", SAMPLE_WORKSPACE.replace(b'"tm.auth" "Service token"', b'"tm.auth" ""'))
+        code, out, err = self.run_cli("c4", "approve", "demo", tty=True, inputs=[])
+        self.assertEqual(code, 1)
+        self.assertIn("problem: ", out)
+        self.assertIn("problem(s); fix workspace.dsl and check again", err)
+        self.assertEqual(self.reg.c4_status("demo").latest["id"], "MODEL-1")
+
+    def test_c4_approve_refuses_a_file_changed_between_preview_and_confirm(self):
+        path = self.root / "systems/demo/workspace.dsl"
+        path.write_bytes(self.dsl("Answers the web app.", "Answers it well."))
+
+        def hook(prompt):
+            if prompt.startswith("Type demo"):
+                path.write_bytes(self.dsl("Answers the web app.", "Swapped in after the preview."))
+                return "demo"
+            return NOTE
+        out, err = io.StringIO(), io.StringIO()
+        with human_terminal(), mock.patch("builtins.input", side_effect=hook), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(["c4", "approve", "demo"], project_root=self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(err.getvalue(), "tmreg: workspace.dsl changed since it was shown; review it again\n")
+        self.assertEqual(self.reg.c4_status("demo").latest["id"], "MODEL-1")
+
+    def test_c4_approve_with_adoption(self):
+        reg = make_registry(self.tmp / "era", approve=False)
+        self.root = reg.root
+        seed_dfd_era(reg, "demo")
+        seed_dfd_risk(reg, "T-01", ["P2", "F2"], review_state="approved")
+        write_model(reg, "demo")
+        code, out, err = self.run_cli("c4", "approve", "demo", tty=True, inputs=[NOTE, "demo"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("adoption: 1 risk(s) will move to the new IDs", out)
+        self.assertEqual(reg.get_risk("demo", "T-01")["elements"], ["C2", "R2"])
+
+    def test_c4_approve_adoption_gap_refused_before_prompt(self):
+        reg = make_registry(self.tmp / "era", approve=False)
+        self.root = reg.root
+        seed_dfd_era(reg, "demo")
+        seed_dfd_risk(reg, "T-01", ["P2", "F2"], review_state="approved")
+        write_model(reg, "demo", self.dsl('"tm.was" "F2"', '"tm.was" "F9"'))
+        code, out, err = self.run_cli("c4", "approve", "demo", tty=True, inputs=[])
+        self.assertEqual(code, 1)
+        self.assertIn("adoption: F2 is cited by T-01 and claimed by nothing", out)
+        self.assertEqual(reg.c4_status("demo").state, "none")
+
+    def test_dfd_prints_the_pointer_and_is_not_human_only(self):
+        pointer = "tmreg: dfd was replaced by c4: use ./tmreg c4 status|check|approve <slug>\n"
+        for argv in [("dfd",), ("dfd", "status", "demo"), ("dfd", "approve", "demo"),
+                     ("dfd", "check", "demo", "--trial"), ("dfd", "--trial")]:
+            with self.subTest(argv=argv):
+                code, out, err = self.run_cli(*argv)  # no terminal: a human-only command would refuse
+                self.assertEqual((code, out, err), (2, "", pointer))
+        self.assertFalse(cli.build_parser().parse_args(["dfd", "status", "demo"]).human)
+
+    def test_show_prints_the_moved_on_line_only_when_it_moved(self):
+        self.ai_add()
+        self.assertNotIn("moved on", self.run_cli("show", "demo", "T-01")[1])
+        write_model(self.reg, "demo", self.dsl("Answers the web app.", "Answers it well."))
+        approve_model(self.reg, "demo")
+        out = self.run_cli("show", "demo", "T-01")[1]
+        self.assertIn("Model has moved on: written against MODEL-1, latest is MODEL-2 (changed: C2)", out)
 
     def test_busy_database_is_reported(self):  # M7
         for target in ("tmreg.cli.Registry.list_risks", "tmreg.cli.open_registry"):
