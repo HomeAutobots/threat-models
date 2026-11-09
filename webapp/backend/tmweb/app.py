@@ -16,7 +16,7 @@ from .security import (
     CSRF_HEADER,
     HttpAndLifespanOnly,
     SessionStore,
-    _same,
+    same,
     allowed_hosts,
     allowed_origins,
 )
@@ -97,7 +97,7 @@ def create_app(
         session_id = request.cookies.get(COOKIE)
         csrf = sessions.csrf(session_id) if session_id else None
         sent = request.headers.get(CSRF_HEADER)
-        if csrf is None or not sent or not _same(sent, csrf):
+        if csrf is None or not sent or not same(sent, csrf):
             return JSONResponse({"detail": "signed out"}, status_code=401)
         if request.method not in ("GET", "HEAD") and request.headers.get("origin") not in origins:
             return JSONResponse({"detail": "forbidden"}, status_code=403)

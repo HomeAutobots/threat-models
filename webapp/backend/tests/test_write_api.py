@@ -79,8 +79,8 @@ def test_add_lands_pending(client, human):
 
 def test_reject_merge_retire(client, human, reg):
     run = helpers.start(reg)
-    for _ in range(3):
-        reg.add_risk("demo", helpers.ai_fields(title=f"Distinct title {_} for the risk"), run_id=run)
+    for n in range(3):
+        reg.add_risk("demo", helpers.ai_fields(title=f"Distinct title {n} for the risk"), run_id=run)
     ids = [r["id"] for r in reg.list_risks("demo", "all")]
     a, b, c = ids[:3]
 
@@ -98,7 +98,7 @@ def test_reject_merge_retire(client, human, reg):
     assert r.json()["risk"]["status"] == "retired"
 
 
-def test_dfd_approve_and_stale_sha(client, human, project):
+def test_dfd_approve_and_stale_sha(client, human, project, reg):
     path = project / "systems" / "demo" / "dfd.md"
     path.write_bytes(path.read_bytes() + b"\nA change.\n")
     sha = client.get("/api/main/systems/demo/dfd").json()["preview"]["sha256"]
@@ -108,16 +108,46 @@ def test_dfd_approve_and_stale_sha(client, human, project):
     path.write_bytes(path.read_bytes() + b"\nAnother change.\n")
     r = client.post("/api/main/systems/demo/dfd/approve", json={"note": NOTE, "expected_sha256": sha})
     assert r.status_code == 409
+    assert [a["id"] for a in reg.dfd_approvals("demo")] == ["DFD-1", "DFD-2"]  # no new approval
     now = client.get("/api/main/systems/demo/dfd").json()["status"]["current_sha256"]
     assert r.json()["current_sha256"] == now != sha
 
 
-def test_human_ops_fail_closed_without_terminal(client, risk):
-    body = approve_body(client)
+WRITES = [
+    ("add", "", lambda c: {"fields": helpers.ai_fields()}),
+    ("edit", "/T-01/edit", lambda c: {"fields": {"owner": "A"}, "seen": approve_body(c)["seen"],
+                                       "reason": "Owner confirmed in the November review."}),
+    ("approve", "/T-01/approve", lambda c: approve_body(c)),
+    ("reject", "/T-01/reject", lambda c: approve_body(c)),
+    ("merge", "/T-01/merge", lambda c: {**approve_body(c), "into": "T-02"}),
+    ("retire", "/T-01/retire", lambda c: {"reason": NOTE, "seen": approve_body(c)["seen"]}),
+    ("dfd-approve", None, lambda c: {"note": NOTE, "expected_sha256": "0" * 64}),
+]
+
+
+@pytest.mark.parametrize("name,suffix,body", WRITES, ids=[w[0] for w in WRITES])
+def test_human_ops_fail_closed_without_terminal(client, reg, risk, name, suffix, body):
+    url = ("/api/main/systems/demo/dfd/approve" if suffix is None else BASE + suffix)
+    payload = body(client)
+    changes = len(reg.history("demo"))
+    approvals = len(reg.dfd_approvals("demo"))
     with mock.patch("tmreg.core._has_tty", return_value=False):
-        r = client.post(f"{BASE}/T-01/approve", json=body)
-    assert r.status_code == 422
-    assert "needs an interactive terminal" in r.json()["detail"]
+        r = client.post(url, json=payload)
+    assert r.status_code == 422, r.text
+    # add and edit are also open to the modeling agent's runs, so they ask for a run instead.
+    expected = ("must name a run" if name in ("add", "edit") else "needs an interactive terminal")
+    assert expected in r.json()["detail"]
+    assert len(reg.history("demo")) == changes
+    assert len(reg.dfd_approvals("demo")) == approvals
+    assert reg.get_risk("demo", "T-01")["review_state"] == "pending"
+
+
+def test_same_seen_twice_is_409(client, human, risk):  # R12
+    body = approve_body(client)
+    assert client.post(f"{BASE}/T-01/approve", json=body).status_code == 200
+    r = client.post(f"{BASE}/T-01/approve", json=body)
+    assert r.status_code == 409
+    assert r.json()["current"]["review_state"] == "approved"
 
 
 def test_write_routes_name_one_risk(app):
