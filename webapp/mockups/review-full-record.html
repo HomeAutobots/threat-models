@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review: full record</title>
+<style>
+:root{
+  --bg:#f6f7f9;--panel:#ffffff;--text:#1a1b1e;--muted:#5c6370;--faint:#868e96;--line:#dee2e6;
+  --accent:#1c7ed6;--accent-soft:#e7f5ff;--good:#2f9e44;--bad:#e03131;--warn-bg:#fff9db;--warn-line:#fab005;
+  --chip:#f1f3f5;--empty:#adb5bd;--sample:#7048e8;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#141517;--panel:#1a1b1e;--text:#e9ecef;--muted:#a6a7ab;--faint:#909296;--line:#2c2e33;
+  --accent:#4dabf7;--accent-soft:#1c2a3a;--good:#51cf66;--bad:#ff6b6b;--warn-bg:#2b2611;--warn-line:#f08c00;
+  --chip:#25262b;--empty:#5c5f66;--sample:#9775fa;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.top{display:flex;align-items:center;gap:20px;padding:10px 24px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.top b{font-size:16px}
+.top select{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)}
+.top nav{display:flex;gap:4px;flex-wrap:wrap}
+.top nav a{padding:6px 10px;border-radius:6px;color:var(--muted);text-decoration:none;font-size:14px}
+.top nav a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.count{display:inline-block;min-width:20px;padding:0 6px;margin-left:4px;border-radius:10px;background:var(--accent);color:#fff;font-size:12px;text-align:center}
+.who{margin-left:auto;font-size:13px;color:var(--muted)}
+.sample{margin:12px 24px 0;padding:6px 12px;border:1px dashed var(--sample);border-radius:6px;color:var(--sample);font-size:13px}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:24px;padding:16px 24px 48px;max-width:1280px;margin:0 auto}
+.crumbs{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:14px;margin-bottom:8px}
+.crumbs .sp{flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:7px 14px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none}
+.btn.primary{background:var(--good);border-color:var(--good);color:#fff}
+.btn.danger{background:transparent;border-color:var(--bad);color:var(--bad)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+h1{font-size:24px;line-height:1.3;margin:4px 0 10px}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.badge{padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;background:var(--chip);color:var(--muted);border:1px solid var(--line)}
+.badge.pending{background:var(--warn-bg);border-color:var(--warn-line);color:var(--text)}
+.badge.ai{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.alert{display:flex;gap:12px;padding:12px 14px;border:1px solid var(--warn-line);background:var(--warn-bg);border-radius:8px;margin-bottom:16px;font-size:14px}
+.alert a{color:var(--accent)}
+section.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:16px;scroll-margin-top:70px}
+section.card h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 14px;display:flex;gap:10px;align-items:baseline}
+section.card h2 .n{color:var(--faint);font-weight:500}
+.glance{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.glance div{padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+.glance .k{font-size:12px;color:var(--muted)}
+.glance .v{font-weight:600}
+.prose .f{margin-bottom:16px}
+.prose .f:last-child{margin-bottom:0}
+.k{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+.prose p{margin:0;max-width:75ch}
+dl.fields{display:grid;grid-template-columns:200px minmax(0,1fr);gap:10px 18px;margin:0}
+dl.fields dt{font-size:13px;color:var(--muted);font-weight:600}
+dl.fields dd{margin:0;max-width:75ch}
+.empty{color:var(--empty);font-style:italic}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;padding:1px 6px;border-radius:4px;background:var(--chip);white-space:nowrap}
+.rail{position:sticky;top:64px;align-self:start;display:flex;flex-direction:column;gap:16px}
+.rail .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.rail h3{margin:0 0 10px;font-size:15px}
+.outline{list-style:none;margin:0;padding:0;font-size:14px}
+.outline li{display:flex;gap:8px;align-items:center;padding:4px 0}
+.outline a{color:var(--text);text-decoration:none}
+.outline .dot{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--faint)}
+.outline .dot.seen{background:var(--good);border-color:var(--good)}
+textarea{width:100%;min-height:110px;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font:inherit;resize:vertical}
+.hint{font-size:12px;color:var(--muted);margin:6px 0 12px;display:flex;justify-content:space-between}
+.stack{display:flex;flex-direction:column;gap:8px}
+.small{font-size:12px;color:var(--muted);margin:10px 0 0}
+.callout{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);font-size:13px;margin-top:6px}
+@media (max-width:900px){.wrap{grid-template-columns:1fr}.rail{position:static}dl.fields{grid-template-columns:1fr}.top{flex-wrap:wrap}.who{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="top">
+  <b>Threat models</b>
+  <select aria-label="System"><option>ordering-platform</option></select>
+  <nav>
+    <a href="#">Register</a>
+    <a href="#" class="on">Review queue <span class="count">2</span></a>
+    <a href="#">History</a>
+    <a href="#">DFD</a>
+    <a href="#">Reports</a>
+  </nav>
+  <span class="who">Signed in (this computer only)</span>
+</div>
+<div class="sample">Mockup with sample data from the guide's reference system. Not your register.</div>
+
+<div class="wrap">
+<main>
+  <div class="crumbs">
+    <span>Review queue</span><span>›</span><b>1 of 2 pending</b><span class="sp"></span>
+    <a class="btn" href="#">← Previous</a><a class="btn" href="#">Next →</a>
+  </div>
+  <h1><span class="id">T-37</span> Retrieval cache serves one customer's order summary to another</h1>
+  <div class="badges">
+    <span class="badge pending">Pending review</span>
+    <span class="badge">New draft</span>
+    <span class="badge ai">Drafted by AI · run 20261107-01</span>
+    <span class="badge">AI confidence: medium</span>
+  </div>
+
+  <div class="alert" role="status"><b>Possible duplicate of T-33.</b> Same category, overlapping elements P7 and F19. <a href="#dup">Compare them side by side</a></div>
+
+  <section class="card" id="glance">
+    <h2><span class="n">1</span> At a glance</h2>
+    <div class="glance">
+      <div><div class="k">Category</div><div class="v">Information disclosure (STRIDE I)</div></div>
+      <div><div class="k">Impact rating</div><div class="v">High</div></div>
+      <div><div class="k">Likelihood</div><div class="v">Medium</div></div>
+      <div><div class="k">Score</div><div class="v">6 of 9</div></div>
+      <div><div class="k">Proposed treatment</div><div class="v">Mitigate</div></div>
+      <div><div class="k">Status</div><div class="v">Open</div></div>
+    </div>
+    <p class="callout">A quick orientation only. Every field is below in full, including the empty ones.</p>
+  </section>
+
+  <section class="card" id="where">
+    <h2><span class="n">2</span> Where it happens <span style="text-transform:none;letter-spacing:0;font-weight:400">· from approved DFD-1 (current)</span></h2>
+    <table>
+      <thead><tr><th>ID</th><th>Element</th><th>Type</th><th>What the DFD says</th></tr></thead>
+      <tbody>
+        <tr><td><span class="id">P7</span></td><td>Support assistant</td><td>Process</td><td>LLM-backed chat that answers order questions and drafts refund requests</td></tr>
+        <tr><td><span class="id">F19</span></td><td>P7 → P3 Order service</td><td>Data flow</td><td>Order lookups scoped to the chatting customer</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card prose" id="threat">
+    <h2><span class="n">3</span> The threat</h2>
+    <div class="f"><div class="k">Description</div><p>P7 caches order summaries returned over F19 in a shared retrieval cache keyed by conversation ID. When a conversation ID is reused or guessed, P7 answers from another customer's cached summary instead of making a fresh lookup scoped to the authenticated customer.</p></div>
+    <div class="f"><div class="k">Attack scenario</div><p>A signed-in customer starts a chat, then replays an older conversation ID taken from a shared support link. P7 finds a cache hit and returns the previous customer's order summary, including the delivery address and the last four digits of the payment card. No error appears and no lookup reaches P3, so nothing is logged in D5.</p></div>
+    <div class="f"><div class="k">Attack path</div><p>Direct: E1 → P2 → P7 over F18, cache hit inside P7.</p></div>
+  </section>
+
+  <section class="card" id="impact">
+    <h2><span class="n">4</span> Impact and likelihood</h2>
+    <dl class="fields">
+      <dt>Impact</dt><dd>Disclosure of another customer's PII and order history; reportable personal-data breach.</dd>
+      <dt>Impact rating</dt><dd>High</dd>
+      <dt>Likelihood</dt><dd>Medium</dd>
+      <dt>Likelihood rationale</dt><dd>Conversation IDs appear in shared support links; replaying one needs only a customer account.</dd>
+      <dt>Score</dt><dd>6</dd>
+      <dt>Score method</dt><dd>likelihood × impact, 1–3 each</dd>
+    </dl>
+  </section>
+
+  <section class="card" id="controls">
+    <h2><span class="n">5</span> Controls and assumptions</h2>
+    <dl class="fields">
+      <dt>Implemented controls</dt><dd>None identified</dd>
+      <dt>Recommended controls</dt><dd>Key the cache by authenticated customer ID and conversation ID together; drop cached entries when the session ends.</dd>
+      <dt>Control references</dt><dd><span class="empty">Not provided</span></dd>
+      <dt>Assumptions</dt><dd>P7 keeps its cache in process memory shared across sessions.</dd>
+    </dl>
+  </section>
+
+  <section class="card" id="decision">
+    <h2><span class="n">6</span> Treatment and ownership</h2>
+    <dl class="fields">
+      <dt>Treatment</dt><dd>Mitigate</dd>
+      <dt>Decision requested</dt><dd><span class="empty">Not provided</span></dd>
+      <dt>Exception reference</dt><dd><span class="empty">Not provided</span></dd>
+      <dt>Owner</dt><dd><span class="empty">Not provided</span></dd>
+      <dt>Due</dt><dd><span class="empty">Not provided</span></dd>
+      <dt>Status</dt><dd>Open</dd>
+      <dt>Status reason</dt><dd><span class="empty">Not provided</span></dd>
+    </dl>
+  </section>
+
+  <section class="card" id="evidence">
+    <h2><span class="n">7</span> Evidence and tracking</h2>
+    <dl class="fields">
+      <dt>Evidence</dt><dd>dfd.md v1.0 (P7, F19); the guide's catalog T-33 covers retrieval scope but not caching.</dd>
+      <dt>Origin</dt><dd>threat-model · tm-model run 20261107-01</dd>
+      <dt>Method</dt><dd>STRIDE per element</dd>
+      <dt>Test</dt><dd><span class="empty">Not provided</span></dd>
+      <dt>Ticket</dt><dd><span class="empty">Not provided</span></dd>
+      <dt>Notes</dt><dd><span class="empty">Not provided</span></dd>
+    </dl>
+  </section>
+
+  <section class="card" id="dup">
+    <h2><span class="n">8</span> Possible duplicate: T-33</h2>
+    <table>
+      <thead><tr><th style="width:160px">Field</th><th>T-37 (this draft)</th><th>T-33 (approved)</th></tr></thead>
+      <tbody>
+        <tr><td>Title</td><td>Retrieval cache serves one customer's order summary to another</td><td>Assistant discloses another customer's order details</td></tr>
+        <tr><td>Elements</td><td>P7, F19</td><td>P7, F19, F18</td></tr>
+        <tr><td>Category</td><td>Information disclosure</td><td>Information disclosure</td></tr>
+        <tr><td>Description</td><td>Shared cache keyed by conversation returns another customer's summary.</td><td>Retrieval scoped by conversation, not by authenticated customer.</td></tr>
+      </tbody>
+    </table>
+    <p class="small">Merge folds this draft into T-33 and needs your note. Keep separate makes no change; you go on to approve or reject this draft.</p>
+  </section>
+
+  <section class="card" id="record">
+    <h2><span class="n">9</span> Record and history</h2>
+    <dl class="fields" style="margin-bottom:16px">
+      <dt>Review state</dt><dd>Pending</dd>
+      <dt>Drafted by</dt><dd>AI, run 20261107-01</dd>
+      <dt>Last approved version</dt><dd><span class="empty">None (new draft)</span></dd>
+      <dt>Written against</dt><dd>DFD-1 (current)</dd>
+      <dt>Created / updated</dt><dd>2026-11-07 10:12 / 2026-11-07 10:12</dd>
+    </dl>
+    <table>
+      <thead><tr><th>#</th><th>When</th><th>Who</th><th>What</th><th>Note</th></tr></thead>
+      <tbody><tr><td>52</td><td>2026-11-07 10:12</td><td>AI, run 20261107-01</td><td>Added</td><td class="empty">none</td></tr></tbody>
+    </table>
+  </section>
+</main>
+
+<aside class="rail">
+  <div class="card">
+    <h3>Sections</h3>
+    <ul class="outline">
+      <li><span class="dot seen"></span><a href="#glance">1 At a glance</a></li>
+      <li><span class="dot seen"></span><a href="#where">2 Where it happens</a></li>
+      <li><span class="dot seen"></span><a href="#threat">3 The threat</a></li>
+      <li><span class="dot"></span><a href="#impact">4 Impact and likelihood</a></li>
+      <li><span class="dot"></span><a href="#controls">5 Controls and assumptions</a></li>
+      <li><span class="dot"></span><a href="#decision">6 Treatment and ownership</a></li>
+      <li><span class="dot"></span><a href="#evidence">7 Evidence and tracking</a></li>
+      <li><span class="dot"></span><a href="#dup">8 Possible duplicate</a></li>
+      <li><span class="dot"></span><a href="#record">9 Record and history</a></li>
+    </ul>
+    <p class="small">Dots fill in as each section scrolls into view.</p>
+  </div>
+  <div class="card">
+    <h3>Your decision</h3>
+    <label for="note" class="k" style="display:block">Review note</label>
+    <textarea id="note" placeholder="Why you're approving or rejecting this version"></textarea>
+    <div class="hint"><span>At least 20 characters</span><span>0 / 20</span></div>
+    <div class="stack">
+      <button class="btn primary" disabled>Approve T-37</button>
+      <button class="btn danger" disabled>Reject T-37</button>
+      <button class="btn" disabled>Merge into T-33</button>
+      <a class="btn" href="#">Edit before deciding</a>
+    </div>
+    <p class="small">You approve exactly the version on this page. If it changes while you read, nothing is saved and the new version is shown.</p>
+  </div>
+</aside>
+</div>
+</body>
+</html>

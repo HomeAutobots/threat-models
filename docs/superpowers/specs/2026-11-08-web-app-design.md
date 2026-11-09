@@ -101,8 +101,8 @@ Anti-goals (a failure even if everything works):
   commands. A Claude Code shell cannot start it.
 - The server prints a one-time sign-in link, `http://127.0.0.1:<port>/signin?token=<random>`,
   in that Terminal window and nowhere else. The token is 32 random bytes from `secrets`, held only
-  in memory, and works once. Opening it sets the session cookie and redirects to strip the token
-  from the address bar. Nothing about sign-in is written to disk.
+  in memory, and works once. Opening it sets the session cookie and redirects to `/#k=<token>`. The front end
+  stores that token and removes `#k=` from the address bar. Nothing about sign-in is written to disk.
 - The session lasts until the server stops. Closing the Terminal window stops the server and signs
   the owner out. Restarting prints a new link.
 - Human-only operations still build a `ReviewerSession` from `project.toml`. Core's existing
@@ -123,6 +123,9 @@ Every `/api/` route, read or write, requires a valid session. On top of that:
   to the app's own origin.
 - **Host check.** Requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` are
   refused, which blocks DNS rebinding from a web page.
+- **Content-Security-Policy and `no-store`.** Every response carries a Content-Security-Policy that
+  allows only the app's own scripts, images, fonts, and connections. Every `/api` response carries
+  `Cache-Control: no-store`. Only http and lifespan connections are served; websockets are refused.
 - **No other way in.** No API keys, bearer tokens, or stored passwords. No CORS.
 - **One item per write.** Every write route names one system and at most one risk ID in its path.
 
@@ -284,8 +287,8 @@ register". The choice is part of every API path, never a hidden setting.
 
 ## 7. API
 
-All under `/api/`, all requiring the session. `{reg}` is `main` or `trial`. Writes also need the
-CSRF header and the origin check.
+All under `/api/`, all requiring the session. `{reg}` is `main` or `trial`. Every request needs the
+session cookie and the CSRF header; writes also need the origin check.
 
 | Method and path | Calls |
 |---|---|

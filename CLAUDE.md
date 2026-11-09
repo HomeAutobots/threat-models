@@ -26,7 +26,8 @@ else, such as the sibling guide repo, is not guarded. The rules in this file app
   mirrors the guide's catalog, so tmreg refuses a run on it without `--trial`.
 - Write risks: `./tmreg add <slug> --run <run-id> --json systems/<slug>/runs/<run-id>/candidates/<nn>.json`
   and `./tmreg edit <slug> <id> --run <run-id> --json systems/<slug>/runs/<run-id>/candidates/edit-<id>.json`.
-  Always pass `--run`. Every add or edit leaves the risk pending review.
+  Always pass `--run`. Every add or edit with `--run` leaves the risk pending review, including an edit to an approved risk.
+  The web app (`webapp/`) is the owner's. Never start it, call its API, or edit its files.
 - Also allowed: `git status`, `git diff`, `git log`.
 - Search and read with Read, Grep, and Glob where this Claude Code has them, or with the read-only
   commands `grep`, `rg`, `find`, `ls`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, and

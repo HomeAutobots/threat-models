@@ -93,7 +93,7 @@ instead of the real database.
 | `dfd check` | `./tmreg dfd check ordering-platform` (parses `dfd.md` and previews an approval; read-only) |
 | `dfd approve` (human-only) | `./tmreg dfd approve ordering-platform` |
 | `add` | `./tmreg add ordering-platform --template` |
-| `edit` | `./tmreg edit ordering-platform T-01 --set status=accepted` |
+| `edit` | `./tmreg edit ordering-platform T-01 --set status=accepted` (your own edit keeps the approval; an AI edit with `--run` sends an approved risk back to review) |
 | `review` (human-only) | `./tmreg review ordering-platform` |
 | `approve` (human-only) | `./tmreg approve ordering-platform T-37` |
 | `reject` (human-only) | `./tmreg reject ordering-platform T-37` |
@@ -117,7 +117,8 @@ Run these in your own terminal.
    reject, merge, skip, or quit. To change a risk, use `./tmreg edit`, which is a separate command.
 4. `register.md` is regenerated after every write. Never hand-edit it. Like the database, it stays
    local and is never committed.
-5. Existing risks change through `edit` (which sends an approved risk back to review), `merge`, or `retire`.
+5. Existing risks change through `edit`, `merge`, or `retire`. Your own edits keep the approval,
+   and AI edits (`--run`) send an approved risk back to review.
 
 ## Reports, verify, and trial runs
 
@@ -129,11 +130,27 @@ Run these in your own terminal.
   `registry/trial.db` (git-ignored); step 5 of [First run](#first-run) sets up
   `ordering-platform` there. Trial runs write `register.trial.md` and run IDs starting `trial-`.
 
+## Web app
+
+A local web app for reading and reviewing the register. It calls the same `Registry` methods as
+`./tmreg`, so the rules are the same. Design: `docs/superpowers/specs/2026-11-08-web-app-design.md`;
+reference mockups: `webapp/mockups/`. It needs `uv` and Node.
+
+- **Start it** in your own terminal: double-click `webapp/start.command`, or run `make web`. The
+  first start installs the pinned dependencies and builds the front end; later starts skip what is
+  current. It refuses to start in a Claude Code shell.
+- **Sign in** with the one-time link the server prints in that window
+  (`http://127.0.0.1:8765/signin?token=...`). The link works once. Restarting prints a new one.
+- **Sign out** by closing the Terminal window. That stops the server and ends the session.
+- **Main or Trial.** When `registry/trial.db` exists, the header switches between the two
+  registers. A banner shows while Trial is selected.
+- **Tests:** `make test-web` runs the back end and front end tests.
+
 ## What the guard blocks
 
 Claude Code may draft risks and DFD changes in this project, but it may not approve anything or
 change the registry. Four layers enforce this. The first three block, and the fourth detects what
-gets past them.
+gets past them. The web app has its own lock, described after the four layers.
 
 The hook and the permission rules load only when Claude Code starts in this folder
 (`~/Developer/threat-models`). A Claude session started anywhere else, such as the sibling guide
@@ -202,7 +219,7 @@ repo, is not guarded by them, even when it works on files here.
      exactly those forms.
    - The deny rules cover the human-only subcommands, the other ways of invoking tmreg, terminal
      wrappers, inline interpreters, `sqlite3`, and git `checkout`, `restore`, `reset`, and `stash`.
-     They also deny edits to `registry/`, `.claude/`, `systems/*/register.md`, `tmreg`,
+     They also deny edits to `registry/`, `.claude/`, `webapp/`, `systems/*/register.md`, `tmreg`,
      `project.toml`, and `CLAUDE.md`. A deny rule beats any allow rule.
    - Deny rules apply right away. The allow rules, and the read access to the guide in
      `additionalDirectories`, apply only after you accept the workspace-trust dialog for this
@@ -210,6 +227,29 @@ repo, is not guarded by them, even when it works on files here.
 4. **Detection.** `./tmreg verify <slug>` checks the change log's hash chain and its triggers. It
    also replays the log and compares the result with the stored rows, so an edit made outside
    tmreg shows up. `/tm-model` runs it first and stops on a failure.
+
+**The web app's lock.** The web app can approve, so its API is locked more tightly than a normal
+local server. Every `/api` route needs two things, and without both the answer is 401:
+- **The session cookie.** It is `HttpOnly` and `SameSite=Strict`. Cookies are shared across
+  `localhost` ports, so another local server you open in the browser would receive it, and the
+  cookie alone opens nothing.
+- **The CSRF token in the `X-CSRF-Token` header.** Sign-in redirects to `/#k=<token>`. The fragment
+  never reaches a server. The front end keeps the token in `localStorage` (per origin, so per port),
+  removes it from the address bar, and sends it on every `/api` request, reads included. Report
+  downloads go through the same client, so they carry it too.
+
+Also:
+- The server refuses to start without an interactive terminal or when `CLAUDECODE` is set, so a
+  Claude Code shell cannot start it. The sign-in link is printed only in that window, works once,
+  and is held in memory.
+- It binds `127.0.0.1` and refuses any other `Host`, which blocks DNS rebinding. Writes also need an
+  `Origin` equal to the app's own. There is no CORS, and no API key or stored password.
+- Every response carries a Content-Security-Policy that allows only the app's own scripts, images,
+  fonts, and connections. Every `/api` response is `Cache-Control: no-store`. Websockets are refused.
+- Each write route names one system and at most one risk. There is no approve-all.
+- `Edit(/webapp/**)` is a deny rule in `.claude/settings.json`, and the guard's allow-list already
+  blocks starting the server and every command that makes web requests.
+- `webapp/backend/tests/test_lock.py` walks every `/api` route and expects 401 without a session.
 
 **Limits.**
 - In a session started in this project, these controls stop Claude, and anything else run
@@ -229,6 +269,8 @@ repo, is not guarded by them, even when it works on files here.
   includes MCP tools that write local files or send data out, for example browser, mail, or drive
   connectors, so keep such servers off for this project. `/tm-model` disallows the built-in web
   tools (WebFetch and WebSearch) for its run, but not MCP tools.
+- A browser-automation tool working in your signed-in browser, such as Claude in Chrome, can act
+  as you in the web app. Never grant it `127.0.0.1` or `localhost`.
 - The upgrade path, which is not built, is signed approvals: each approval is signed with the
   reviewer's SSH key, and the registry rejects an approved row without a valid signature.
   `webapp/DESIGN.md` section 5 describes it.
