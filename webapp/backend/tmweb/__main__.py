@@ -24,8 +24,11 @@ def main(argv: list[str] | None = None, *, root: Path = REPO_ROOT) -> int:
         return 1
 
     # Bind before printing the link, so the link never points at another process holding the
-    # port. SO_REUSEADDR stays unset (the default), so a held port always fails here.
+    # port. SO_REUSEADDR lets a restart bind past the TIME_WAIT connections a just-stopped app
+    # leaves; a socket still listening on 127.0.0.1:<port> makes the bind fail all the same.
+    # Never set SO_REUSEPORT, which would let two listeners share the port.
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind(("127.0.0.1", args.port))
     except OSError:

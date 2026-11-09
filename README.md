@@ -142,8 +142,8 @@ reference mockups: `webapp/mockups/`. It needs `uv` and Node.
   every time. It refuses to start in a Claude Code shell.
 - **Sign in** with the one-time link the server prints in that window
   (`http://127.0.0.1:8765/signin?token=...`). The link works once. Restarting prints a new one.
-  If port 8765 is taken, by the app in another window or briefly by one you just stopped, the
-  server says so and prints no link.
+  If port 8765 is taken, for example by the app in another window, the server says so and prints
+  no link.
 - **Sign out** by closing the Terminal window. That stops the server and ends the session.
 - **Main or Trial.** When `registry/trial.db` exists, the header switches between the two
   registers. A banner shows while Trial is selected.

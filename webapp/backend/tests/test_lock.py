@@ -3,6 +3,7 @@ import re
 import socket
 from unittest import mock
 
+import pytest
 
 import tmreg.core
 from conftest import api_routes
@@ -173,6 +174,9 @@ def test_main_prints_one_time_link_after_binding(project, capsys, human):
         (sock,) = sockets
         seen["addr"] = sock.getsockname()
         seen["reuse"] = sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)
+        seen["reuseport"] = (
+            sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT) if hasattr(socket, "SO_REUSEPORT") else 0
+        )
 
     # Port 0: the OS picks a free port, so the test never collides with a running app.
     with mock.patch("uvicorn.Server.run", autospec=True, side_effect=fake_run) as run:
@@ -180,12 +184,18 @@ def test_main_prints_one_time_link_after_binding(project, capsys, human):
     run.assert_called_once()
     host, port = seen["addr"]
     assert host == "127.0.0.1" and port != 0
-    assert seen["reuse"] == 0
+    assert seen["reuse"] != 0  # SO_REUSEADDR: TIME_WAIT from a just-stopped app does not block
+    assert seen["reuseport"] == 0  # never SO_REUSEPORT: that would let two apps share the port
     assert re.search(rf"http://127\.0\.0\.1:{port}/signin\?token=\S{{40,}}", seen["out"])
 
 
-def test_main_refuses_when_port_is_taken(project, capsys, human):
+@pytest.mark.parametrize("holder_reuseaddr", [False, True], ids=["plain-listener", "reuseaddr-listener"])
+def test_main_refuses_when_port_is_taken(project, capsys, human, holder_reuseaddr):
+    # A socket still listening on the port, such as an app in another window (which sets
+    # SO_REUSEADDR too), makes the bind fail even though main() sets SO_REUSEADDR.
     held = socket.socket()
+    if holder_reuseaddr:
+        held.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     held.bind(("127.0.0.1", 0))
     held.listen()
     port = held.getsockname()[1]
@@ -200,6 +210,28 @@ def test_main_refuses_when_port_is_taken(project, capsys, human):
     )
     assert "token=" not in captured.out
     run.assert_not_called()
+
+
+def test_main_starts_right_after_a_stopped_app(project, capsys, human):
+    # An app that just stopped leaves its closed connections in TIME_WAIT on the port. Its socket
+    # was created with SO_REUSEADDR, then closed; a later start must still bind.
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen()
+    port = srv.getsockname()[1]
+    cli = socket.create_connection(("127.0.0.1", port))
+    conn, _ = srv.accept()
+    conn.close()  # the server side closes first, as uvicorn does at shutdown
+    assert cli.recv(1) == b""
+    cli.close()
+    srv.close()
+    with mock.patch("uvicorn.Server.run") as run:
+        assert main(["--port", str(port)], root=project) == 0
+    run.assert_called_once()
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert re.search(rf"http://127\.0\.0\.1:{port}/signin\?token=\S{{40,}}", captured.out)
 
 
 def test_main_default_port_is_8765(project, capsys, human):
