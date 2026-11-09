@@ -31,6 +31,13 @@ TEMPLATE_PATH = Path("docs/templates/threat-model-document.md")
 LIST_FIELDS = ("elements", "control_refs")
 
 _RISK_ID_RE = re.compile(r"(P?T)-([0-9]+)")
+_ROUTE_END_RE = re.compile(r"[ASCK][0-9]+")
+_OPEN_STATUSES = ("open", "planned", "in-progress")
+
+
+def _natural(item_id: str) -> tuple:
+    """R2 before R10: text and numbers compared as such."""
+    return tuple(int(p) if p.isdigit() else p for p in re.split(r"([0-9]+)", item_id) if p)
 _DFD_APPROVAL_RE = re.compile(r"DFD-([0-9]+)")
 _MODEL_APPROVAL_RE = re.compile(r"MODEL-([0-9]+)")
 _C4_ID_RE = re.compile(r"(A|S|C|K|R|TB|N|I|ENV|SEQ)([1-9][0-9]*)", re.ASCII)
@@ -639,6 +646,92 @@ class Registry:
         if row is None:
             raise RegistryError(f"no model approval {approval_id} for {slug}")
         return row["model"]
+
+    # ---- routes and open-risk counts (spec section 7.5) -------------------------------------
+
+    @staticmethod
+    def _risk_bucket(risk: dict) -> str | None:
+        """How a risk counts on a route: "open" (approved, open/planned/in-progress), "pending"
+        (awaiting review, with a live status), or None. Rejected, merged, retired, mitigated,
+        accepted, wont-fix and superseded risks never count."""
+        if risk.get("merged_into") or risk["status"] not in _OPEN_STATUSES:
+            return None
+        if risk["review_state"] == "approved":
+            return "open"
+        if risk["review_state"] == "pending":
+            return "pending"
+        return None
+
+    def _risks_by_cited(self, slug: str) -> dict[str, dict[str, list[str]]]:
+        """{cited ID: {"open": [risk IDs], "pending": [risk IDs]}}, risk IDs in id_sort_key order."""
+        out: dict[str, dict[str, list[str]]] = {}
+        for risk in self.list_risks(slug):  # sorted by id_sort_key
+            bucket = self._risk_bucket(risk)
+            if bucket is None:
+                continue
+            for cited in risk.get("elements") or ():
+                out.setdefault(cited, {"open": [], "pending": []})[bucket].append(risk["id"])
+        return out
+
+    def open_risk_counts(self, slug) -> dict[str, dict[str, int]]:
+        """{cited ID: {"open": n, "pending": m}} for IDs with at least one counted risk."""
+        self._require(slug)
+        return {cid: {k: len(v) for k, v in b.items()}
+                for cid, b in self._risks_by_cited(slug).items()}
+
+    def c4_routes(self, slug, from_id: str, to_id: str, *, max_hops: int = 6,
+                  max_chains: int = 25) -> list[dict]:
+        """Chains of paths from one item to another, each with the risks along it.
+
+        Nodes are the path ends (A, S, C, K); every path is an edge taken in either direction
+        (`against_arrow` marks a hop taken from destination to source). A system or container
+        end also stands for everything inside it (ruling R22): a chain starts at the item or any
+        of its descendants and ends when it first reaches the target or any of its descendants.
+        Chains are simple (no node twice), sorted by hop count then by the hop path IDs."""
+        self._require(slug)
+        record = self._require_model(slug)["model"]
+        items, rels = record["items"], record["rels"]
+        for iid in (from_id, to_id):
+            if not _ROUTE_END_RE.fullmatch(str(iid)) or iid not in items:
+                raise RegistryError(f"{iid} is not a person, system, container or component "
+                                    f"in the approved model of {slug}")
+        inside = lambda root: {i for i, it in items.items() if root in it["where"]}  # noqa: E731
+        starts, targets = inside(from_id) - inside(to_id), inside(to_id)
+        adj: dict[str, list[tuple[str, str, bool]]] = {}
+        for rid, r in rels.items():
+            adj.setdefault(r["source"], []).append((rid, r["destination"], False))
+            adj.setdefault(r["destination"], []).append((rid, r["source"], True))
+        found: list[list[tuple[str, str, str, bool]]] = []
+
+        def walk(node, seen, hops):
+            if len(hops) >= max_hops:
+                return
+            for rid, nxt, against in adj.get(node, ()):
+                if nxt in seen:
+                    continue
+                step = hops + [(rid, node, nxt, against)]
+                if nxt in targets:
+                    found.append(step)
+                else:
+                    walk(nxt, seen | {nxt}, step)
+
+        for start in sorted(starts):
+            walk(start, {start}, [])
+        found.sort(key=lambda c: (len(c), [_natural(h[0]) for h in c]))
+        by_cited = self._risks_by_cited(slug)
+        none = {"open": [], "pending": []}
+        chains = []
+        for chain in found[:max_chains]:
+            nodes = [chain[0][1]] + [h[2] for h in chain]
+            chains.append({
+                "hops": [{"path": rid, "from": a, "to": b, "against_arrow": against,
+                          "crossings": rels[rid]["crossings"],
+                          "risks": {k: list(v) for k, v in by_cited.get(rid, none).items()}}
+                         for rid, a, b, against in chain],
+                "elements": {n: {k: list(v) for k, v in by_cited.get(n, none).items()}
+                             for n in nodes},
+            })
+        return chains
 
     def c4_status(self, slug) -> ModelStatus:
         self._require(slug)
