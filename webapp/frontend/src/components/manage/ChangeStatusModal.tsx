@@ -1,4 +1,5 @@
 import { Alert, Button, Group, Modal, Select, Stack, Textarea } from '@mantine/core'
+import { useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { apiPath } from '../../api/client'
 import { useAction } from '../../api/queries'
@@ -16,6 +17,10 @@ interface Props {
 
 export function ChangeStatusModal({ reg, slug, risk, meta, opened, onClose }: Props) {
   const action = useAction(reg, slug)
+  const client = useQueryClient()
+  // `seen` is the record this dialog acts on; a 409 replaces it with the current one.
+  const [seen, setSeen] = useState<Risk>(risk)
+  const [stale, setStale] = useState(false)
   const [status, setStatus] = useState<string | null>(risk.status)
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
@@ -27,15 +32,22 @@ export function ChangeStatusModal({ reg, slug, risk, meta, opened, onClose }: Pr
     inFlight.current = true
     setBusy(true)
     setError(null)
+    setStale(false)
     try {
       await action.mutateAsync({
         path: apiPath(reg, slug, 'risks', risk.id, 'edit'),
-        body: { fields: { status }, seen: risk, reason },
+        body: { fields: { status }, seen, reason },
       })
       onClose()
     } catch (e) {
       const f = failure(e)
-      setError(f.kind === 'stale' ? STALE_TEXT : f.message)
+      if (f.kind === 'stale') {
+        setStale(true)
+        if (f.current) setSeen(f.current)
+        void client.invalidateQueries({ queryKey: [reg, slug] })
+      } else {
+        setError(f.message)
+      }
     } finally {
       inFlight.current = false
       setBusy(false)
@@ -45,6 +57,11 @@ export function ChangeStatusModal({ reg, slug, risk, meta, opened, onClose }: Pr
   return (
     <Modal opened={opened} onClose={busy ? () => {} : onClose} title="Change status" centered>
       <Stack gap="sm">
+        {stale && (
+          <Alert color="yellow">
+            {STALE_TEXT} Current status: {seen.status ?? 'none'}.
+          </Alert>
+        )}
         <Select
           label="Status"
           data={meta.statuses}

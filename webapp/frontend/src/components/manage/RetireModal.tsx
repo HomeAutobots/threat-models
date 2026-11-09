@@ -1,4 +1,5 @@
 import { Alert, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core'
+import { useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { apiPath } from '../../api/client'
 import { useAction } from '../../api/queries'
@@ -16,6 +17,10 @@ interface Props {
 
 export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props) {
   const action = useAction(reg, slug)
+  const client = useQueryClient()
+  // `seen` is the record this dialog acts on; a 409 replaces it with the current one.
+  const [seen, setSeen] = useState<Risk>(risk)
+  const [stale, setStale] = useState(false)
   const [reason, setReason] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -31,15 +36,22 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
     inFlight.current = true
     setBusy(true)
     setError(null)
+    setStale(false)
     try {
       await action.mutateAsync({
         path: apiPath(reg, slug, 'risks', risk.id, 'retire'),
-        body: { reason, seen: risk },
+        body: { reason, seen },
       })
       onClose()
     } catch (e) {
       const f = failure(e)
-      setError(f.kind === 'stale' ? STALE_TEXT : f.message)
+      if (f.kind === 'stale') {
+        setStale(true)
+        if (f.current) setSeen(f.current)
+        void client.invalidateQueries({ queryKey: [reg, slug] })
+      } else {
+        setError(f.message)
+      }
       setConfirming(false)
     } finally {
       inFlight.current = false
@@ -50,6 +62,11 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
   return (
     <Modal opened={opened} onClose={busy ? () => {} : onClose} title={`Retire ${risk.id}`} centered>
       <Stack gap="sm">
+        {stale && (
+          <Alert color="yellow">
+            {STALE_TEXT} Current status: {seen.status ?? 'none'}.
+          </Alert>
+        )}
         {error !== null && (
           <Alert color="red" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
             {error}

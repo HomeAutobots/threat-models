@@ -75,7 +75,7 @@ describe('ChangeStatusModal', () => {
     await user.click(await screen.findByRole('combobox', { name: 'Status' }))
     await user.click(await screen.findByRole('option', { name: 'accepted' }))
     await user.click(screen.getByRole('button', { name: 'Save status' }))
-    expect(await screen.findByText('This risk changed after you opened it. Review the current version.')).toBeInTheDocument()
+    expect(await screen.findByText(/This risk changed after you opened it\. Review the current version\./)).toBeInTheDocument()
   })
 
   it('escapes a 422 detail', async () => {
@@ -86,5 +86,21 @@ describe('ChangeStatusModal', () => {
     await user.click(await screen.findByRole('option', { name: 'accepted' }))
     await user.click(screen.getByRole('button', { name: 'Save status' }))
     expect(await screen.findByText('bad\\u202egnp')).toBeInTheDocument()
+  })
+
+  it('after a 409 the next submit posts seen equal to current, with the typed reason and chosen status', async () => {
+    const current = { ...risk, title: 'B', status: 'accepted' } as Risk
+    reply = () => json({ detail: 'x', current }, 409)
+    renderModal()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('combobox', { name: 'Status' }))
+    await user.click(await screen.findByRole('option', { name: 'mitigated' }))
+    fireEvent.change(screen.getByLabelText('Reason (optional)'), { target: { value: 'because' } })
+    await user.click(screen.getByRole('button', { name: 'Save status' }))
+    expect(await screen.findByText(/Review the current version\. Current status: accepted\./)).toBeInTheDocument()
+    reply = () => json({ risk: current })
+    await user.click(screen.getByRole('button', { name: 'Save status' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1].body).toEqual({ fields: { status: 'mitigated' }, seen: current, reason: 'because' })
   })
 })

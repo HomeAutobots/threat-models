@@ -10,6 +10,7 @@ const risk = { id: 'T-1', status: 'open', review_state: 'approved', title: 'A' }
 const CONFIRM = "Retire T-1? It stays in the register under Retired and can't be edited."
 
 let posts: { url: string; body: any }[]
+let reply409: Risk | null
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -17,11 +18,13 @@ function json(body: unknown, status = 200) {
 
 beforeEach(() => {
   posts = []
+  reply409 = null
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
       if (init?.method === 'POST') {
         posts.push({ url, body: JSON.parse(String(init.body)) })
+        if (reply409) return json({ detail: 'x', current: reply409 }, 409)
         return json({ risk: { ...risk, status: 'retired' } })
       }
       return json({})
@@ -79,5 +82,22 @@ describe('RetireModal', () => {
     fireEvent.click(go)
     fireEvent.click(go)
     await waitFor(() => expect(posts).toHaveLength(1))
+  })
+
+  it('after a 409 the next submit posts seen equal to current, with the typed reason', async () => {
+    const current = { ...risk, title: 'B', status: 'accepted' } as Risk
+    reply409 = current
+    renderModal()
+    const reason = 'y'.repeat(25)
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: reason } })
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    expect(await screen.findByText(/Review the current version\. Current status: accepted\./)).toBeInTheDocument()
+    expect((screen.getByLabelText('Reason') as HTMLTextAreaElement).value).toBe(reason)
+    reply409 = null
+    fireEvent.click(screen.getByRole('button', { name: 'Retire T-1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retire' }))
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1].body).toEqual({ reason, seen: current })
   })
 })
