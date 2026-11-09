@@ -1,3 +1,4 @@
 #!/bin/sh
-# Refuse staged risk data (databases, registers, runs, threat models, inputs, system DFDs).
+# Refuse staged risk data (databases, registers, runs, threat models, inputs, system DFDs and C4
+# models, and exported diagrams).
 exec python3 "$(git rev-parse --show-toplevel)/.githooks/check_risk_paths.py" staged

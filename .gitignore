@@ -15,7 +15,12 @@ systems/*/runs/
 systems/*/inputs/
 systems/*/threat-model.md
 systems/*/dfd.md
-!systems/ordering-platform/dfd.md
+# Each system's C4 model is risk data too, except the reference system's, which is the made-up
+# example the modeling agent copies. Structurizr's JSON and the exported diagrams stay local.
+systems/*/workspace.dsl
+!systems/ordering-platform/workspace.dsl
+systems/*/workspace.json
+diagrams/
 
 # Web app build output and local tool scratch; never risk data.
 webapp/backend/.venv/

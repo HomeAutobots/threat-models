@@ -2,7 +2,8 @@
 """Refuse risk data in git. tmreg creates registers locally; they never enter the repository.
 
 Refused anywhere: database files. Refused under systems/<slug>/: generated registers, run records,
-threat model documents, inputs, and DFDs other than the reference system's.
+threat model documents, inputs, every DFD, C4 models (workspace.dsl) other than the reference
+system's, and Structurizr's workspace.json. Refused under diagrams/: the exported diagrams.
 
     check_risk_paths.py staged          pre-commit: check the staged paths
     check_risk_paths.py push <remote>   pre-push: check every commit being pushed (stdin as git gives it)
@@ -16,7 +17,7 @@ import subprocess
 import sys
 from pathlib import PurePosixPath
 
-REFERENCE_DFDS = {"systems/ordering-platform/dfd.md"}
+REFERENCE_MODELS = {"systems/ordering-platform/workspace.dsl"}
 DB_PATTERNS = ("*.db", "*.db-journal", "*.db-wal", "*.db-shm", "*.sqlite", "*.sqlite3")
 ZERO = "0" * 40
 
@@ -27,6 +28,8 @@ def forbidden(path: str) -> str | None:
     if any(fnmatch.fnmatch(p.name, pat) for pat in DB_PATTERNS):
         return "database file"
     parts = p.parts
+    if len(parts) >= 2 and parts[0] == "diagrams":
+        return "diagrams/ holds exported diagrams of system models"
     if len(parts) >= 4 and parts[0] == "systems" and parts[2] in ("runs", "inputs"):
         return f"{parts[2]}/ holds risk or system data"
     if len(parts) == 3 and parts[0] == "systems":
@@ -34,8 +37,12 @@ def forbidden(path: str) -> str | None:
             return "generated risk register"
         if p.name == "threat-model.md":
             return "threat model document"
-        if p.name == "dfd.md" and path not in REFERENCE_DFDS:
+        if p.name == "dfd.md":
             return "system DFD"
+        if p.name == "workspace.dsl" and path not in REFERENCE_MODELS:
+            return "system C4 model"
+        if p.name == "workspace.json":
+            return "system C4 model (Structurizr JSON)"
     return None
 
 
