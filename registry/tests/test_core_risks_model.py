@@ -2,9 +2,9 @@
 import subprocess
 import unittest
 
-from helpers import (SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
-                     human_terminal, make_registry, seed_dfd_era, seed_dfd_risk, session, start,
-                     write_dfd, write_model)
+from helpers import (FIXTURES, SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields,
+                     approve_model, human_terminal, make_registry, seed_dfd_era, seed_dfd_risk,
+                     session, start, write_dfd, write_model)
 from tmreg.core import RegistryError
 
 NOTE = "Checked against the model checklist."
@@ -56,6 +56,21 @@ class AddTest(TmpTestCase):
         for ok in (["A1"], ["S1"], ["TB1", "TB2"], ["N1"], ["R3", "C3"]):  # any kind but ENV
             with self.subTest(ok=ok):
                 reg.add_risk("demo", ai_fields(elements=ok), run_id=run)
+
+    def test_add_cites_every_kind_but_env(self):  # shop.dsl has SEQ, a group TB, I and K
+        reg = make_registry(self.tmp, approve=False)
+        write_model(reg, "demo", (FIXTURES / "c4" / "shop.dsl").read_bytes())
+        approve_model(reg, "demo")
+        run = start(reg)
+        for ok in ("SEQ1", "TB6", "I1", "K1"):
+            with self.subTest(ok=ok):
+                r = reg.add_risk("demo", ai_fields(title=f"Risk on {ok}", elements=[ok]), run_id=run)
+                self.assertEqual((r["elements"], r["model_approval_id"]), ([ok], "MODEL-1"))
+        self.assertEqual(reg.model_record("demo", "MODEL-1")["items"]["TB6"]["kind"], "group")
+        with self.assertRaises(RegistryError) as cm:
+            reg.add_risk("demo", ai_fields(elements=["ENV1"]), run_id=run)
+        self.assertEqual(str(cm.exception), "unknown element ID(s) for MODEL-1: ENV1")
+        self.assertEqual(len(reg.list_risks("demo")), 4)
 
     def test_add_records_model_approval_id(self):
         reg = make_registry(self.tmp)
@@ -170,6 +185,32 @@ class DfdEraTest(TmpTestCase):
         self.assertEqual(reg.verify("demo"), [])
 
 
+    def test_owner_edit_of_pending_in_dfd_era_moves_the_dfd_basis(self):
+        reg = self.reg
+        seed_dfd_risk(reg, "T-02", ["P1", "F1"])  # pending, on DFD-1
+        write_dfd(reg, "demo", SAMPLE_DFD + b"\n")
+        self.assertEqual(reg.dfd_approve(session(), "demo", NOTE)["id"], "DFD-2")
+        with human_terminal():
+            r = reg.edit_risk("demo", "T-02", {"notes": "Owner confirmed."}, run_id=None)
+        self.assertEqual((r["review_state"], r["dfd_approval_id"], r["model_approval_id"]),
+                         ("pending", "DFD-2", None))
+        self.assertEqual(reg.verify("demo"), [])
+
+
+class NoApprovalTest(TmpTestCase):
+    def test_edit_with_no_approval_at_all(self):
+        reg = make_registry(self.tmp, approve=False)
+        seed_dfd_risk(reg, "T-01", ["P2"], dfd_approval_id=None)  # no approval of either kind
+        before = reg.get_risk("demo", "T-01")
+        run = start(reg)
+        for run_id in (run, None):
+            with self.subTest(run_id=run_id), human_terminal(), \
+                    self.assertRaises(RegistryError) as cm:
+                reg.edit_risk("demo", "T-01", {"owner": "Demo team"}, run_id=run_id)
+            self.assertEqual(str(cm.exception), NO_MODEL)
+        self.assertEqual(reg.get_risk("demo", "T-01"), before)
+
+
 class ImportTest(TmpTestCase):
     def test_import_maps_catalog_ids_through_tm_was(self):
         reg = make_registry(self.tmp, legacy=True)
@@ -183,19 +224,36 @@ class ImportTest(TmpTestCase):
 
     def test_import_expands_splits_and_drops_duplicates(self):
         reg = make_registry(self.tmp, legacy=True, approve=False)
-        # P2 split into C2 and C1; F2 also claimed by R2 alone
+        # C1 claims P1 and P2, so P2 splits into C1 and C2, and P1 adds nothing new after it
         write_model(reg, "demo", edited('"tm.was" "P1"', '"tm.was" "P1, P2"'))
         approve_model(reg, "demo")
+        _set_catalog(reg, "| T-02 | F2, P2 |", "| T-02 | P2, F2, P1 |")
         reg.import_legacy(session(), "demo")
-        self.assertEqual(reg.get_risk("demo", "T-02")["elements"], ["R2", "C1", "C2"])
+        got = {r["id"]: r["elements"] for r in reg.list_risks("demo")}
+        self.assertEqual(got, {"T-01": ["A1", "R1"], "T-02": ["C1", "C2", "R2"], "PT-01": ["C3"]})
 
-    def test_import_keeps_new_style_ids_the_model_has(self):
-        reg = make_registry(self.tmp, legacy=True)
-        catalog = reg.config.framework_path / "docs/reference/reference-system.md"
-        catalog.write_text(catalog.read_text().replace("| PT-01 | D1 |", "| PT-01 | C3, D1, R3 |"))
-        _commit(reg)
-        reg.import_legacy(session(), "demo")
-        self.assertEqual(reg.get_risk("demo", "PT-01")["elements"], ["C3", "R3"])
+    def test_import_refuses_unclaimed_tb_and_new_style_ids(self):  # R20
+        cases = (
+            # TB is the one prefix both grammars share: the model has TB1, but nothing claims it
+            ("TB1", edited('                    "tm.was" "TB1"\n', ""), "| PT-01 | TB1, D1 |"),
+            # a bare new-style ID is not a claim either, though the model has C3
+            ("C3", SAMPLE_WORKSPACE, "| PT-01 | C3 |"),
+        )
+        for n, (bad, data, cell) in enumerate(cases):
+            with self.subTest(bad=bad):
+                reg = make_registry(self.tmp / str(n), legacy=True, approve=False)
+                write_model(reg, "demo", data)
+                approve_model(reg, "demo")
+                self.assertIn(bad, reg.model_approvals("demo")[0]["ids"][bad[:-1]])
+                _set_catalog(reg, "| PT-01 | D1 |", cell)
+                for call in (lambda: reg.import_preview("demo"),
+                             lambda: reg.import_legacy(session(), "demo")):
+                    with self.assertRaises(RegistryError) as cm:
+                        call()
+                    self.assertEqual(str(cm.exception),
+                                     f"PT-01: {bad} is not claimed by any item's tm.was")
+                self.assertEqual(reg.list_risks("demo"), [])
+                self.assertEqual([c for c in reg.history("demo") if c["tbl"] == "risks"], [])
 
     def test_import_refuses_an_unclaimed_id(self):
         reg = make_registry(self.tmp, legacy=True, approve=False)
@@ -218,7 +276,12 @@ class ImportTest(TmpTestCase):
         self.assertEqual(reg.list_risks("demo"), [])
 
 
-def _commit(reg) -> None:
+def _set_catalog(reg, old: str, new: str) -> None:
+    """Edit the guide's catalog and commit it, so the import sees a clean, citable file."""
+    path = reg.config.framework_path / "docs/reference/reference-system.md"
+    text = path.read_text()
+    assert old in text
+    path.write_text(text.replace(old, new, 1))
     fw = str(reg.config.framework_path)
     subprocess.run(["git", "-C", fw, "-c", "user.name=t", "-c", "user.email=t@e.com",
                     "-c", "commit.gpgsign=false", "commit", "-qam", "edit", "--no-verify"],

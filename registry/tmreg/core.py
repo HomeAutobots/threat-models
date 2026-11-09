@@ -1075,18 +1075,14 @@ class Registry:
         latest = self._require_model(slug)
         if not rows:
             raise RegistryError(f"{path} has no catalog rows to import")
-        was, citable = c4.was_map(latest["model"]), _citable(latest)
+        was = c4.was_map(latest["model"])
         prepared = []
         for r in rows:
             elements: list[str] = []
-            for old in r.elements:
-                if old in was:
-                    new = was[old]
-                elif old in citable:  # already a new ID that the model has
-                    new = [old]
-                else:
+            for old in r.elements:  # every catalog ID must be claimed, even one that looks new
+                if old not in was:
                     raise RegistryError(f"{r.id}: {old} is not claimed by any item's tm.was")
-                elements += [e for e in new if e not in elements]
+                elements += [e for e in was[old] if e not in elements]
             try:
                 category = _category(r.category)
             except RegistryError as e:
