@@ -1,9 +1,15 @@
-"""Parser for systems/<slug>/workspace.dsl: a strict, safe subset of the Structurizr DSL.
+"""The C4 model in systems/<slug>/workspace.dsl: a strict, safe subset of the Structurizr DSL.
 
 The agent writes this file, and Structurizr's own tools run `!script` and `!plugin` and can fetch
 from the network. So `parse` accepts only the dialect of the C4 model spec (section 6) and refuses
 anything else with a C4Error whose message starts "line N: ". Every reader goes through it before
-Structurizr sees the bytes. Content rules (required fields, property names, zones) live elsewhere.
+Structurizr sees the bytes.
+
+On a parsed model, `problems` lists every content rule it breaks (spec section 5): required
+fields, property names, tags, zones, paths, zoom-ins, deployment, and views. `zones`, `crossings`
+and `role` compute its trust zones, boundary crossings and DFD roles. `to_record` turns it into
+the canonical JSON an approval stores, and `changes` compares two records (spec section 7.4).
+Everything here is pure: it reads only the model it is given.
 """
 from __future__ import annotations
 
@@ -149,6 +155,8 @@ class Model:
     rels: dict[str, Rel]
     instances: tuple[Instance, ...]
     views: dict[str, View]
+    scope: str | None = None  # the configuration's scope (only "softwaresystem" parses), or None
+    line: int = 1  # the workspace statement's line, where problems with the header are reported
 
     def ids(self) -> dict[str, list[str]]:
         """Every KIND's IDs, sorted by number. SEQ IDs are dynamic view keys; TB includes groups."""
@@ -281,6 +289,7 @@ class _Parser:
     def __init__(self) -> None:
         self.stack: list[tuple[str, str | None, int]] = [("top", None, 0)]  # (block, owner, line)
         self.workspace: tuple[str, str, int] | None = None
+        self.config_scope: str | None = None
         self.flat = False
         self.done: set[tuple[int, str]] = set()  # (block's line, statement) for once-only ones
         self.lines: dict[str, int] = {}  # element and path IDs -> the line defining them
@@ -401,6 +410,7 @@ class _Parser:
         if t != ["scope", "softwaresystem"] or block:
             raise C4Error(f"line {n}: the only configuration is scope softwaresystem")
         self.once("scope", n)
+        self.config_scope = t[1]
 
     def property(self, t, n, block, owner):
         if len(t) != 2 or not _is_str(t[1]) or block:
@@ -560,7 +570,8 @@ class _Parser:
             rels={i: Rel(**d, properties=self.props[i]) for i, d in self.rels.items()},
             instances=tuple(self.instances),
             views={k: View(key=k, kind=v["kind"], scope=v["scope"], env=v["env"], title=v["title"],
-                           steps=tuple(v["steps"]), line=v["line"]) for k, v in self.views.items()})
+                           steps=tuple(v["steps"]), line=v["line"]) for k, v in self.views.items()},
+            scope=self.config_scope, line=ws_line)
 
 
 _METHODS = {"workspace": "workspace_", "!identifiers": "identifiers", "properties": "block",
@@ -590,3 +601,502 @@ def parse(data: bytes) -> Model:
         if tokens:
             p.statement(tokens, n)
     return p.finish(hashlib.sha256(data).hexdigest())
+
+
+# ---- Content rules, zones, crossings, roles and records (spec sections 5 and 7.4)
+
+_WAS = re.compile(r"(E|P|D|F|TB)[0-9]+", re.ASCII)  # an old DFD ID, as dfd.ID_RE
+_ZOOM = re.compile(r"[1-7](, [1-7])*: .+")
+_DATACLASS, _INSPECTION = "tm.dataclass.", "structurizr.inspection."
+_ZONE, _ENFORCED = "tm.zone.", "tm.enforced_by."
+_PROPS = ("tm.owner", "tm.zoom", "tm.enforced_by", "tm.data.stored", "tm.data.sent",
+          "tm.data.returned", "tm.auth", "tm.assumed", "tm.was")
+_PROP_LIST = ("tm.owner, tm.zoom, tm.enforced_by, tm.enforced_by.<TB>, tm.zone.<ENV>, "
+              "tm.data.stored, tm.data.sent, tm.data.returned, tm.auth, tm.assumed, tm.was")
+_DATA = ("tm.data.stored", "tm.data.sent", "tm.data.returned")
+_PATH_NEEDS = {"tm.data.sent": "the data classes it sends, or none",
+               "tm.data.returned": "the data classes it gets back, or none",
+               "tm.auth": "the authentication and authorization on this hop"}
+_PROCESS = ("container", "component")
+# What may carry each kind-specific property, by _what(); tm.assumed and tm.was go anywhere, and
+# tm.zoom, tm.zone.<ENV> and tm.enforced_by.<TB> have rules of their own.
+_PLACES = {
+    "tm.owner": ("containers and components", lambda x: _what(x) in _PROCESS),
+    "tm.enforced_by": ("trust boundary nodes",
+                       lambda x: _what(x) == "deploymentNode" and _kind(x.id) == "TB"),
+    "tm.data.stored": ("containers and components tagged Data store",
+                       lambda x: _what(x) in _PROCESS and "Data store" in x.tags),
+    **{name: ("paths", lambda x: _what(x) == "path") for name in _PATH_NEEDS},
+}
+_TAG_PLACES = {"Data store": ("a container or component", _PROCESS),
+               "External": ("a software system", ("softwareSystem",)),
+               "Async": ("a path", ("path",)),
+               "Trust boundary": ("a deployment node", ("deploymentNode",))}
+_TITLES = {"systemContext": "System context diagram for", "container": "Container diagram for",
+           "component": "Component diagram for", "deployment": "Deployment diagram for"}
+# What `changes` compares; properties leave out tm.was (spec section 7.4).
+_CHANGE_FIELDS = ("name", "description", "technology", "tags", "properties", "parent", "group",
+                  "source", "destination", "crossings", "zones", "title", "steps")
+
+
+def _num(iid: str) -> int:
+    return int(iid[len(_kind(iid)):])
+
+
+def _id_order(iid: str) -> tuple[int, int]:
+    """Sort key for IDs of mixed kinds: by kind, in KINDS order, then by number."""
+    return KINDS.index(_kind(iid)), _num(iid)
+
+
+def _what(x: Item | Rel) -> str:
+    return "path" if isinstance(x, Rel) else x.kind
+
+
+def _parts(value: str) -> list[str]:
+    """A comma-separated property value's entries, stripped; empty entries are kept."""
+    return [p.strip() for p in value.split(",")]
+
+
+def _dataclasses(m: Model) -> dict[str, str]:
+    return {k[len(_DATACLASS):]: v for k, v in m.properties.items() if k.startswith(_DATACLASS)}
+
+
+def _scope_system(m: Model) -> str | None:
+    """The system in scope: the software system without the External tag. When `problems`
+    finds several, the first that has containers, or else the first."""
+    inside = [i.id for i in m.items.values()
+              if i.kind == "softwareSystem" and "External" not in i.tags]
+    holders = {i.parent for i in m.items.values() if i.kind == "container"}
+    return next((s for s in inside if s in holders), inside[0] if inside else None)
+
+
+def _is_tb_node(m: Model, iid: str) -> bool:
+    it = m.items.get(iid)
+    return it is not None and it.kind == "deploymentNode" and _kind(iid) == "TB"
+
+
+def _env_of(m: Model, node: str) -> str | None:
+    """The environment a deployment node sits in."""
+    it = m.items.get(node)
+    while it is not None and it.kind == "deploymentNode":
+        it = m.items.get(it.parent)
+    return it.id if it is not None and it.kind == "deploymentEnvironment" else None
+
+
+def _container_of(m: Model, iid: str) -> str | None:
+    """The container an element is, or sits in."""
+    it = m.items[iid]
+    return iid if it.kind == "container" else it.parent if it.kind == "component" else None
+
+
+class _Places:
+    """Where elements sit in each environment, as chains of TB IDs from outer to inner."""
+
+    def __init__(self, m: Model) -> None:
+        self.m = m
+        self.instances: dict[tuple[str, str], list[Instance]] = {}
+        for inst in m.instances:
+            self.instances.setdefault((inst.of, inst.env), []).append(inst)
+        self.chains: dict[str, list[str]] = {}
+
+    def chain(self, node: str) -> list[str]:
+        """The TB nodes around a deployment node, and the node itself if it is one."""
+        if node not in self.chains:
+            chain, it = [], self.m.items.get(node)
+            while it is not None and it.kind == "deploymentNode":
+                if _kind(it.id) == "TB":
+                    chain.append(it.id)
+                it = self.m.items.get(it.parent)
+            self.chains[node] = chain[::-1]
+        return self.chains[node]
+
+    def of(self, iid: str, env: str) -> list[tuple[Instance | None, list[str]]]:
+        """Each place an A, S, C or K sits in env: (the instance, or None for a tm.zone; chain).
+
+        A container sits at each of its instances, and a component at its container's, inside
+        its group. A system with instances sits at those. A person, or an external system with
+        no instance in env, sits in its tm.zone.<env> node, or in none for outside (or for a
+        zone that is missing or wrong, which `problems` reports). The system in scope sits
+        nowhere: its containers do.
+        """
+        it = self.m.items[iid]
+        if it.kind in _PROCESS:
+            inner = [it.group] if it.group else []
+            return [(i, self.chain(i.node) + inner)
+                    for i in self.instances.get((_container_of(self.m, iid), env), [])]
+        own = [(i, self.chain(i.node)) for i in self.instances.get((iid, env), [])]
+        if own or it.kind == "softwareSystem" and "External" not in it.tags:
+            return own
+        node = it.properties.get(_ZONE + env, "").strip()
+        inside = _is_tb_node(self.m, node) and _env_of(self.m, node) == env
+        return [(None, self.chain(node) if inside else [])]
+
+
+def _union(chains: list[list[str]]) -> list[str]:
+    """Every TB in the chains, outer to inner: by depth, then by number."""
+    depth: dict[str, int] = {}
+    for chain in chains:
+        for d, tb in enumerate(chain):
+            depth[tb] = min(d, depth.get(tb, d))
+    return sorted(depth, key=lambda tb: (depth[tb], _num(tb)))
+
+
+def zones(m: Model) -> dict[str, dict[str, list[str]]]:
+    """Each A, S, C and K's zones in each environment: the TBs around it, outer to inner (spec
+    section 5.6). Several instances give the union of their chains."""
+    places, ids = _Places(m), m.ids()
+    return {iid: {env: _union([chain for _, chain in places.of(iid, env)]) for env in ids["ENV"]}
+            for kind in ("A", "S", "C", "K") for iid in ids[kind]}
+
+
+def crossings(m: Model) -> dict[str, dict[str, list[str]]]:
+    """The TBs each path crosses in each environment, in ID order (spec section 5.6).
+
+    A path crosses the TBs around one end and not the other, unioned over every pair of the
+    ends' places. When both ends sit in one container, only places in the same instance pair up.
+    """
+    places, ids = _Places(m), m.ids()
+    out: dict[str, dict[str, list[str]]] = {}
+    for rid in ids["R"]:
+        r = m.rels[rid]
+        box = _container_of(m, r.source)
+        same = box is not None and box == _container_of(m, r.destination)
+        out[rid] = {}
+        for env in ids["ENV"]:
+            crossed: set[str] = set()
+            for a, chain_a in places.of(r.source, env):
+                for b, chain_b in places.of(r.destination, env):
+                    if not same or a == b:
+                        crossed |= set(chain_a) ^ set(chain_b)
+            out[rid][env] = sorted(crossed, key=_num)
+    return out
+
+
+def role(m: Model, item_id: str) -> str | None:
+    """The item's DFD role (spec section 5.8): External entity, Process, Data store, Data flow,
+    Trust boundary, or None. KeyError for an ID the model lacks."""
+    if item_id in m.rels:
+        return "Data flow"
+    if item_id not in m.items:
+        if item_id in m.views and m.views[item_id].kind == "dynamic":
+            return None
+        raise KeyError(item_id)
+    it = m.items[item_id]
+    if it.kind == "person" or it.kind == "softwareSystem" and "External" in it.tags:
+        return "External entity"
+    if it.kind in _PROCESS:
+        return "Data store" if "Data store" in it.tags else "Process"
+    return "Trust boundary" if _kind(item_id) == "TB" else None
+
+
+def where(m: Model, item_id: str) -> list[str]:
+    """The items enclosing an item, outermost first, ending with the item: ["S1", "C2", "K3"].
+    A path or a sequence stands alone. KeyError for an ID the model lacks."""
+    if item_id in m.rels or item_id in m.views and m.views[item_id].kind == "dynamic":
+        return [item_id]
+    chain = [item_id]
+    parent = m.items[item_id].parent
+    while parent is not None:
+        chain.append(parent)
+        parent = m.items[parent].parent
+    return chain[::-1]
+
+
+def to_record(m: Model) -> dict:
+    """The model as canonical, JSON-safe data: what an approval stores and `changes` compares."""
+    zs, xs, ids = zones(m), crossings(m), m.ids()
+    items, rels = {}, {}
+    for iid in (i for kind in KINDS for i in ids[kind] if i in m.items):
+        it = m.items[iid]
+        items[iid] = {"kind": it.kind, "name": it.name, "description": it.description,
+                      "technology": it.technology, "tags": list(it.tags),
+                      "properties": dict(it.properties), "parent": it.parent, "group": it.group,
+                      "role": role(m, iid), "where": where(m, iid), "zones": zs.get(iid, {})}
+    for rid in ids["R"]:
+        r = m.rels[rid]
+        rels[rid] = {"source": r.source, "destination": r.destination,
+                     "description": r.description, "technology": r.technology,
+                     "tags": list(r.tags), "properties": dict(r.properties), "role": "Data flow",
+                     "crossings": xs[rid]}
+    views = {k: {"kind": v.kind, "scope": v.scope, "env": v.env, "title": v.title,
+                 "steps": list(v.steps)} for k, v in m.views.items()}
+    return {"version": m.version, "name": m.name, "description": m.description,
+            "dataclasses": _dataclasses(m), "items": items, "rels": rels, "views": views}
+
+
+def _comparable(record: dict | None) -> dict[str, dict]:
+    if record is None:
+        return {}
+    seqs = {k: v for k, v in record["views"].items() if v["kind"] == "dynamic"}
+    return {**record["items"], **record["rels"], **seqs}
+
+
+def _field(entry: dict, name: str):
+    value = entry.get(name)
+    if name == "properties" and value is not None:
+        value = {k: v for k, v in value.items() if k != "tm.was"}
+    return value
+
+
+def changes(old: dict | None, new: dict) -> dict:
+    """What differs between two records, by ID, over items, paths and sequences (spec section
+    7.4): {"added": [IDs], "removed": [IDs], "changed": {ID: [fields]}}. tm.was is left out."""
+    a, b = _comparable(old), _comparable(new)
+    changed = {}
+    for iid in sorted(a.keys() & b.keys()):
+        fields = [f for f in _CHANGE_FIELDS if _field(a[iid], f) != _field(b[iid], f)]
+        if fields:
+            changed[iid] = fields
+    return {"added": sorted(b.keys() - a.keys()), "removed": sorted(a.keys() - b.keys()),
+            "changed": changed}
+
+
+def was_map(record: dict) -> dict[str, list[str]]:
+    """Each old DFD ID that a tm.was claims -> the items and paths claiming it, in ID order."""
+    claims: dict[str, set[str]] = {}
+    for iid, entry in [*record["items"].items(), *record["rels"].items()]:
+        for old in _parts(entry["properties"].get("tm.was", "")):
+            if old:
+                claims.setdefault(old, set()).add(iid)
+    return {old: sorted(ids, key=_id_order) for old, ids in sorted(claims.items())}
+
+
+def next_free(m: Model, used: dict[str, set[int]]) -> dict[str, str]:
+    """Each kind's next free ID: one above the highest number in the file or in `used`."""
+    ids = m.ids()
+    top = {kind: max({_num(i) for i in ids[kind]} | set(used.get(kind, ())), default=0)
+           for kind in KINDS}
+    return {kind: f"{kind}{n + 1}" for kind, n in top.items()}
+
+
+def problems(m: Model) -> list[str]:
+    """Every content rule the model breaks (spec section 5), each "line N: ...", in line order.
+    An empty list means the model may be approved."""
+    rules = _Rules(m)
+    for check in (rules.header, rules.text, rules.properties, rules.tags, rules.scope,
+                  rules.zones, rules.paths, rules.zoom, rules.deployment, rules.views):
+        check()
+    rules.found.sort(key=lambda p: p[0])
+    return [f"line {n}: {text}" for n, text in rules.found]
+
+
+class _Rules:
+    """The content rules. Each check adds (line, message) for the item or path at fault."""
+
+    def __init__(self, m: Model) -> None:
+        self.m = m
+        self.found: list[tuple[int, str]] = []
+        self.envs = m.ids()["ENV"]
+        self.in_scope = _scope_system(m)
+        self.classes = set(_dataclasses(m))
+        self.deployed = {(i.of, i.env) for i in m.instances}
+        self.opened = {i.parent for i in m.items.values() if i.kind == "component"}
+
+    def add(self, line: int, text: str) -> None:
+        self.found.append((line, text))
+
+    def header(self) -> None:
+        m = self.m
+        if m.scope != "softwaresystem":
+            self.add(m.line, "the workspace needs configuration { scope softwaresystem }")
+        for name, value in m.properties.items():
+            if name.startswith(_DATACLASS):
+                cls = name[len(_DATACLASS):]
+                if not cls or cls != cls.strip() or "," in cls or cls == "none":
+                    self.add(m.line, f'the workspace declares the data class "{_show(cls)}": a '
+                             'class name is not empty or "none", has no comma, and has no space '
+                             "at either end")
+                    continue
+            elif name != "tm.version" and not (name.startswith(_INSPECTION)
+                                               and name != _INSPECTION):
+                self.add(m.line, f'the workspace has the property "{_show(name)}"; its '
+                         "properties are tm.version, tm.dataclass.<Name> and "
+                         "structurizr.inspection.*")
+                continue
+            if not value.strip():
+                self.add(m.line, f"the workspace's {_show(name)} is empty")
+
+    def text(self) -> None:
+        for it in self.m.items.values():
+            if it.kind not in ("deploymentEnvironment", "group") and not it.description.strip():
+                self.add(it.line, f"{it.id} needs a description")
+            if it.kind in (*_PROCESS, "deploymentNode", "infrastructureNode") \
+                    and not it.technology.strip():
+                self.add(it.line, f"{it.id} needs a technology")
+        for r in self.m.rels.values():
+            if not r.technology.strip():
+                self.add(r.line, f"{r.id} needs a technology: the protocol and transport")
+
+    def properties(self) -> None:
+        for x in [*self.m.items.values(), *self.m.rels.values()]:
+            for name, value in x.properties.items():
+                self.one_property(x, name, value)
+        for it in self.m.items.values():
+            if it.kind in _PROCESS and "tm.owner" not in it.properties:
+                self.add(it.line, f"{it.id} needs tm.owner: the team that owns it")
+            if _is_tb_node(self.m, it.id) and "tm.enforced_by" not in it.properties:
+                self.add(it.line, f"{it.id} needs tm.enforced_by: what enforces the boundary")
+            if it.kind == "group":
+                box = self.m.items[it.parent]
+                if _ENFORCED + it.id not in box.properties:
+                    self.add(box.line, f"{box.id} needs tm.enforced_by.{it.id}: what enforces "
+                             f"its group {it.id}")
+
+    def one_property(self, x: Item | Rel, name: str, value: str) -> None:
+        if name.startswith(_ZONE):
+            env = self.m.items.get(name[len(_ZONE):])
+            if env is None or env.kind != "deploymentEnvironment":
+                return self.add(x.line, f'{x.id} has the property "{_show(name)}", but '
+                                f"{_show(name[len(_ZONE):])} is not an environment")
+        elif name.startswith(_ENFORCED):
+            group = self.m.items.get(name[len(_ENFORCED):])
+            if group is None or group.kind != "group" or group.parent != x.id:
+                return self.add(x.line, f'{x.id} has the property "{_show(name)}", but '
+                                f"{_show(name[len(_ENFORCED):])} is not a group in {x.id}")
+        elif name not in _PROPS:
+            return self.add(x.line, f'{x.id} has the property "{_show(name)}", which is not '
+                            f"allowed; the names are {_PROP_LIST}")
+        if not value.strip():
+            return self.add(x.line, f"{x.id}'s {name} is empty")
+        if name in _PLACES and not _PLACES[name][1](x):
+            return self.add(x.line, f"{x.id} has {name}, which belongs only on {_PLACES[name][0]}")
+        if name.startswith(_ZONE):
+            self.zone(x, name[len(_ZONE):], value.strip())
+        elif name == "tm.zoom":
+            if _what(x) != "container" or x.id not in self.opened:
+                self.add(x.line, f"{x.id} has tm.zoom, but only a container with components "
+                         "takes it")
+            elif not _ZOOM.fullmatch(value):
+                self.add(x.line, f'{x.id}\'s tm.zoom is "{_show(value)}": write the zoom '
+                         'triggers (1 to 7) and a reason, as in "2, 4: holds payment tokens and '
+                         'issues refunds"')
+        elif name == "tm.was":
+            for part in _parts(value):
+                if not _WAS.fullmatch(part):
+                    self.add(x.line, f'{x.id}\'s tm.was holds "{_show(part)}": it lists old DFD '
+                             "IDs (E, P, D, F or TB and a number), separated by commas")
+        elif name in _DATA and value.strip() != "none":
+            parts = _parts(value)
+            if "" in parts:
+                self.add(x.line, f"{x.id}'s {name} has an empty entry: write none, or declared "
+                         "data classes separated by commas")
+            for part in parts:
+                if part and part not in self.classes:
+                    self.add(x.line, f'{x.id}\'s {name} names "{_show(part)}", which no '
+                             "tm.dataclass.<Name> declares: write none, or declared data classes "
+                             "separated by commas")
+
+    def zone(self, x: Item | Rel, env: str, value: str) -> None:
+        if not (_what(x) == "person" or _what(x) == "softwareSystem" and "External" in x.tags):
+            return self.add(x.line, f"{x.id} has tm.zone.{env}, which belongs only on people and "
+                            "External systems")
+        if (x.id, env) in self.deployed:
+            return self.add(x.line, f"{x.id} has an instance in {env}, so its zones come from "
+                            f"there: remove tm.zone.{env}")
+        if value != "outside" and not (_is_tb_node(self.m, value)
+                                       and _env_of(self.m, value) == env):
+            self.add(x.line, f'{x.id}\'s tm.zone.{env} is "{_show(value)}": it must be a TB node '
+                     f"in {env}, or outside")
+
+    def tags(self) -> None:
+        for x in [*self.m.items.values(), *self.m.rels.values()]:
+            for tag in x.tags:
+                what, kinds = _TAG_PLACES[tag]
+                if _what(x) not in kinds:
+                    self.add(x.line, f"{x.id} is tagged {tag}, which only {what} may carry")
+                elif tag == "Trust boundary" and _kind(x.id) != "TB":
+                    self.add(x.line, f"{x.id} is tagged Trust boundary, so its ID must start with "
+                             "TB: give it the next free TB number")
+                elif tag == "Data store" and "tm.data.stored" not in x.properties:
+                    self.add(x.line, f"{x.id} is tagged Data store, so it needs tm.data.stored: "
+                             "the data classes it holds")
+            if _is_tb_node(self.m, x.id) and "Trust boundary" not in x.tags:
+                self.add(x.line, f"{x.id} is a deployment node with a TB ID, so it needs the tag "
+                         "Trust boundary")
+
+    def scope(self) -> None:
+        systems = [i for i in self.m.items.values() if i.kind == "softwareSystem"]
+        inside = [s for s in systems if "External" not in s.tags]
+        if not inside:
+            self.add(self.m.line, "no software system is in scope: the one being modeled has no "
+                     "External tag")
+        for s in inside:
+            if s.id != self.in_scope:
+                self.add(s.line, f"{s.id} has no External tag, but {self.in_scope} is the system "
+                         "in scope: tag every other system External")
+        holders = {i.parent for i in self.m.items.values() if i.kind == "container"}
+        for s in systems:
+            if s.id != self.in_scope and s.id in holders:
+                self.add(s.line, f"{s.id} has containers, but only the system in scope may")
+
+    def zones(self) -> None:
+        for it in self.m.items.values():
+            if it.kind == "person" or it.kind == "softwareSystem" and "External" in it.tags:
+                for env in self.envs:
+                    if (it.id, env) not in self.deployed and _ZONE + env not in it.properties:
+                        self.add(it.line, f"{it.id} needs tm.zone.{env}: the TB node it sits in "
+                                 f"within {env}, or outside")
+
+    def paths(self) -> None:
+        for r in self.m.rels.values():
+            for name, need in _PATH_NEEDS.items():
+                if name not in r.properties:
+                    self.add(r.line, f"{r.id} needs {name}: {need}")
+            if r.source == r.destination:
+                self.add(r.line, f"{r.id} starts and ends at {r.source}: a path joins two "
+                         "different elements")
+            if self.in_scope in (r.source, r.destination):
+                self.add(r.line, f"{r.id} ends at {self.in_scope}, the system in scope: point it "
+                         "at a container or component, so that its crossings are known")
+
+    def zoom(self) -> None:
+        for c in self.m.items.values():
+            if c.kind == "container" and c.id in self.opened and "tm.zoom" not in c.properties:
+                self.add(c.line, f"{c.id} has components, so it needs tm.zoom: the zoom triggers "
+                         "(1 to 7) and a reason")
+
+    def deployment(self) -> None:
+        if not self.envs:
+            self.add(self.m.line, "the model has no deployment environment: add ENV1 with its "
+                     "trust boundaries, so that paths have known crossings")
+        for c in self.m.items.values():
+            if c.kind == "container" and c.parent == self.in_scope:
+                for env in self.envs:
+                    if (c.id, env) not in self.deployed:
+                        self.add(c.line, f"{c.id} has no instance in {env}: every container of "
+                                 f"{self.in_scope} needs one in every environment, so that its "
+                                 "paths have known crossings")
+        held = {i.node for i in self.m.instances} | {
+            i.parent for i in self.m.items.values()
+            if i.kind in ("deploymentNode", "infrastructureNode")}
+        for it in self.m.items.values():
+            if _is_tb_node(self.m, it.id) and it.id not in held:
+                self.add(it.line, f"{it.id} holds nothing: a trust boundary holds at least one "
+                         "node, instance or infrastructure node, or Structurizr does not draw it")
+
+    def views(self) -> None:
+        m, s = self.m, self.in_scope
+        at, owner = (m.items[s].line, s) if s else (m.line, "the workspace")
+        # (key, kind, the scopes it may have, its environment, who needs it, where, its form).
+        # Without a system in scope (a problem already), the scope of context and containers
+        # goes unchecked.
+        required = [("context", "systemContext", {s}, None, owner, at,
+                     f'systemContext {s or "<S>"} "context"'),
+                    ("containers", "container", {s}, None, owner, at,
+                     f'container {s or "<S>"} "containers"')]
+        required += [(f"components-{c.id}", "component", {c.id}, None, c.id, c.line,
+                      f'component {c.id} "components-{c.id}"')
+                     for c in m.items.values() if c.kind == "container" and c.id in self.opened]
+        required += [(f"deployment-{e}", "deployment", {"*", s}, e, e, m.items[e].line,
+                      f'deployment * {e} "deployment-{e}"') for e in self.envs]
+        for key, kind, scopes, env, owner, line, form in required:
+            v, scopes = m.views.get(key), scopes - {None}
+            if v is None:
+                self.add(line, f"{owner} needs the view {form}")
+            elif v.kind != kind or v.env != env or scopes and v.scope not in scopes:
+                self.add(v.line, f'view "{key}" must be {form}')
+            elif v.title.strip() and not v.title.startswith(_TITLES[kind] + " "):
+                self.add(v.line, f'view "{key}"\'s title must start "{_TITLES[kind]}"')
+        for v in m.views.values():
+            if not v.title.strip():
+                self.add(v.line, f'view "{v.key}" has no title')
