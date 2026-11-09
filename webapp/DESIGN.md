@@ -81,7 +81,8 @@ leaves open (a process that can reach core cannot be told apart from a human).
   reviewers' public keys, with the same `tmreg-approval` namespace.
 - **Enforcement.** The registry rejects any approved row without a valid signature, and
   `verify` reports one as a problem. A row edited after approval no longer matches
-  `content_sha256`, so the signature fails.
+  `content_sha256`, so the signature fails. Under the edit rule the owner's own edit keeps the
+  approval, so the owner's edits must be signed too, over the edited content.
 - **Web flow.** Approve builds the payload, asks the local agent to sign it (the dialog appears),
   and passes the signature to core with the note. No new rule is added to the UI.
 
