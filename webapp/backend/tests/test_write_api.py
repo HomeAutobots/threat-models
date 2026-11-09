@@ -2,7 +2,7 @@ from unittest import mock
 
 import helpers
 import pytest
-from fastapi.routing import APIRoute
+from conftest import api_routes
 
 from tmreg.core import Registry
 from tmweb.app import create_app
@@ -121,10 +121,7 @@ def test_human_ops_fail_closed_without_terminal(client, risk):
 
 
 def test_write_routes_name_one_risk(app):
-    # FastAPI 0.162 keeps included routers as lazy wrappers; unwrap them to reach the routes.
-    routes = [r for w in app.routes for r in getattr(getattr(w, "original_router", None),
-                                                    "routes", [w])]
-    posts = [r for r in routes if isinstance(r, APIRoute) and "POST" in r.methods]
+    posts = [r for r in api_routes(app) if "POST" in r.methods]
     assert len(posts) >= 7
     for route in posts:
         names = set(route.param_convertors)

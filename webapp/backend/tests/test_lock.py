@@ -2,9 +2,9 @@ import os
 import re
 from unittest import mock
 
-from fastapi.routing import APIRoute
 
 import tmreg.core
+from conftest import api_routes
 from tmweb.__main__ import main
 
 PARAMS = {"reg": "main", "slug": "demo", "id": "T-01"}
@@ -31,16 +31,18 @@ def test_wrong_token_refused(anon):
 
 
 def test_every_api_route_requires_session(app, anon):
-    seen = 0
-    for route in app.routes:
-        if isinstance(route, APIRoute) and route.path.startswith("/api"):
-            path = route.path.format(**PARAMS)
-            for method in route.methods:
-                seen += 1
-                r = anon.request(method, path)
-                assert r.status_code == 401, (method, route.path)
-                assert r.json() == {"detail": "signed out"}
-    assert seen >= 1
+    routes = api_routes(app)
+    expected = {(m, r.path) for r in routes for m in r.methods}
+    visited = set()
+    for route in routes:
+        path = route.path.format(**PARAMS)
+        for method in route.methods:
+            visited.add((method, route.path))
+            r = anon.request(method, path)
+            assert r.status_code == 401, (method, route.path)
+            assert r.json() == {"detail": "signed out"}
+    assert visited == expected
+    assert len(visited) >= 17  # a broken route unwrap must fail loudly, not pass vacuously
 
 
 def test_unknown_host_refused(anon):

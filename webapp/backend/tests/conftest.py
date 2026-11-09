@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -14,6 +15,19 @@ import helpers  # noqa: E402
 from tmweb.app import create_app  # noqa: E402
 
 BASE = "http://127.0.0.1:8765"
+
+
+def api_routes(app) -> list:
+    """Every APIRoute under /api. FastAPI 0.162 lists included routers as lazy wrappers in
+    app.routes, so unwrap them (recursively) through original_router."""
+    def walk(routes):
+        for r in routes:
+            inner = getattr(r, "original_router", None)
+            if inner is not None:
+                yield from walk(inner.routes)
+            elif isinstance(r, APIRoute):
+                yield r
+    return [r for r in walk(app.routes) if r.path.startswith("/api")]
 
 
 @pytest.fixture
