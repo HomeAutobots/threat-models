@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import unicodedata
 from dataclasses import dataclass
 
 STRUCTURIZR_IMAGE = "structurizr/structurizr:2026.09.19@sha256:721136283c2f9cf1ba69037bc9de136c579d66fdcb2d771cb60546ec68def1a5"
@@ -23,6 +22,8 @@ _ID = re.compile(ID_RE, re.ASCII)
 _VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,31}")
 _KEY_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")  # view keys end up in the viewer's links
 _MAX_DEPTH = 12
+_MAX_DIGITS = 6  # after an ID's prefix; int() refuses over 4,300
+_COMMENTS = ("//", "#", "/*")
 _BOM = b"\xef\xbb\xbf"
 # Structurizr's own tags and selectors, which a style may name besides TAGS.
 _BUILTIN_TAGS = ("Element", "Relationship", "Person", "Software System", "Container", "Component",
@@ -34,7 +35,7 @@ _ELEMENT_STYLE = frozenset("shape background color colour stroke strokeWidth bor
                            "fontSize width height metadata description".split())
 _RELATIONSHIP_STYLE = frozenset("thickness color colour style routing fontSize width position "
                                 "opacity".split())
-_ODD = re.compile(r"[^\t -~]")  # anything but tab and printable ASCII: checked by category
+_ODD = re.compile(r"[^\t -~]")  # anything but tab and printable ASCII: checked by isprintable
 _BANG = re.compile(r"![^\W\d_]")  # "!" then a letter, ASCII or not: a directive
 _FLAT = re.compile(r"[ \t]*!identifiers[ \t]+flat[ \t]*")
 _PATH_ENDS = ("person", "softwareSystem", "container", "component")
@@ -184,14 +185,14 @@ def _text(token: str) -> str:
 
 def _check_text(line: str, n: int) -> None:
     """Refuse characters, comments, directives, and substitutions on one line, strings included."""
-    for m in _ODD.finditer(line):
-        if unicodedata.category(m.group()) in ("Cc", "Cf", "Zl", "Zp"):
-            raise C4Error(f"line {n}: character U+{ord(m.group()):04X} is not allowed: no control, "
-                          "invisible formatting, or line separator characters")
+    for m in _ODD.finditer(line):  # the set cli.visible and the web app's visible() mark
+        if not m.group().isprintable():
+            raise C4Error(f"line {n}: character U+{ord(m.group()):04X} is not allowed: only "
+                          "printable characters, spaces and tabs")
     if "\\" in line:
         raise C4Error(f"line {n}: backslashes are not allowed (no escapes or line continuations)")
-    if line.lstrip(" \t").startswith(("//", "#")) or "/*" in line:
-        raise C4Error(f"line {n}: comments are not allowed (// or # at the start of a line, or /*)")
+    if line.lstrip(" \t").startswith(_COMMENTS):
+        raise C4Error(f"line {n}: comments are not allowed (a line starting //, # or /*)")
     bang = _BANG.search(line)
     if bang and not _FLAT.fullmatch(line):
         word = re.match(r'![^\s"]*', line[bang.start():]).group()
@@ -230,10 +231,17 @@ def _tokens(line: str, n: int) -> list[str]:
                               f"string (in {_show(tok)})")
             if '"' in tok:
                 raise C4Error(f"line {n}: a quote inside {_show(tok)}: strings start after a space")
+            if "/*" in tok:
+                raise C4Error(f"line {n}: /* outside a string is refused: Structurizr may read a "
+                              "comment there")
             if tok not in ("{", "}") and ("{" in tok or "}" in tok):
                 raise C4Error(f"line {n}: {{ and }} must be separate words (in {_show(tok)})")
             toks.append(tok)
             i = j
+    # Structurizr looks for a comment in the first token with its quotes removed.
+    if toks and toks[0].strip('"').lstrip(" \t").startswith(_COMMENTS):
+        raise C4Error(f"line {n}: a line may not start with //, # or /*, even in quotes: "
+                      "Structurizr reads it as a comment")
     return toks
 
 
@@ -259,7 +267,14 @@ def _tags(text: str, n: int) -> tuple[str, ...]:
     for tag in tags:
         if tag not in TAGS:
             raise C4Error(f'line {n}: unknown tag "{_show(tag)}"; the tags are ' + ", ".join(TAGS))
+    if len(set(tags)) < len(tags):
+        raise C4Error(f'line {n}: a tag appears twice in "{_show(text)}"')
     return tags
+
+
+def _check_digits(iid: str, n: int) -> None:
+    if len(iid) - len(_kind(iid)) > _MAX_DIGITS:
+        raise C4Error(f"line {n}: {_show(iid)} has more than {_MAX_DIGITS} digits")
 
 
 class _Parser:
@@ -345,6 +360,7 @@ class _Parser:
     def new_id(self, token: str, kinds: tuple[str, ...], what: str, n: int) -> str:
         if not _ID.fullmatch(token):
             raise C4Error(f"line {n}: {_show(token)} is not an ID: IDs match {ID_RE}")
+        _check_digits(token, n)
         if _kind(token) not in kinds:
             raise C4Error(f"line {n}: a {what}'s ID starts with {' or '.join(kinds)}, not {token}")
         if token in self.lines:
@@ -467,6 +483,8 @@ class _Parser:
         key = _text(t[-1])
         if kind == "dynamic" and not (_ID.fullmatch(key) and _kind(key) == "SEQ"):
             raise C4Error(f'line {n}: a dynamic view\'s key is its ID, SEQ<n> (got "{_show(key)}")')
+        if kind == "dynamic":
+            _check_digits(key, n)
         if not _KEY_RE.fullmatch(key):
             raise C4Error(f"line {n}: a view key is up to 64 letters, digits, '-' and '_' "
                           f'(got "{_show(key)}")')

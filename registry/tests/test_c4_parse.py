@@ -79,6 +79,11 @@ class ParseTest(unittest.TestCase):
                            line_of("S1 = softwareSystem"))
         self.assertRefused(mutate('"tm.owner" "Web team"', '"tm.owner" "Web !Include"'),
                            line_of('"tm.owner" "Web team"'))
+        # Java's equalsIgnoreCase folds these letters to ASCII: long s to S, dotless i to I.
+        for word in (f"!{chr(0x17F)}cript", f"!{chr(0x131)}nclude"):
+            with self.subTest(word):
+                self.assertRefused(mutate('"Sells goods online."', f'"Runs {word} at start"'),
+                                   line_of("S1 = softwareSystem"), "directive")
 
     def test_keyword_words_in_text_are_fine(self):
         for iid, field, old, new in (
@@ -115,14 +120,53 @@ class ParseTest(unittest.TestCase):
         for comment in ("// x", "# x", "/* x */"):
             with self.subTest(comment):
                 self.assertRefused(mutate(FLAT, f"{FLAT}    {comment}\n"), line_of(FLAT) + 1)
-        self.assertRefused(mutate('"Sells goods online."', '"Sells /* goods */ online."'),
-                           line_of("S1 = softwareSystem"))
+        # Structurizr looks for a comment in the first token once its quotes are removed.
+        owner = '"tm.owner" "Web team"'
+        for first in ('"/* x"', '"// x"', '"# x"', '" /* x"'):
+            with self.subTest(first):
+                self.assertRefused(mutate(owner, f'{first} "y"'), line_of(owner), "comment")
+        for old, new in (("scope softwaresystem", "scope softwaresystem /*"),
+                         ("background #8c8c8c", "background #8c8c8c/*x*/")):
+            with self.subTest(new):
+                self.assertRefused(mutate(old, new), line_of(old), "comment")
+
+    def test_ordinary_text_is_fine(self):
+        sells = '"Sells goods online."'
+        for text in ("Routes /api/* to the API", "Calls https://example.com",
+                     "Ends with /* not a comment */ here", "Fixes issue #12",
+                     f"Caf{chr(0xE9)} {chr(0x6771)}{chr(0x4EAC)} {chr(0x1F600)} {chr(0x2014)} x"):
+            with self.subTest(text):
+                self.assertEqual(c4.parse(mutate(sells, f'"{text}"')).items["S1"].description, text)
+        owner = '"tm.owner" "Web team"'
+        m = c4.parse(mutate(owner, '"tm.owner" "/* team # 2 // x"'))  # only the first token counts
+        self.assertEqual(m.items["C1"].properties["tm.owner"], "/* team # 2 // x")
+
+    def test_forward_references(self):
+        r8 = '        R8 = A1 -> K3 "R8 Looks up orders using" "HTTPS"\n'
+        m = c4.parse(mutate("        S1 = softwareSystem", r8 + "        S1 = softwareSystem"))
+        self.assertEqual((m.rels["R8"].source, m.rels["R8"].destination), ("A1", "K3"))
+        self.assertLess(m.rels["R8"].line, m.items["K3"].line)
+
+    def test_id_digits(self):
+        c3 = 'C3 = container "C3 Orders DB"'
+        for digits in ("1" * 7, "1" * 5000):  # int() refuses over 4300 digits
+            iid = "C" + digits
+            with self.subTest(len(digits)):
+                self.assertRefused(mutate(c3, f'{iid} = container "{iid} Orders DB"'), line_of(c3),
+                                   "digits")
+        self.assertRefused(mutate('dynamic C2 "SEQ1"', 'dynamic C2 "SEQ1234567"'),
+                           line_of('dynamic C2 "SEQ1"'), "digits")
+        self.assertRefused(mutate("containerInstance C1", "containerInstance C" + "1" * 5000),
+                           line_of("containerInstance C1"))
+        m = c4.parse(SHOP.replace(b"C3", b"C999999"))
+        self.assertEqual(m.ids()["C"], ["C1", "C2", "C999999"])
 
     def test_refuses_bad_text(self):
         s1 = line_of("S1 = softwareSystem")
-        for bad in ("\x07", "\u202e", "\u200b", "\ufeff", "\r", "\x85", "\u2028"):
-            with self.subTest(hex(ord(bad))):
-                self.assertRefused(mutate("Sells goods", f"Sells{bad} goods"), s1)
+        for cp in (0x07, 0x202E, 0x200B, 0xFEFF, 0x0D, 0x85, 0x2028, 0x2029, 0xA0, 0x3000,
+                   0xE000, 0xFFFF):
+            with self.subTest(hex(cp)):
+                self.assertRefused(mutate("Sells goods", f"Sells{chr(cp)} goods"), s1)
         self.assertRefused(SHOP.replace(b"\n", b"\r"), 1)  # old Mac line ends: one long line
         self.assertRefused(mutate("Sells goods", b"Sells \xff goods"), s1, "UTF-8")
         self.assertRefused(mutate("Sells goods", b"Sells \xed\xa0\x80 goods"), s1, "UTF-8")
@@ -188,6 +232,9 @@ class ParseTest(unittest.TestCase):
                 ("string over two lines", mutate('"C1 Web front end"', '"C1 Web\nfront end"'), c1),
                 ("quote in a string", mutate('"C1 Web front end"', '"C1 Web "front" end"'), c1),
                 ("backslash in a string", mutate('"C1 Web front end"', '"C1 Web front\\end"'), c1),
+                ("backslash outside a string",
+                 mutate("scope softwaresystem", "scope softwaresystem " + chr(92)),
+                 line_of("scope softwaresystem")),
                 ("text block", mutate('"C1 Web front end"', '"""C1 Web front end"""'), c1),
                 ("50 nested blocks", mutate(env1, env1 + nest), line_of(env1) + 10),
                 ("component in the model", mutate("        S2 =", stray + "        S2 ="),
@@ -222,6 +269,7 @@ class ParseTest(unittest.TestCase):
         c3 = line_of("C3 = container")
         self.assertRefused(mutate(db, '"PostgreSQL 16" "Database"'), c3, "Database")
         self.assertRefused(mutate(db, '"PostgreSQL 16" "Data store,"'), c3)
+        self.assertRefused(mutate(db, '"PostgreSQL 16" "Data store, Data store"'), c3, "twice")
         m = c4.parse(mutate(db, '"PostgreSQL 16" "Data store, Async"'))
         self.assertEqual(m.items["C3"].tags, ("Data store", "Async"))
         self.assertEqual(c4.parse(SHOP).items["C3"].tags, ("Data store",))
@@ -245,7 +293,7 @@ class ParseTest(unittest.TestCase):
                 ("substitution", sells, '"Sells ${HOME} online."', "S1 = softwareSystem"),
                 ("{ as a string", sells, '"{"', "S1 = softwareSystem"),
                 ("} as a string", owner, '"}" "Web team"', owner),
-                ("non-ASCII outside a string", "S1 = softwareSystem", "S1 =\u00a0softwareSystem",
+                ("non-ASCII outside a string", "S1 = softwareSystem", f"S1 {chr(0xFF1D)} softwareSystem",
                  "S1 = softwareSystem"),
                 ("bad view key", '"components-C2"', '"components/C2"', 'component C2 "')):
             with self.subTest(label):
