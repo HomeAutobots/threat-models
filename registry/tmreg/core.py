@@ -286,7 +286,8 @@ def _editors(changes: list[dict], since_last_approval: bool) -> list[str]:
     if since_last_approval:
         state, last = "pending", -1
         for i, c in enumerate(changes):
-            state = (c["diff"].get("review_state") or [None, state])[1]
+            diff = c["diff"] if isinstance(c["diff"], dict) else {}  # anything else: no state change
+            state = (diff.get("review_state") or [None, state])[1]
             if c["op"] in _APPROVAL_OPS or (
                     c["op"] == "edit" and not c["actor"].startswith("ai:") and state == "approved"):
                 last = i
@@ -945,7 +946,9 @@ class Registry:
         """Who edited a risk, from the change log: distinct actors of its edit ops, in order.
 
         With since_last_approval, only the edits after its latest approve, revert, or import, or
-        every edit if it was never approved. Without it, every edit since creation."""
+        after a human edit that left it approved (an owner edit that keeps the approval resets the
+        list too), or every edit if there was no such baseline. Without it, every edit since
+        creation."""
         return _editors(self.history(slug, risk_id), since_last_approval)
 
     # ---- reports ----------------------------------------------------------------------------

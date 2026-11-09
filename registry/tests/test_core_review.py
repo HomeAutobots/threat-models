@@ -204,6 +204,40 @@ class ReviewTest(TmpTestCase):
         self.assertEqual(self.reg.editors("demo", "T-01", since_last_approval=True),
                          [ai, "human:Test Reviewer"])
 
+    def test_approved_ai_edit_then_human_edit_stays_pending_and_reject_restores_pre_ai(self):
+        self.add_approved()
+        approved = self.reg.get_risk("demo", "T-01")
+        self.edit("AI owner")
+        with human_terminal():
+            r = self.reg.edit_risk("demo", "T-01", {"notes": "Human note."}, run_id=None)
+        self.assertEqual(r["review_state"], "pending")
+        r = self.reg.reject(session(), "demo", "T-01", "Neither change agreed.")
+        for f in model.SNAPSHOT_FIELDS:
+            self.assertEqual(r[f], approved[f], f)
+        self.assertEqual((r["review_state"], r["last_approved"]), ("approved", None))
+        self.assertEqual(self.reg.verify("demo"), [])
+
+    def test_approved_human_edit_then_ai_edit_reject_restores_the_human_version(self):
+        self.add_approved()
+        with human_terminal():
+            self.reg.edit_risk("demo", "T-01", {"owner": "Human owner"}, run_id=None)
+        self.edit("AI owner")
+        r = self.reg.reject(session(), "demo", "T-01", "AI change not agreed.")
+        self.assertEqual((r["owner"], r["review_state"], r["last_approved"]),
+                         ("Human owner", "approved", None))
+        self.assertEqual(self.reg.verify("demo"), [])
+
+    def test_editors_tolerate_a_change_with_a_non_dict_diff(self):  # C4
+        self.add_approved()
+        with human_terminal():
+            self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None)
+        history = self.reg.history("demo", "T-01")
+        for bad in ([1, 2], "x", 5, None):
+            with self.subTest(bad=bad):
+                odd = [dict(c, diff=bad) if c["op"] == "edit" else c for c in history]
+                self.assertEqual(core._editors(odd, True), [])  # not a state change: still approved
+                self.assertEqual(core._editors(odd, False), ["human:Test Reviewer"])
+
     def test_merge(self):
         self.add_approved()
         self.add()  # T-02, pending duplicate
@@ -313,6 +347,7 @@ class ImportLegacyTest(TmpTestCase):
         self.assertEqual(reg.get_risk("demo", "T-01")["review_state"], "pending")
         reg.approve(session(), "demo", "T-01", NOTE)
         self.assertEqual(reg.get_risk("demo", "T-01")["detail_complete"], 1)
+        self.assertEqual(reg.verify("demo"), [])
 
     def _catalog_path(self, reg):
         return reg.config.framework_path / "docs/reference/reference-system.md"

@@ -63,8 +63,9 @@ def _fmt(value) -> str:
 
 
 def format_risk(reg: Registry, slug: str, risk: dict, editors=()) -> str:
-    """The record as the reviewer sees it. editors: who edited it since its last approval (the
-    caller reads them from the change log; see show_risk)."""
+    """The record as the reviewer sees it. editors: who edited it since its last approval or its
+    last owner edit that kept the approval (the caller reads them from the change log; see
+    show_risk)."""
     lines = []
     for f in RISK_FIELDS:
         if f == "last_approved":

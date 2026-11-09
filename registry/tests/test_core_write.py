@@ -386,10 +386,12 @@ class EditRuleTest(TmpTestCase):
         self.reg.approve(session(), "demo", "T-01", NOTE)
 
     def test_human_edit_of_approved_risk_keeps_approval(self):
+        before = self.reg.get_risk("demo", "T-01")
         with tty():
             r = self.reg.edit_risk("demo", "T-01", {"owner": "A. Okafor"}, run_id=None,
                                    note="Owner confirmed in the November review.")
         self.assertEqual((r["review_state"], r["last_approved"], r["owner"]), ("approved", None, "A. Okafor"))
+        self.assertEqual(r["reviewed_at"], before["reviewed_at"])
         self.assertEqual((r["reviewed_by"], r["review_note"]), ("Test Reviewer", NOTE))  # last review kept
         last = self.reg.history("demo", "T-01")[-1]
         self.assertEqual((last["op"], last["actor"], last["note"]),
@@ -413,13 +415,20 @@ class EditRuleTest(TmpTestCase):
         self.assertEqual((r["review_state"], r["dfd_approval_id"]), ("approved", "DFD-2"))
 
     def test_human_edit_of_pending_and_ai_edit_still_move_dfd_approval(self):  # D1 unchanged
+        self.reg.add_risk("demo", ai_fields(), run_id=self.run)  # T-02, pending, on DFD-1
         self._approve_newer_dfd()
-        self.reg.add_risk("demo", ai_fields(), run_id=self.run)  # T-02, pending
         with tty():
             r = self.reg.edit_risk("demo", "T-02", {"owner": "A"}, run_id=None)
         self.assertEqual(r["dfd_approval_id"], "DFD-2")
         r = self.reg.edit_risk("demo", "T-01", {"owner": "B"}, run_id=self.run)
         self.assertEqual((r["review_state"], r["dfd_approval_id"]), ("pending", "DFD-2"))
+
+    def test_run_less_edit_of_approved_risk_in_claude_code_is_refused_and_stays_approved(self):
+        with tty(), mock.patch.dict(os.environ, {"CLAUDECODE": "1"}):
+            with self.assertRaisesRegex(RegistryError, "--run.*started by Claude Code"):
+                self.reg.edit_risk("demo", "T-01", {"owner": "x"}, run_id=None)
+        r = self.reg.get_risk("demo", "T-01")
+        self.assertEqual((r["review_state"], r["owner"], r["last_approved"]), ("approved", None, None))
 
     def test_edit_note_must_be_text(self):
         for bad in (5, ["a"], {"a": 1}):
@@ -554,6 +563,12 @@ class ReadHelpersTest(TmpTestCase):
 
     def test_dfd_approvals(self):
         self.assertEqual([a["id"] for a in self.reg.dfd_approvals("demo")], ["DFD-1"])
+        for i in range(2, 11):  # numeric, not lexical, order: DFD-10 sorts after DFD-9
+            (self.reg.root / "systems/demo/dfd.md").write_bytes(SAMPLE_DFD + b"\n" * i)
+            self.reg.dfd_approve(session(), "demo", NOTE)
+        ids = [a["id"] for a in self.reg.dfd_approvals("demo")]
+        self.assertEqual(ids, [f"DFD-{i}" for i in range(1, 11)])
+        self.assertEqual(self.reg._latest_dfd("demo")["id"], "DFD-10")
 
     def test_dfd_details(self):
         self.assertEqual(self.reg.dfd_details("demo")["P2"]["name"], "Gateway")
