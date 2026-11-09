@@ -6,9 +6,38 @@ import reviewPageSrc from './ReviewPage.tsx?raw'
 import panelSrc from '../components/review/DecisionPanel.tsx?raw'
 import diffSrc from '../components/review/ReReviewDiff.tsx?raw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DecisionPanelProps } from '../components/review/DecisionPanel'
+import type { RiskDetail as Detail } from '../api/types'
 import { makeQueryClient } from '../api/queries'
 import type { Risk, RiskDetail } from '../api/types'
 import { ReviewPage } from './ReviewPage'
+
+// Every render of the panel and the record, in commit order, so a test can see a render that a
+// DOM observer would miss (both renders commit before its first callback).
+const renders = vi.hoisted(() => ({
+  panel: [] as { busy: boolean; dup: string | null | undefined }[],
+  dup: null as string | null | undefined,
+}))
+vi.mock('../components/record/RiskRecord', async (orig) => {
+  const m = await orig<typeof import('../components/record/RiskRecord')>()
+  return {
+    ...m,
+    RiskRecord: (p: { detail: Detail; meta: unknown; history: unknown[]; reloading?: boolean }) => {
+      renders.dup = p.reloading ? null : p.detail.duplicate?.title
+      return <m.RiskRecord {...(p as Parameters<typeof m.RiskRecord>[0])} />
+    },
+  }
+})
+vi.mock('../components/review/DecisionPanel', async (orig) => {
+  const m = await orig<typeof import('../components/review/DecisionPanel')>()
+  return {
+    ...m,
+    DecisionPanel: (p: DecisionPanelProps) => {
+      renders.panel.push({ busy: p.busy, dup: renders.dup })
+      return <m.DecisionPanel {...p} />
+    },
+  }
+})
 
 const STALE = 'This risk changed after you opened it. Review the current version.'
 const NOTE = 'This is a careful review note.'
@@ -84,7 +113,10 @@ function mockApi() {
       if (m && getGate) await getGate
       if (m && failRisk) return json({ detail: 'risk fetch failed \u202e' }, 404)
       if (url.endsWith('/risks') && failList) return json({ detail: 'list <b> \u202e failed' }, 404)
-      if (m) return details[decodeURIComponent(m[1])] ? json(details[decodeURIComponent(m[1])]) : json({ detail: 'none' }, 404)
+      if (m)
+        return details[decodeURIComponent(m[1])]
+          ? json(details[decodeURIComponent(m[1])])
+          : json({ detail: 'none' }, 404)
       if (url.endsWith('/risks')) return json(queue)
       return json({}, 404)
     }),
@@ -282,7 +314,10 @@ describe('ReviewPage', () => {
   })
 
   it('a re-review shows the diff above the record, and restores on reject', async () => {
-    const r = mkRisk('T-1', { notes: 'proposed notes', last_approved: { title: 'Title of T-1', notes: 'approved notes' } })
+    const r = mkRisk('T-1', {
+      notes: 'proposed notes',
+      last_approved: { title: 'Title of T-1', notes: 'approved notes' },
+    })
     queue = [r]
     details = { 'T-1': mkDetail(r) }
     renderPage()
@@ -638,7 +673,7 @@ describe('ReviewPage', () => {
         expect(dup()).toContain('Five title')
       })
 
-      it('no commit enables the buttons while the old context is shown', async () => {
+      it('no render enables the buttons while the replaced context is shown', async () => {
         setup()
         const client = renderPage()
         await type()
@@ -647,20 +682,25 @@ describe('ReviewPage', () => {
         fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
         await screen.findByText(/Could not reload this risk/)
         failRisk = false
-        const seen: { enabled: boolean; dup: string }[] = []
-        const obs = new MutationObserver(() => {
-          const merge = screen.queryByRole('button', { name: 'Merge into T-5' }) as HTMLButtonElement | null
-          const el = document.getElementById('dup')
-          if (merge && el) seen.push({ enabled: !merge.disabled, dup: el.textContent as string })
-        })
-        obs.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
+        renders.panel.length = 0
         await invalidateRisk(client)
         await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
-        obs.disconnect()
-        const enabled = seen.filter((x) => x.enabled)
+        const enabled = renders.panel.filter((x) => !x.busy)
         expect(enabled.length).toBeGreaterThan(0)
-        expect(enabled[0].dup).toContain('Five title')
-        for (const x of enabled) expect(x.dup).not.toContain('Zero title')
+        for (const x of enabled) expect(x.dup).toBe('Five title')
+      })
+
+      it('in the failed state only the failure message shows, not the reloading text', async () => {
+        setup()
+        renderPage()
+        await type()
+        await screen.findByText('Zero title')
+        failRisk = true
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+        expect(await screen.findByText(/Could not reload this risk/)).toBeInTheDocument()
+        expect(screen.queryByText('Reloading this risk…')).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeDisabled()
+        noOldContext()
       })
     })
 

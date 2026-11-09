@@ -261,7 +261,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
             duplicateId={risk.possible_duplicate_of ? visible(risk.possible_duplicate_of) : null}
             noteMin={meta.data.note_min}
             busy={busy || awaiting}
-            reloading={awaiting}
+            reloading={awaiting && !reloadFailed}
             error={error ?? (reloadFailed ? 'Could not reload this risk. Reload the page before deciding.' : null)}
             note={note}
             onNote={setNote}
