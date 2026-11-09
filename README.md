@@ -150,31 +150,56 @@ repo, is not guarded by them, even when it works on files here.
 2. **The hook** (`.claude/hooks/guard.py`, a `PreToolUse` hook) is an allow-list. It runs before
    every Bash, Monitor, Edit, Write, MultiEdit, and NotebookEdit call, and it blocks everything it
    does not name.
-   - **Commands.** Each call is one plain command, with no shell operators, quotes, globs, `$`,
-     redirection, or line breaks. It must be one of these:
+   - **Commands.** A call must be one of these:
      - `./tmreg` with `list`, `show`, `history`, `report`, `verify`, `runs`, `add`, `edit`,
        `dfd status`, `dfd check`, or `run start`. Only that subcommand's own options are allowed,
        spelled in full. `--db` and `--out` are refused, as are their abbreviations, because they
        would point tmreg at another database or write a file anywhere. For `add` and `edit`,
        `--json` must name a `.json` file under `systems/<slug>/runs/<run-id>/`, and `--set` is
        refused, so every AI write leaves its file in the run record.
-     - `git status`, `git diff`, or `git log`, without `--output` or `--ext-diff`.
-     - `ls`.
+     - `git status`, `git diff`, or `git log`, without `--output`, `--ext-diff`, `--no-index`, or
+       an order file (`-O`, `--order-file`), which can open files outside the repo.
+     - A read-only command for searching and reading, alone or joined with `|`: `grep`, `rg`,
+       `find`, `ls`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, or `file`.
+
+     `./tmreg` and git calls are one plain command each, with no shell operators, quotes, globs,
+     `$`, redirection, or line breaks. Read-only commands may also use single quotes, double
+     quotes without `$`, backticks, `\`, or `!`, and a trailing `2>/dev/null` or `2>&1`, so
+     patterns such as `'^## '` and `'token|secret'` work. Unquoted globs are still refused.
+
+     Each read-only command may pass only its own search and display options (`READ_COMMANDS` in
+     the guard). The list is an allow-list because in Claude Code's shell `grep` runs ugrep and
+     `find` runs bfs, and options there run programs or write files: grep's `--filter` and
+     `--save-config`, `rg --pre`, find's `-exec` and `-delete`, and `sort -o`, for example. Options
+     that follow symlinks out of a folder (`grep -R`, `rg -L`, `find -L`) and the options that
+     print or search binary files such as the registry database (`-a`, and rg's `-u`, whose third
+     use searches binaries) are refused too. `grep -r` does not follow symlinks, and `rg
+     --no-ignore --hidden` replaces `rg -uu`.
+     Every path must be inside this project or a folder in `additionalDirectories` (the guide),
+     after symlinks are resolved, and the registry databases are refused: read the registry with
+     `./tmreg`. Relative paths resolve from the project folder, because `cd` is not allowed.
 
      Everything else is blocked. That includes the human-only and other tmreg subcommands, other
      ways of starting tmreg (`tmreg`, `python3 -m tmreg`), interpreters and scripts, terminal
-     wrappers that fake a TTY (`script`, `expect`, `unbuffer`), `sqlite3`, and git commands that
-     roll files back.
+     wrappers that fake a TTY (`script`, `expect`, `unbuffer`), `sqlite3`, `sed`, `awk`, `xargs`,
+     and git commands that roll files back.
    - **Files.** Edit, Write, and MultiEdit may write only `systems/<slug>/dfd.md` and `.md` or
      `.json` files under `systems/<slug>/runs/<run-id>/`. Paths are checked after symlinks are
      resolved. NotebookEdit is always blocked. Other tools, such as Read, Grep, and Glob, pass.
+     Some Claude Code versions have no Grep or Glob tool; the read-only commands stand in for
+     them.
+   - **Searching git-ignored files.** `inputs/`, `threat-model.md`, and every `dfd.md` except the
+     reference system's are git-ignored, and Claude Code's `grep` skips git-ignored files when a
+     search starts at or above the `.gitignore` that names them, as `rg` always does. Pass
+     `--no-ignore-files` to grep and `--no-ignore` to rg to search them.
    - **Fails closed.** A malformed call, a missing project root, or an error inside the guard blocks
      the call. If the guard cannot run at all, `"onFailure": "block"` in the settings blocks the
      call instead.
 3. **Permission rules** (`.claude/settings.json`) are a second layer behind the hook.
-   - The allow rules pre-approve command prefixes and paths, so Claude is not slowed by prompts.
-     They are broader than the forms above: `Bash(./tmreg add:*)` matches any `add` command, for
-     example. The hook narrows them to exactly those forms.
+   - The allow rules pre-approve command prefixes and paths, including each read-only command, so
+     Claude is not slowed by prompts. They are broader than the forms above: `Bash(./tmreg add:*)`
+     matches any `add` command, and `Bash(grep:*)` any grep, for example. The hook narrows them to
+     exactly those forms.
    - The deny rules cover the human-only subcommands, the other ways of invoking tmreg, terminal
      wrappers, inline interpreters, `sqlite3`, and git `checkout`, `restore`, `reset`, and `stash`.
      They also deny edits to `registry/`, `.claude/`, `systems/*/register.md`, `tmreg`,
@@ -195,6 +220,11 @@ repo, is not guarded by them, even when it works on files here.
 - They are not proof against a model actively looking for a new way around them, for example after
   a prompt injection in `inputs/`.
 - They are not a defense against a malicious local user.
+- The guard checks the words Claude sends, not what your shell turns them into. Claude Code's own
+  wrappers (grep runs ugrep, find runs bfs) are covered by the option lists. An alias in your
+  shell profile that points a read-only command at another program is not, and a zsh global
+  alias (`alias -g`) expands anywhere in a command, so it could turn an allowed word into shell
+  syntax. Keep global aliases out of the profile Claude Code's shell loads.
 - The hook checks only the tools named above. A tool it does not name is not checked. That
   includes MCP tools that write local files or send data out, for example browser, mail, or drive
   connectors, so keep such servers off for this project. `/tm-model` disallows the built-in web

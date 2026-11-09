@@ -1,9 +1,11 @@
-"""The approval guard (.claude/hooks/guard.py). Runs against the real project, not a temp dir."""
+"""The approval guard (.claude/hooks/guard.py). Runs against the real project, not a temp dir,
+except the read-path test, which needs folders outside a project of its own."""
 import ast
 import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -59,7 +61,55 @@ BLOCK_FORMS = [
     "./tmreg edit ordering-platform T-34 --run R --set status=accepted",
     "./tmreg list -- ordering-platform",
     "./tmreg dfd", "./tmreg", "git", "git diff --out=x", "git log --ext-dif", "git diff --ext-diff",
+    "git diff --no-index /etc/passwd README.md", "git log 'x'", "git diff -O/etc/passwd",
+    "git diff --order-file=/etc/passwd", "git diff --order=/etc/passwd", "git diff -pO/etc/passwd",
     "ls\n", "", "   ",
+]
+# Read-only search and reading, for drafting a DFD and assessing risk.
+READ_ALLOW = [
+    "grep -rn --no-ignore-files 'data store' systems/ordering-platform",
+    "grep -n '^## ' systems/ordering-platform/dfd.md",
+    "grep -rniE 'token|secret' systems/ordering-platform --include='*.md' --exclude-dir=runs",
+    "grep -c -e foo -e bar README.md", "grep -A 3 -B2 -m 1 Trust systems/ordering-platform/dfd.md",
+    'grep -n "order service" systems/ordering-platform/dfd.md',
+    "grep -rl F18 systems | head -20", "grep -rn x systems 2>&1 | head", "grep -rn -- -x README.md",
+    "grep -oh 'T-[0-9]*' systems/ordering-platform/dfd.md | sort | uniq -c | sort -rn",
+    "rg -n --no-ignore TLS systems/ordering-platform", "rg --files systems",
+    "rg --no-ignore --hidden -g '*.md' x", "git log -S Order --oneline",
+    "find systems -maxdepth 2 -name system.toml",
+    "find systems -type f -name '*.md' -not -path '*/runs/*' 2>/dev/null",
+    "find . '(' -name '*.toml' -o -name '*.md' ')' | wc -l",
+    "ls -la systems/ordering-platform", "ls", "cat systems/ordering-platform/system.toml",
+    "head -n 40 systems/ordering-platform/dfd.md", "head -20 README.md", "tail -n +5 README.md",
+    "wc -l systems/ordering-platform/dfd.md", "cut -d , -f 1 README.md", "sort -k 2 -t , README.md",
+    "file systems/ordering-platform/dfd.md", "file --mime-type README.md", "cat README.md | uniq -c",
+]
+READ_BLOCK = [
+    # options that run programs, write files, follow symlinks out, or print binary files
+    "grep --filter='sh:cat' x README.md", "grep --save-config x", "grep -R x systems", "grep -z x README.md",
+    "grep -a x registry", "grep --text x registry", "grep -Q x", "grep --pager=less x README.md",
+    "rg --pre cat x systems", "rg --pre=cat x", "rg -z x", "rg -L x systems", "rg --hostname-bin=sh x",
+    "rg -a x registry", "rg -uuu -c SQLite registry", "rg -u x",
+    "find systems -exec cat '{}' ';'", "find systems -delete",
+    "find systems -name x -fprint out.txt", "find -L systems", "find systems -execdir ls ';'",
+    "sort -o out.txt README.md", "sort --output=out.txt README.md", "uniq README.md out.txt",
+    "tail -f README.md", "file -C -m x", "head -n",
+    # paths outside the project and the guide, and the registry databases
+    "grep x /etc/passwd", "grep -f /etc/passwd README.md", "grep -e x /etc/passwd", "grep -e x -- /etc/passwd",
+    "cat ../../.ssh/id_rsa", "cat /etc/hosts", "head -n 5 /etc/hosts", "ls /", "find /etc -name passwd",
+    "find systems -newer /etc/passwd", "grep x registry/trial.db", "head registry/registry.db-wal",
+    "cat Registry/REGISTRY.DB", "file registry/registry.db",
+    # shell syntax
+    "grep --include '*.md' x systems", "grep x README.md > out.txt", "grep x README.md >> out.txt",
+    "grep x README.md 2>out.txt", "grep x README.md 2>/dev/nullx", "grep 'x' README.md | sh",
+    'grep "$HOME" README.md', 'grep "`id`" README.md', 'grep "a\\b" README.md', "grep 'x README.md",
+    "grep '' README.md", "cat README.md |", "| cat README.md", "cat README.md || ls", "grep x *.md",
+    "grep x README.md\tls", "ls ~", "cat =ls", "ls | ./tmreg approve ordering-platform T-37",
+    "grep x README.md | ./tmreg list ordering-platform", "cd systems", "cd systems && ls",
+    'ls -la "$(id)"', "ls {a,b}", "ls #x",
+    # commands that are not read-only
+    "sed -n 1,5p README.md", "awk '{print}' README.md", "xargs grep x", "find systems | xargs cat",
+    "echo hi", "tee out.txt", "env grep x README.md", "command grep x README.md",
 ]
 WRITE_ALLOW = ["systems/ordering-platform/dfd.md", "systems/ordering-platform/runs/20261107-01/worksheet.md",
                "systems/ordering-platform/runs/20261107-01/candidates/01.json"]
@@ -97,6 +147,62 @@ class GuardTest(unittest.TestCase):
         for cmd in BLOCK_FORMS:
             with self.subTest(cmd=cmd):
                 self.assertFalse(bash(cmd)[0])
+
+    def test_read_only_commands(self):
+        for cmd in READ_ALLOW:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(bash(cmd), (True, ""))
+        for cmd in READ_BLOCK:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(bash(cmd)[0])
+
+    def test_read_reasons_name_the_rule(self):
+        self.assertIn("-R", bash("grep -R x systems")[1])
+        self.assertIn("--include=VALUE", bash("grep --include '*.md' x systems")[1])
+        self.assertIn("-exec", bash("find systems -exec cat '{}' ';'")[1])
+        self.assertIn("outside", bash("cat /etc/hosts")[1])
+        self.assertIn("./tmreg", bash("cat registry/registry.db")[1])
+        self.assertIn("single quotes", bash('grep "$HOME" README.md')[1])
+        self.assertIn("one plain command", bash("git log 'x'")[1])
+        self.assertIn("grep", bash("sed -n 1,5p README.md")[1])
+
+    def test_read_paths_stay_in_the_project_and_its_additional_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            proj, guide, outside = base / "proj", base / "guide", base / "outside"
+            for folder in (proj / ".claude", guide / "docs", outside):
+                folder.mkdir(parents=True)
+            (proj / ".claude" / "settings.json").write_text(
+                json.dumps({"permissions": {"additionalDirectories": ["../guide"]}}))
+            (guide / "docs" / "a.md").write_text("## A\n")
+            (outside / "s.txt").write_text("secret\n")
+            (proj / "link").symlink_to(outside, target_is_directory=True)
+            (proj / "flink").symlink_to(outside / "s.txt")
+
+            def run(cmd):
+                return guard.decide({"tool_name": "Bash", "tool_input": {"command": cmd}}, proj)[0]
+
+            for cmd in ("grep -n '^## ' ../guide/docs/a.md", f"grep -rn A {guide}/docs",
+                        "find ../guide -name '*.md'", "cat .claude/settings.json"):
+                with self.subTest(cmd=cmd):
+                    self.assertTrue(run(cmd))
+            for cmd in ("cat ../outside/s.txt", "cat link/s.txt", "cat flink", "grep -r x link",
+                        "ls ../outside", "find ../outside", f"head {outside}/s.txt", "ls ..",
+                        "grep -rn A ../guide/../outside"):
+                with self.subTest(cmd=cmd):
+                    self.assertFalse(run(cmd))
+            # without additionalDirectories, the guide is outside too
+            (proj / ".claude" / "settings.json").write_text("{}")
+            self.assertFalse(run("cat ../guide/docs/a.md"))
+            (proj / ".claude" / "settings.json").write_text("not json")
+            self.assertFalse(run("cat ../guide/docs/a.md"))
+            self.assertTrue(run("ls"))
+
+    def test_every_read_command_has_an_allow_rule(self):
+        allow = json.loads((ROOT / ".claude" / "settings.json").read_text())["permissions"]["allow"]
+        for name in guard.READ_COMMANDS:
+            with self.subTest(name=name):
+                self.assertIn(f"Bash({name}:*)", allow)
 
     def test_monitor_gets_the_bash_rules(self):
         self.assertFalse(bash("./tmreg approve ordering-platform T-37", tool="Monitor")[0])

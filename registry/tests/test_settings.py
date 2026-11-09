@@ -16,6 +16,7 @@ GUARD_ARG_SUFFIX = ".claude/hooks/guard.py"
 HUMAN_ONLY = ("review", "approve", "reject", "merge", "retire", "import-legacy", "dfd approve")
 ALLOWED = ("list", "show", "history", "report", "verify", "runs", "dfd status", "dfd check",
            "run start", "add", "edit")
+READ_ONLY = ("grep", "rg", "ls", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "file", "find")
 INVOCATIONS = ("./tmreg", "tmreg", "python3 -m tmreg", "python3 ./tmreg", "python3 tmreg")
 REQUIRED_DENY = [f"Bash(./tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
     f"Bash(tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
@@ -60,6 +61,8 @@ def problems(settings: dict) -> list:
             if not _denied(f"{inv} {sub} ordering-platform", deny)]
     out += [f"./tmreg {sub} is denied, so Claude cannot run it" for sub in ALLOWED
             if _denied(f"./tmreg {sub} ordering-platform", deny)]
+    out += [f"{cmd} is denied, so Claude cannot search or read with it" for cmd in READ_ONLY
+            if _denied(f"{cmd} -n x systems", deny)]
     rules = [r for key in ("allow", "deny", "ask") for r in perms.get(key) or []]
     out += [f"Write rule with a path: {r}" for r in rules if r.startswith("Write(")]
     return out

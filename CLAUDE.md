@@ -27,7 +27,14 @@ else, such as the sibling guide repo, is not guarded. The rules in this file app
 - Write risks: `./tmreg add <slug> --run <run-id> --json systems/<slug>/runs/<run-id>/candidates/<nn>.json`
   and `./tmreg edit <slug> <id> --run <run-id> --json systems/<slug>/runs/<run-id>/candidates/edit-<id>.json`.
   Always pass `--run`. Every add or edit leaves the risk pending review.
-- Also allowed: `git status`, `git diff`, `git log`, `ls`.
+- Also allowed: `git status`, `git diff`, `git log`.
+- Search and read with Read, Grep, and Glob where this Claude Code has them, or with the read-only
+  commands `grep`, `rg`, `find`, `ls`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, and
+  `file`, alone or joined with `|`. Example: `grep -rn --no-ignore-files 'auth' systems/<slug>/inputs`.
+  Quote patterns with single quotes and give long options' values with `=` (`--include='*.md'`).
+  Paths must be in this project or the guide. Use `grep -r`, not `-R`.
+- `inputs/`, `threat-model.md`, and most `dfd.md` files are git-ignored, and Claude Code's grep and
+  rg skip git-ignored files, so pass `--no-ignore-files` to grep or `--no-ignore` to rg.
 
 ## Commands Claude must never run
 `review`, `approve`, `reject`, `merge`, `retire`, `import-legacy`, `dfd approve`, `init-system`.
