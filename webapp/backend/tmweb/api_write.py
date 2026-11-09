@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from tmreg.core import Registry, ReviewerSession, StaleRecord
 
+from .api_read import _row
 from .registry_dep import get_registry
 
 router = APIRouter(prefix="/api")
@@ -107,4 +108,4 @@ async def c4_approve(slug: str, body: ModelApproveBody,
         return JSONResponse({"detail": str(e),
                              "current_sha256": registry.c4_status(slug).current_sha256},
                             status_code=409)
-    return {"approval": row}
+    return {"approval": _row(row)}

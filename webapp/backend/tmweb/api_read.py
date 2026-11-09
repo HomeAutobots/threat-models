@@ -55,29 +55,16 @@ async def risks(slug: str, state: str = "all", registry: Registry = Depends(get_
     return registry.list_risks(slug, state)
 
 
-def _entry(record: dict | None, id: str) -> dict | None:
-    """One cited ID's entry in a model record: an item, a path, or a sequence view."""
-    if record is None:
-        return None
-    return record["items"].get(id) or record["rels"].get(id) or record["views"].get(id)
-
-
 @router.get("/{reg}/systems/{slug}/risks/{id}")
 async def risk_detail(slug: str, id: str, registry: Registry = Depends(get_registry)):
     risk = registry.get_risk(slug, id)
     status = registry.c4_status(slug)
     basis_id = risk.get("model_approval_id")
-    written = registry.model_record(slug, basis_id) if basis_id else None
-    latest = status.latest["model"] if status.latest and status.latest["id"] != basis_id else None
-    elements = {}
-    for e in risk["elements"] or ():
-        w, l = _entry(written, e), _entry(latest, e)
-        elements[e] = {"written": w, "latest": l if l != w else None}
     moved = registry.moved_on(slug, risk)
     duplicate = risk.get("possible_duplicate_of")
     return {
         "risk": risk,
-        "elements": elements,
+        "elements": registry.cited_items(slug, risk),
         "model": {
             "state": status.state,
             "latest_id": status.latest["id"] if status.latest else None,
@@ -106,14 +93,14 @@ async def verify(slug: str, registry: Registry = Depends(get_registry)):
     return {"problems": registry.verify(slug)}
 
 
-STRUCTURIZR_NOT_CHECKED = {"state": "not-checked", "message": None, "base": None, "views": []}
+def _structurizr_not_checked() -> dict:
+    return {"state": "not-checked", "message": None, "base": None, "views": []}
 
 
 @router.get("/{reg}/systems/{slug}/c4")
 async def c4_model(slug: str, registry: Registry = Depends(get_registry)):
     status = registry.c4_status(slug)
-    approvals = [{k: v for k, v in a.items() if k not in ("model", "source")}
-                 for a in registry.model_approvals(slug)]
+    approvals = [_row(a) for a in registry.model_approvals(slug)]
     preview = error = None
     text = ""
     try:
@@ -138,7 +125,7 @@ async def c4_model(slug: str, registry: Registry = Depends(get_registry)):
         "text": text,
         "counts": registry.open_risk_counts(slug),
         "latest_record": status.latest["model"] if status.latest else None,
-        "structurizr": STRUCTURIZR_NOT_CHECKED,
+        "structurizr": _structurizr_not_checked(),
     }
 
 

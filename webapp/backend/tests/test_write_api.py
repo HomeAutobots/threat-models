@@ -109,6 +109,7 @@ def test_c4_approve_and_stale_sha(client, human, project, reg):
     assert r.status_code == 200, r.text
     assert r.json()["approval"]["id"] == "MODEL-2"
     assert r.json()["approval"]["approved_by"] == "Test Reviewer"
+    assert "model" not in r.json()["approval"] and "source" not in r.json()["approval"]
     assert client.get(C4).json()["status"]["state"] == "current"
     path.write_bytes(path.read_bytes().replace(b"fast.", b"faster."))
     r = client.post(C4 + "/approve", json={"note": NOTE, "expected_sha256": sha})
@@ -121,11 +122,11 @@ def test_c4_approve_and_stale_sha(client, human, project, reg):
 
 def test_c4_approve_refusals_are_422(client, human, project, reg):
     path = project / "systems" / "demo" / "workspace.dsl"
-    sha = client.get(C4).json()["status"]["current_sha256"]
+    sha = client.get(C4).json()["preview"]["sha256"]
     r = client.post(C4 + "/approve", json={"note": NOTE, "expected_sha256": sha})
     assert r.status_code == 422 and "already approved" in r.json()["detail"]
     path.write_bytes(path.read_bytes().replace(b"Serves the pages.", b"Serves the pages, fast."))
-    sha = client.get(C4).json()["status"]["current_sha256"]
+    sha = client.get(C4).json()["preview"]["sha256"]
     r = client.post(C4 + "/approve", json={"note": "short", "expected_sha256": sha})
     assert r.status_code == 422 and "20" in r.json()["detail"]
     path.write_bytes(b"garbage")

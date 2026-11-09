@@ -65,7 +65,7 @@ def test_risk_detail_written_and_latest(client, reg, risk):
     assert body["risk"]["id"] == "T-01"
     assert set(body["elements"]) == {"C2", "R2"}
     c2 = body["elements"]["C2"]
-    assert c2["written"]["name"] == "C2 API" and c2["latest"] is None
+    assert c2["written"]["name"] == "C2 API" and c2["latest"] is None and c2["state"] == "same"
     assert body["elements"]["R2"]["written"]["source"] == "C1"
     assert body["model"] == {"state": "current", "latest_id": "MODEL-1",
                              "written_against": "MODEL-1", "moved_on": False, "changed": [],
@@ -83,7 +83,9 @@ def test_risk_detail_when_the_model_moved_on(client, reg, risk):
     c2 = body["elements"]["C2"]
     assert c2["written"]["description"] == "Answers the web app."
     assert c2["latest"]["description"] == "Answers the web app and more."
-    assert body["elements"]["R2"]["latest"] is None
+    assert body["elements"]["C2"]["state"] == "changed"
+    assert body["elements"]["R2"] == {"written": body["elements"]["R2"]["written"], "latest": None,
+                                      "state": "same"}
     assert body["model"] == {"state": "current", "latest_id": "MODEL-2",
                              "written_against": "MODEL-1", "moved_on": True,
                              "changed": ["C2"], "basis": "model"}
@@ -96,13 +98,14 @@ def test_risk_detail_removed_element_has_null_latest(client, reg, risk):
     body = client.get("/api/main/systems/demo/risks/T-01").json()
     assert body["elements"]["R2"]["written"] is not None
     assert body["elements"]["R2"]["latest"] is None
+    assert body["elements"]["R2"]["state"] == "removed"
     assert body["model"]["moved_on"] is True and "R2" in body["model"]["changed"]
 
 
 def test_dfd_era_risk_detail(client, dfd_risk):
     body = client.get("/api/main/systems/demo/risks/T-01").json()
-    assert body["elements"] == {"P2": {"written": None, "latest": None},
-                                "F2": {"written": None, "latest": None}}
+    assert body["elements"] == {"P2": {"written": None, "latest": None, "state": "dfd"},
+                                "F2": {"written": None, "latest": None, "state": "dfd"}}
     assert body["model"] == {"state": "current", "latest_id": "MODEL-1", "written_against": None,
                              "moved_on": False, "changed": [], "basis": "dfd"}
 

@@ -3,9 +3,9 @@ import tomllib
 import unittest
 from unittest import mock
 
-from helpers import (SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
+from helpers import (SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
                      human_terminal, make_registry, seed_dfd_approval, seed_dfd_era, seed_dfd_risk, session, start,
-                     write_dfd, write_model)
+                     write_model)
 from tmreg import db, ledger, model
 from tmreg.core import (HUMAN_ONLY_MSG, RegistryError, ReviewerSession, StaleRecord, id_sort_key,
                         require_interactive)
@@ -469,7 +469,6 @@ class ReadHelpersTest(TmpTestCase):
     def setUp(self):
         super().setUp()
         self.reg = make_registry(self.tmp, approve=False)
-        write_dfd(self.reg, "demo")  # the DFD read helpers stay until the DFD code is removed
         seed_dfd_era(self.reg, "demo")
 
     def test_list_systems(self):

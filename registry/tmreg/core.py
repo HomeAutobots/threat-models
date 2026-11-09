@@ -546,6 +546,37 @@ class Registry:
         return {"moved_on": bool(changed), "written_against": basis, "latest": latest_id,
                 "changed": changed}
 
+    def cited_items(self, slug, risk: dict) -> dict[str, dict]:
+        """What each ID a risk cites looked like when the risk was written and in the latest
+        approval: {id: {"written": entry | None, "latest": entry | None, "state": ...}}.
+
+        An entry is an item, a path or a sequence (dynamic view) of a model record. The state
+        comes from c4.changes, the same meaning of "changed" as moved_on: "same" (`latest` is
+        None), "changed" (`latest` is the new entry), "removed" (gone from the latest approval;
+        `latest` is None), or "dfd" for a risk from before the model, whose IDs are old DFD IDs
+        that no model entry answers to (both entries None)."""
+        elements = list(risk.get("elements") or ())
+        basis = risk.get("model_approval_id")
+        if not basis:
+            return {e: {"written": None, "latest": None, "state": "dfd"} for e in elements}
+        written = self.model_record(slug, basis)
+        latest_row = self._latest_model(slug)
+        latest = latest_row["model"] if latest_row else written
+        delta = c4.changes(written, latest)
+
+        def entry(record: dict, iid: str) -> dict | None:
+            view = record["views"].get(iid)
+            return (record["items"].get(iid) or record["rels"].get(iid)
+                    or (view if view and view["kind"] == "dynamic" else None))
+
+        out = {}
+        for e in elements:
+            w, l = entry(written, e), entry(latest, e)
+            state = ("removed" if e in delta["removed"] else
+                     "changed" if e in delta["changed"] else "same")
+            out[e] = {"written": w, "latest": l if state == "changed" else None, "state": state}
+        return out
+
     def model_record(self, slug, approval_id: str) -> dict:
         self._require(slug)
         row = ledger.read_rows(self.conn, slug, "model_approvals").get(approval_id)

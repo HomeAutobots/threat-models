@@ -2,9 +2,9 @@
 import subprocess
 import unittest
 
-from helpers import (FIXTURES, SAMPLE_DFD, SAMPLE_WORKSPACE, TmpTestCase, ai_fields,
+from helpers import (FIXTURES, SAMPLE_WORKSPACE, TmpTestCase, ai_fields,
                      approve_model, human_terminal, make_registry, seed_dfd_approval, seed_dfd_era, seed_dfd_risk,
-                     session, start, write_dfd, write_model)
+                     session, start, write_model)
 from tmreg.core import RegistryError
 
 NOTE = "Checked against the model checklist."
@@ -327,6 +327,58 @@ class MovedOnTest(TmpTestCase):
         approve_model(reg, "demo")
         self.assertEqual(reg.moved_on("demo", r), {"moved_on": False, "written_against": None,
                                                    "latest": "MODEL-1", "changed": []})
+
+
+class CitedItemsTest(TmpTestCase):
+    def moved(self, elements, new):
+        reg = make_registry(self.tmp)
+        r = reg.add_risk("demo", ai_fields(elements=elements), run_id=start(reg))
+        write_model(reg, "demo", new)
+        approve_model(reg, "demo")
+        return reg, r, reg.cited_items("demo", r)
+
+    def test_same_changed_and_removed(self):
+        reg, r, out = self.moved(["C1", "C2", "R3"], without_c3().replace(
+            b"Answers the web app.", b"Answers the web app well."))
+        self.assertEqual(list(out), ["C1", "C2", "R3"])
+        self.assertEqual(out["C1"]["state"], "same")
+        self.assertEqual(out["C1"]["written"]["name"], "C1 Web app")
+        self.assertIsNone(out["C1"]["latest"])
+        self.assertEqual(out["C2"]["state"], "changed")
+        self.assertEqual(out["C2"]["written"]["description"], "Answers the web app.")
+        self.assertEqual(out["C2"]["latest"]["description"], "Answers the web app well.")
+        self.assertEqual(out["R3"]["state"], "removed")
+        self.assertIsNotNone(out["R3"]["written"])
+        self.assertIsNone(out["R3"]["latest"])
+        # the same meaning of changed as moved_on
+        self.assertEqual(reg.moved_on("demo", r)["changed"], ["C2", "R3"])
+
+    def test_tm_was_only_is_same(self):
+        _, _, out = self.moved(["C2"], edited('"tm.was" "P2"', '"tm.was" "P2, P9"'))
+        self.assertEqual(out["C2"]["state"], "same")
+        self.assertIsNone(out["C2"]["latest"])
+
+    def test_dfd_era_risk_is_dfd_with_nulls_even_for_tb1(self):
+        reg = make_registry(self.tmp, approve=False)
+        seed_dfd_era(reg, "demo")
+        r = seed_dfd_risk(reg, "T-01", ["P2", "TB1"])
+        approve_model(reg, "demo")  # the C4 model has a TB1 too
+        self.assertEqual(reg.cited_items("demo", r), {
+            "P2": {"written": None, "latest": None, "state": "dfd"},
+            "TB1": {"written": None, "latest": None, "state": "dfd"}})
+
+    def test_only_dynamic_views_are_entries(self):
+        reg = make_registry(self.tmp)
+        risk = {"elements": ["containers", "context"], "model_approval_id": "MODEL-1"}
+        out = reg.cited_items("demo", risk)
+        self.assertEqual({k: (v["written"], v["latest"]) for k, v in out.items()},
+                         {"containers": (None, None), "context": (None, None)})
+
+    def test_no_model_approval_yet(self):
+        reg = make_registry(self.tmp, approve=False)
+        seed_dfd_era(reg, "demo")
+        r = seed_dfd_risk(reg, "T-01", ["P2"])
+        self.assertEqual(reg.cited_items("demo", r)["P2"]["state"], "dfd")
 
 
 class SkeletonTest(TmpTestCase):
