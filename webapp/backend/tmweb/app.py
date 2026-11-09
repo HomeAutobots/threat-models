@@ -10,7 +10,7 @@ from tmreg import config
 from .security import (
     COOKIE,
     CSRF_HEADER,
-    HttpOnly,
+    HttpAndLifespanOnly,
     SessionStore,
     _same,
     allowed_hosts,
@@ -40,13 +40,19 @@ def create_app(
 
     @app.middleware("http")
     async def lock(request: Request, call_next):
-        if request.headers.get("host") not in hosts:
-            return JSONResponse({"detail": "unknown host"}, status_code=400)
         path = request.url.path
-        if not (path == "/api" or path.startswith("/api/")):
+        is_api = path == "/api" or path.startswith("/api/")
+        if request.headers.get("host") not in hosts:
+            response = JSONResponse({"detail": "unknown host"}, status_code=400)
+        elif not is_api:
             return await call_next(request)
-        response = await _api_checked(request, call_next)
-        response.headers["Cache-Control"] = "no-store"
+        else:
+            try:
+                response = await _api_checked(request, call_next)
+            except Exception:
+                response = JSONResponse({"detail": "internal error"}, status_code=500)
+        if is_api:
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     async def _api_checked(request: Request, call_next):
@@ -90,5 +96,5 @@ def create_app(
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
             return FileResponse(index)
 
-    app.add_middleware(HttpOnly)  # added last, so it runs first
+    app.add_middleware(HttpAndLifespanOnly)  # added last, so it runs first
     return app

@@ -89,6 +89,7 @@ def test_api_responses_are_not_cached(client, anon):
     assert anon.get("/api/session").headers["cache-control"] == "no-store"
     bad_host = anon.get("/api/session", headers={"Host": "evil.example:8765"})
     assert bad_host.status_code == 400
+    assert bad_host.headers["cache-control"] == "no-store"
     forbidden = client.post("/api/session", headers={"Origin": "http://evil.example"})
     assert forbidden.status_code == 403
     assert forbidden.headers["cache-control"] == "no-store"
@@ -166,3 +167,49 @@ def test_main_prints_one_time_link(project, capsys, human):
     out = capsys.readouterr().out
     assert re.search(r"http://127\.0\.0\.1:8765/signin\?token=\S{40,}", out)
     assert run.call_args.kwargs["host"] == "127.0.0.1"
+
+
+def test_unhandled_error_is_500_no_store_without_leak(project):
+    from fastapi.testclient import TestClient
+
+    from tmweb.app import create_app
+
+    app = create_app(project, port=8765, signin_token="T0KEN")
+
+    @app.get("/api/boom")
+    def boom():
+        raise RuntimeError("secret-detail")
+
+    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+        r = c.get("/signin", params={"token": "T0KEN"}, follow_redirects=False)
+        csrf = r.headers["location"].split("#k=", 1)[1]
+        r = c.get("/api/boom", headers={"X-CSRF-Token": csrf})
+    assert r.status_code == 500
+    assert r.json() == {"detail": "internal error"}
+    assert r.headers["cache-control"] == "no-store"
+    assert "secret-detail" not in r.text
+
+
+def test_unknown_scope_types_are_not_passed_to_the_app():
+    import asyncio
+
+    from tmweb.security import HttpAndLifespanOnly
+
+    calls = []
+
+    async def inner(scope, receive, send):
+        calls.append(scope["type"])
+
+    wrapped = HttpAndLifespanOnly(inner)
+    sent = []
+
+    async def send(m):
+        sent.append(m)
+
+    async def run():
+        for kind in ("http", "lifespan", "websocket", "mystery"):
+            await wrapped({"type": kind}, None, send)
+
+    asyncio.run(run())
+    assert calls == ["http", "lifespan"]
+    assert sent == [{"type": "websocket.close", "code": 1008}]

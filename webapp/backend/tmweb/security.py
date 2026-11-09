@@ -39,17 +39,19 @@ class SessionStore:
             return None
 
 
-class HttpOnly:
-    """ASGI middleware: refuse websocket scopes so nothing bypasses the HTTP lock."""
+class HttpAndLifespanOnly:
+    """ASGI middleware: pass only http and lifespan scopes, so nothing bypasses the HTTP lock."""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "websocket":
+        kind = scope["type"]
+        if kind in ("http", "lifespan"):
+            await self.app(scope, receive, send)
+        elif kind == "websocket":
             await send({"type": "websocket.close", "code": 1008})
-            return
-        await self.app(scope, receive, send)
+        # any other scope type is dropped without calling the app
 
 
 def allowed_hosts(port: int) -> set[str]:
