@@ -66,8 +66,8 @@ function detail(over: Partial<RiskDetail> = {}, riskOver: Partial<Risk> = {}): R
   return {
     risk: { ...risk, ...riskOver },
     elements: {
-      P7: { name: 'Support assistant', type: 'process', description: 'LLM chat' },
-      F19: { name: 'Order lookups', type: 'flow', from: 'P7', to: 'P3', description: 'scoped' },
+      P7: { name: 'Support assistant', type: 'Process', description: 'LLM chat' },
+      F19: { name: 'Order lookups', type: 'Data flow', description: '', from: 'P1', to: 'P2' },
     },
     dfd,
     editors_since_approval: [],
@@ -120,7 +120,11 @@ describe('RiskRecord', () => {
   it('element source label: current', () => {
     renderRecord(detail())
     expect(within(card('where')).getByText('From DFD-1 (current)')).toBeInTheDocument()
-    expect(within(card('where')).getByText('P7 → P3')).toBeInTheDocument()
+    const w = within(card('where'))
+    expect(w.getByText('P1 \u2192 P2')).toBeInTheDocument()
+    expect(w.getByText('Order lookups')).toBeInTheDocument()
+    expect(w.getByText('Data flow')).toBeInTheDocument()
+    expect(w.getByText('Process')).toBeInTheDocument()
   })
 
   it('element source label: changed, with an element missing', () => {

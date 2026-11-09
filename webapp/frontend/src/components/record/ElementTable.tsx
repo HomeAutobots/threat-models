@@ -3,16 +3,6 @@ import type { DfdInfo, ElementDetail } from '../../api/types'
 import { visible } from '../../lib/visible'
 import { NotProvided, WRAP_STYLE } from './FieldValue'
 
-const TYPE_LABELS: Record<string, string> = {
-  process: 'Process',
-  flow: 'Data flow',
-  store: 'Data store',
-  datastore: 'Data store',
-  external: 'External entity',
-  entity: 'External entity',
-  boundary: 'Trust boundary',
-}
-
 export function elementCaption(dfd: DfdInfo): string {
   if (dfd.error) return `DFD details unavailable: ${dfd.error}`
   if (dfd.state === 'none') return 'No approved DFD yet'
@@ -71,12 +61,12 @@ export function ElementTable({
                   ) : (
                     <>
                       <Table.Td style={WRAP_STYLE}>
-                        {el.type === 'flow' && (text(el.from) || text(el.to)) ? (
+                        {text(el.from) || text(el.to) ? (
                           <div>{visible(`${text(el.from)} → ${text(el.to)}`)}</div>
                         ) : null}
                         <div>{visible(el.name)}</div>
                       </Table.Td>
-                      <Table.Td style={WRAP_STYLE}>{visible(TYPE_LABELS[el.type] ?? el.type)}</Table.Td>
+                      <Table.Td style={WRAP_STYLE}>{visible(el.type)}</Table.Td>
                       <Table.Td style={WRAP_STYLE}>
                         {el.description ? visible(el.description) : <NotProvided />}
                       </Table.Td>

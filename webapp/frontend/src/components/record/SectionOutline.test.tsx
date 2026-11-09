@@ -37,7 +37,11 @@ describe('SectionOutline', () => {
         callback([{ target: document.getElementById(id), isIntersecting } as unknown as IntersectionObserverEntry], {} as IntersectionObserver)
       })
     expect(screen.getByTestId('dot-glance')).toHaveAttribute('data-seen', 'false')
+    const item = () => screen.getByTestId('dot-glance').closest('li') as HTMLElement
+    expect(item()).toHaveTextContent('not yet read')
     fire('glance', true)
+    expect(item()).toHaveTextContent(/seen/)
+    expect(item()).not.toHaveTextContent('not yet read')
     expect(screen.getByTestId('dot-glance')).toHaveAttribute('data-seen', 'true')
     fire('glance', false)
     expect(screen.getByTestId('dot-glance')).toHaveAttribute('data-seen', 'true')

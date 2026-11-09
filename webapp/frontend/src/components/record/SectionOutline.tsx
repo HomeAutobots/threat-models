@@ -1,4 +1,4 @@
-import { Box, Text } from '@mantine/core'
+import { Box, Text, VisuallyHidden } from '@mantine/core'
 import { useEffect, useState } from 'react'
 import type { Section } from './sections'
 
@@ -29,6 +29,7 @@ export function SectionOutline({ sections }: { sections: Pick<Section, 'id' | 'n
         {sections.map((s) => (
           <Box component="li" key={s.id} py={4} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <span
+              aria-hidden
               data-testid={`dot-${s.id}`}
               data-seen={seen.has(s.id) ? 'true' : 'false'}
               style={{
@@ -41,6 +42,7 @@ export function SectionOutline({ sections }: { sections: Pick<Section, 'id' | 'n
                 borderColor: seen.has(s.id) ? 'var(--mantine-color-green-6)' : undefined,
               }}
             />
+            <VisuallyHidden>{seen.has(s.id) ? 'seen' : 'not yet read'}</VisuallyHidden>
             <Text component="a" href={`#${s.id}`} size="sm" td="none" c="inherit">
               {s.n} {s.title}
             </Text>
