@@ -26,6 +26,7 @@ REQUIRED_DENY = [f"Bash(./tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
     "Bash(git checkout:*)", "Bash(git restore:*)", "Bash(git reset:*)", "Bash(git stash:*)",
     "Edit(/registry/**)", "Edit(/.claude/**)", "Edit(/systems/*/register.md)", "Edit(/tmreg)",
     "Edit(/project.toml)", "Edit(/CLAUDE.md)", "Edit(/.githooks/**)", "Edit(/.gitignore)",
+    "Edit(/webapp/**)",
 ]
 
 

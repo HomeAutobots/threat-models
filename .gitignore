@@ -16,3 +16,9 @@ systems/*/inputs/
 systems/*/threat-model.md
 systems/*/dfd.md
 !systems/ordering-platform/dfd.md
+
+# Web app build output and local tool scratch; never risk data.
+webapp/backend/.venv/
+webapp/frontend/node_modules/
+webapp/frontend/dist/
+.superpowers/

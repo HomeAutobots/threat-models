@@ -70,7 +70,8 @@
       "Edit(/project.toml)",
       "Edit(/CLAUDE.md)",
       "Edit(/.githooks/**)",
-      "Edit(/.gitignore)"
+      "Edit(/.gitignore)",
+      "Edit(/webapp/**)"
     ],
     "additionalDirectories": [
       "/Users/tylerstandish/Developer/threat-model-framework"
