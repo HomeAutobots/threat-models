@@ -7,6 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 from tmreg import config
 
+from . import errors
+from .api_read import router as read_router
 from .security import (
     COOKIE,
     CSRF_HEADER,
@@ -84,6 +86,9 @@ def create_app(
         project = config.load_project(request.app.state.root)
         trial = (request.app.state.root / "registry" / "trial.db").is_file()
         return {"reviewer": project.reviewer_name, "trial": trial}
+
+    app.include_router(read_router)
+    errors.install(app)
 
     if static_dir is not None:
         index = static_dir / "index.html"
