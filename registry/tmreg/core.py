@@ -1,6 +1,7 @@
 """Registry: every rule. Writes go through ledger.write_row, inside one transaction each."""
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -9,11 +10,12 @@ import sqlite3
 import subprocess
 import sys
 import tomllib
+import urllib.parse
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import catalog, config, db, dfd, ledger, report as report_mod
+from . import c4, catalog, config, db, dfd, ledger, report as report_mod
 from .model import (
     AI_REQUIRED, CONFIDENCE, EDITABLE_FIELDS, HUMAN_REQUIRED, JSON_COLUMNS, KEY_COLUMNS, LINDDUN,
     MIN_LENGTHS, NOTE_MIN, REVIEW_STATES, RISK_FIELDS, SNAPSHOT_FIELDS, STATUSES, STRIDE, SUPERSEDED_RE,
@@ -29,6 +31,7 @@ LIST_FIELDS = ("elements", "control_refs")
 _RISK_ID_RE = re.compile(r"(P?T)-([0-9]+)")
 _DFD_APPROVAL_RE = re.compile(r"DFD-([0-9]+)")
 _MODEL_APPROVAL_RE = re.compile(r"MODEL-([0-9]+)")
+_C4_ID_RE = re.compile(r"(A|S|C|K|R|TB|N|I|ENV|SEQ)([1-9][0-9]*)", re.ASCII)
 _DFD_ID_RE = re.compile(r"(E|P|D|F|TB)([0-9]+)")
 _EXC_RE = re.compile(r"EXC-[0-9]{2,}")
 _SUPERSEDED = re.compile(SUPERSEDED_RE, re.ASCII)
@@ -96,6 +99,13 @@ class ReviewerSession:
 
 @dataclass(frozen=True)
 class DfdStatus:
+    state: str  # "none", "current", or "changed"
+    latest: dict | None
+    current_sha256: str | None
+
+
+@dataclass(frozen=True)
+class ModelStatus:
     state: str  # "none", "current", or "changed"
     latest: dict | None
     current_sha256: str | None
@@ -252,9 +262,18 @@ def _check_elements(elements, latest: dict) -> None:
         raise RegistryError(f"unknown element ID(s) for {latest['id']}: {', '.join(unknown)}")
 
 
+def _model_ids(approval: dict) -> set[str]:
+    return {i for ids in (approval.get("ids") or {}).values() for i in ids}
+
+
 def _dfd_id_key(i: str):
     m = _DFD_ID_RE.fullmatch(i)
     return (dfd.KINDS.index(m.group(1)), int(m.group(2)), "") if m else (len(dfd.KINDS), 0, i)
+
+
+def _model_number(approval: dict) -> int:
+    m = _MODEL_APPROVAL_RE.fullmatch(approval.get("id") or "")
+    return int(m.group(1)) if m else -1
 
 
 def _approval_number(approval: dict) -> int:
@@ -544,6 +563,206 @@ class Registry:
             }, op="dfd-approve", actor=f"human:{session.name}")
         self._write_register(slug, approval_id)
         return ledger.read_rows(self.conn, slug, "dfd_approvals")[approval_id]
+
+    # ---- C4 model ---------------------------------------------------------------------------
+
+    def _c4_path(self, slug: str) -> Path:
+        return self.root / "systems" / slug / "workspace.dsl"
+
+    def _c4_read(self, slug: str) -> bytes:
+        path = self._c4_path(slug)
+        try:
+            return path.read_bytes()
+        except FileNotFoundError:
+            raise RegistryError(f"no workspace.dsl for {slug}: write systems/{slug}/workspace.dsl "
+                                "first") from None
+        except OSError as e:
+            raise RegistryError(f"cannot read {path}: {e.strerror}") from None
+
+    def model_approvals(self, slug) -> list[dict]:
+        self._require(slug)
+        rows = ledger.read_rows(self.conn, slug, "model_approvals")
+        return sorted(rows.values(), key=_model_number)
+
+    def _latest_model(self, slug: str) -> dict | None:
+        rows = self.model_approvals(slug)
+        return rows[-1] if rows else None
+
+    def model_record(self, slug, approval_id: str) -> dict:
+        self._require(slug)
+        row = ledger.read_rows(self.conn, slug, "model_approvals").get(approval_id)
+        if row is None:
+            raise RegistryError(f"no model approval {approval_id} for {slug}")
+        return row["model"]
+
+    def c4_status(self, slug) -> ModelStatus:
+        self._require(slug)
+        latest = self._latest_model(slug)
+        try:
+            path = self._c4_path(slug)
+            current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        except OSError:
+            current = None  # unreadable: reported like a missing file
+        if latest is None:
+            state = "none"
+        elif latest["sha256"] == current:
+            state = "current"
+        else:
+            state = "changed"
+        return ModelStatus(state=state, latest=latest, current_sha256=current)
+
+    def _sibling_path(self) -> Path | None:
+        """The other register of this project (registry.db <-> trial.db), or None."""
+        real = (self.root / "registry" / "registry.db").resolve()
+        trial = (self.root / "registry" / "trial.db").resolve()
+        mine = self.db_path.resolve()
+        return trial if mine == real else real if mine == trial else None
+
+    def _sibling_history(self, slug: str) -> tuple[list[dict], list[dict]]:
+        """(model approvals, DFD approvals) of the sibling register, read-only; empty when it has
+        none. It never runs the schema or the upgrade."""
+        path = self._sibling_path()
+        if path is None or not path.is_file():
+            return [], []
+        uri = "file:" + urllib.parse.quote(str(path)) + "?mode=ro"
+        conn = None
+        try:
+            conn = sqlite3.connect(uri, uri=True)
+            conn.row_factory = sqlite3.Row
+            if not db.system_exists(conn, slug):
+                return [], []
+            dfds = list(ledger.read_rows(conn, slug, "dfd_approvals").values())
+            try:
+                models = list(ledger.read_rows(conn, slug, "model_approvals").values())
+            except sqlite3.OperationalError:
+                models = []  # a v1 database: no model approvals yet
+            return models, dfds
+        except (sqlite3.Error, ValueError) as e:
+            raise RegistryError(f"cannot read {path.name}, so the IDs it used are unknown: {e}") from None
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _c4_assess(self, slug: str, data: bytes) -> dict:
+        """Everything the preview shows, for these bytes. The caller read the file once."""
+        latest = self._latest_model(slug)
+        text = data.decode("utf-8-sig", errors="replace")
+        out = {"sha256": hashlib.sha256(data).hexdigest(), "text": text, "model": None,
+               "record": None, "error": None, "problems": [], "added": [], "removed": [],
+               "changed": {}, "warnings": [], "next_ids": {}, "reused": [], "adoption": None,
+               "diff": list(difflib.unified_diff(
+                   (latest["source"] if latest else "").splitlines(), text.splitlines(),
+                   "approved", "current", lineterm=""))}
+        try:
+            model = c4.parse(data)
+        except c4.C4Error as e:
+            out["error"] = str(e)
+            return out
+        record = c4.to_record(model)
+        out["model"], out["record"] = model, record
+        out["problems"] = c4.problems(model)
+        try:
+            for name in self.system(slug).personal_data_classes:
+                if name not in record["dataclasses"]:
+                    out["problems"].append(f"system.toml personal_data_classes names {name}, "
+                                           "which workspace.dsl does not declare")
+        except RegistryError as e:
+            out["problems"].append(f"system.toml cannot be loaded: {e}")
+        delta = c4.changes(latest["model"] if latest else None, record)
+        out.update(added=delta["added"], removed=delta["removed"], changed=delta["changed"])
+        if latest is not None:
+            gone = set(delta["removed"])
+            for r in self.list_risks(slug):
+                if r["review_state"] == "rejected" or r["status"] == "retired" or r.get("merged_into"):
+                    continue
+                cited = [e for e in r["elements"] or () if e in gone]
+                if cited:
+                    out["warnings"].append(
+                        f"{r['id']} cites {', '.join(cited)}, which this model no longer has")
+        used, out["reused"] = self._c4_used(slug, model, latest)
+        out["next_ids"] = c4.next_free(model, used)
+        return out
+
+    def _c4_used(self, slug: str, model, latest: dict | None) -> tuple[dict[str, set[int]], list[str]]:
+        """P7: the numbers of every ID ever used, and the file's IDs that were used before but
+        are not in the latest approval of this register."""
+        sib_models, sib_dfds = self._sibling_history(slug)
+        own_models = self.model_approvals(slug)
+        dfds = [*self.dfd_approvals(slug), *sib_dfds]
+        prior: set[str] = set()
+        retired: set[str] = set()  # used by a register's earlier approvals, absent from its latest
+        for rows in (own_models, sib_models):
+            rows = sorted(rows, key=_model_number)
+            seen = set().union(*(_model_ids(r) for r in rows)) if rows else set()
+            prior |= seen
+            retired |= seen - (_model_ids(rows[-1]) if rows else set())
+        dfd_tbs = {i for row in dfds for i in (row.get("ids") or {}).get("TB", ())}
+        file_ids = model.all_ids()
+        reused = (file_ids & retired) - (_model_ids(latest) if latest else set())
+        if latest is None:
+            for tb in file_ids & dfd_tbs:
+                item = model.items.get(tb)
+                claimed = [p.strip() for p in (item.properties.get("tm.was", "") if item else "").split(",")]
+                if tb not in claimed:
+                    reused.add(tb)
+        used: dict[str, set[int]] = {}
+        for iid in prior | dfd_tbs | file_ids:
+            m = _C4_ID_RE.fullmatch(iid)
+            if m:
+                used.setdefault(m.group(1), set()).add(int(m.group(2)))
+        return used, sorted(reused, key=c4._id_order)
+
+    def c4_preview(self, slug) -> dict:
+        """The current workspace.dsl, read once, with what an approval would record."""
+        self._require(slug)
+        try:
+            data = self._c4_read(slug)
+        except RegistryError as e:
+            return {"sha256": None, "text": "", "model": None, "record": None, "error": str(e),
+                    "problems": [], "added": [], "removed": [], "changed": {}, "warnings": [],
+                    "next_ids": {}, "reused": [], "diff": [], "adoption": None}
+        return self._c4_assess(slug, data)
+
+    def c4_checked_bytes(self, slug) -> tuple[bytes, "c4.Model"]:
+        """The file's bytes and model, only if it parses and has no problems."""
+        self._require(slug)
+        data = self._c4_read(slug)
+        info = self._c4_assess(slug, data)
+        if info["error"]:
+            raise RegistryError(info["error"])
+        if info["problems"]:
+            raise RegistryError("workspace.dsl has problems: " + "; ".join(info["problems"]))
+        return data, info["model"]
+
+    def c4_approve(self, session, slug, note, *, expected_sha256: str) -> dict:
+        """Record an approval of workspace.dsl, bound to the sha256 the reviewer was shown."""
+        _require_session(session)
+        note = _require_note(note)
+        self._require(slug)
+        with self._write():
+            data = self._c4_read(slug)  # under the write lock: this is the file recorded
+            info = self._c4_assess(slug, data)
+            if info["error"]:
+                raise RegistryError(info["error"])
+            if info["problems"]:
+                raise RegistryError("workspace.dsl has problems: " + "; ".join(info["problems"]))
+            if info["reused"]:
+                raise RegistryError("workspace.dsl reuses retired IDs: " + ", ".join(info["reused"]))
+            if info["sha256"] != expected_sha256:
+                raise StaleRecord("workspace.dsl changed since it was shown; review it again")
+            latest = self._latest_model(slug)
+            if latest is not None and latest["sha256"] == info["sha256"]:
+                raise RegistryError(f"already approved as {latest['id']}")
+            approval_id = self._allocate(slug, "MODEL", "model_approvals")
+            model = info["model"]
+            ledger.write_row(self.conn, slug, "model_approvals", approval_id, {
+                "version": model.version, "sha256": info["sha256"],
+                "ids": {k: list(v) for k, v in model.ids().items()},
+                "model": info["record"], "source": info["text"],
+                "approved_by": session.name, "approved_at": db.now(), "note": note,
+            }, op="model-approve", actor=f"human:{session.name}")
+        self._write_register(slug, approval_id)
+        return ledger.read_rows(self.conn, slug, "model_approvals")[approval_id]
 
     # ---- drafting ---------------------------------------------------------------------------
 

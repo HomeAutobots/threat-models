@@ -1,5 +1,6 @@
 """Shared fixtures: a temp project with a git-tracked framework, registries, sessions, candidates."""
 import contextlib
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -137,6 +138,9 @@ flowchart LR
 - Keep it in the repository.
 """
 
+FIXTURES = Path(__file__).parent / "fixtures"
+SAMPLE_WORKSPACE = (FIXTURES / "c4" / "sample.dsl").read_bytes()
+
 _PROJECT_TOML = """framework_path = "framework"
 reviewer_name = "Test Reviewer"
 reviewer_email = "reviewer@example.com"
@@ -182,6 +186,16 @@ def make_registry(tmp, *, slug="demo", approve=True, trial=False, legacy=False,
     if approve:
         reg.dfd_approve(session(), slug, "Checked against the DFD checklist.")
     return reg
+
+
+def write_model(reg: Registry, slug: str, data: bytes = SAMPLE_WORKSPACE) -> None:
+    (reg.root / "systems" / slug / "workspace.dsl").write_bytes(data)
+
+
+def approve_model(reg: Registry, slug: str, note: str = "Checked against the DFD checklist.") -> dict:
+    """Approve the current workspace.dsl, bound to its own sha256."""
+    data = (reg.root / "systems" / slug / "workspace.dsl").read_bytes()
+    return reg.c4_approve(session(), slug, note, expected_sha256=hashlib.sha256(data).hexdigest())
 
 
 @contextlib.contextmanager
