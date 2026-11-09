@@ -95,7 +95,7 @@ Anti-goals (a failure even if everything works):
 
 - The owner starts the app with `make web`, or by double-clicking a `.command` file in `webapp/`,
   which opens Terminal and runs the same thing. The first start installs the pinned dependencies
-  and builds the front end. Later starts skip what is already current.
+  and builds the front end. Later starts skip only `npm ci`, and only when the lockfile hasn't changed.
 - Before anything else, the server calls `core.require_interactive("web")`. It refuses to start
   without an interactive terminal or when `CLAUDECODE` is set, exactly like the human-only
   commands. A Claude Code shell cannot start it.
