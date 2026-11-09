@@ -65,6 +65,13 @@ describe('RetireModal', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 
+  it('counts the reason in code points, as core does', async () => {
+    renderModal()
+    fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: '😀'.repeat(20) } })
+    expect(screen.getByText('20 / 20')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retire T-1' })).toBeEnabled()
+  })
+
   it('Cancel on the confirmation posts nothing', async () => {
     renderModal()
     fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: 'x'.repeat(20) } })

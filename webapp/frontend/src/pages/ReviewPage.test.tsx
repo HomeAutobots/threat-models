@@ -60,6 +60,9 @@ let queue: Risk[]
 let posts: Post[]
 let getGate: Promise<void> | null = null
 let postReply: (post: Post) => Response | Promise<Response>
+let failList: boolean
+let failRisk: boolean
+let historyGets: number
 
 function mockApi() {
   vi.stubGlobal(
@@ -71,9 +74,14 @@ function mockApi() {
         return postReply(post)
       }
       if (url === '/api/meta') return json(meta)
-      if (url.endsWith('/history')) return json([])
+      if (url.endsWith('/history')) {
+        historyGets++
+        return json([])
+      }
       const m = url.match(/\/risks\/([^/]+)$/)
       if (m && getGate) await getGate
+      if (m && failRisk) return json({ detail: 'risk fetch failed \u202e' }, 404)
+      if (url.endsWith('/risks') && failList) return json({ detail: 'list <b> \u202e failed' }, 404)
       if (m) return details[decodeURIComponent(m[1])] ? json(details[decodeURIComponent(m[1])]) : json({ detail: 'none' }, 404)
       if (url.endsWith('/risks')) return json(queue)
       return json({}, 404)
@@ -112,6 +120,9 @@ async function type(note = NOTE) {
 beforeEach(() => {
   posts = []
   getGate = null
+  failList = false
+  failRisk = false
+  historyGets = 0
   queue = [mkRisk('T-1'), mkRisk('T-2'), mkRisk('T-3')]
   details = Object.fromEntries(queue.map((r) => [r.id, mkDetail(r)]))
   postReply = (p) => json({ risk: { ...p.body.seen, review_state: 'approved' } })
@@ -275,7 +286,7 @@ describe('ReviewPage', () => {
     const reject = await screen.findByRole('button', { name: 'Reject and restore last approved' })
     expect(reject).toBeInTheDocument()
     expect(screen.getByText('approved notes')).toBeInTheDocument()
-    expect(screen.getByText('1 other fields unchanged')).toBeInTheDocument()
+    expect(screen.getByText('1 other field unchanged')).toBeInTheDocument()
     const diff = screen.getByText('Last approved')
     const record = document.getElementById('glance') as HTMLElement
     expect(diff.compareDocumentPosition(record) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -387,6 +398,172 @@ describe('ReviewPage', () => {
     expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeInTheDocument()
     expect(box.value).toBe(NOTE)
     expect(screen.getByTestId('where').textContent).toBe('/main/demo/review?id=T-1')
+  })
+
+  describe('follow-ups', () => {
+    const stale409 = (over: Partial<Risk> = {}, withCurrent = true) => {
+      postReply = (p) => {
+        if (p.body.seen.notes === 'changed by AI') return json({ risk: { ...p.body.seen, review_state: 'approved' } })
+        const current = mkRisk('T-1', { notes: 'changed by AI', ...over })
+        details['T-1'] = mkDetail(current)
+        return json(withCurrent ? { detail: 'stale', current } : { detail: 'stale' }, 409)
+      }
+    }
+    const invalidateRisk = (client: QueryClient) =>
+      act(async () => {
+        await client.invalidateQueries({ queryKey: ['main', 'demo', 'risk', 'T-1'], exact: true })
+      })
+
+    it('a list-refetch error keeps the item and the note, with a small alert above it', async () => {
+      const client = renderPage()
+      const box = await type()
+      expect(await screen.findByText('Original notes of T-1')).toBeInTheDocument()
+      failList = true
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: ['main', 'demo', 'risks'] })
+      })
+      expect(await screen.findByText('list <b> \\u202e failed')).toBeInTheDocument()
+      expect(screen.getByText('Original notes of T-1')).toBeInTheDocument()
+      expect(box.value).toBe(NOTE)
+      expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeEnabled()
+    })
+
+    it('a list error with no data replaces the page, escaped', async () => {
+      failList = true
+      renderPage()
+      expect(await screen.findByText('list <b> \\u202e failed')).toBeInTheDocument()
+      expect(screen.queryByText('1 of 3 pending')).not.toBeInTheDocument()
+    })
+
+    it('a risk fetch error with nothing shown replaces the page, escaped', async () => {
+      failRisk = true
+      details['T-1'] = mkDetail(queue[0])
+      renderPage('/main/demo/review')
+      expect(await screen.findByText('risk fetch failed \\u202e')).toBeInTheDocument()
+    })
+
+    it('shows Reloading this risk… and hides the duplicate and element rows until the reload lands', async () => {
+      const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['P7'] })
+      queue = [r]
+      details = {
+        'T-1': mkDetail(r, {
+          elements: { P7: { name: 'Seven', type: 'Process' } },
+          duplicate: mkRisk('T-0', { review_state: 'approved', title: 'Zero title' }),
+        }),
+      }
+      let release: () => void = () => {}
+      postReply = () => {
+        const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['P7'] })
+        details = {
+          'T-1': mkDetail(current, {
+            elements: { P7: { name: 'Seven', type: 'Process' } },
+            duplicate: mkRisk('T-5', { review_state: 'approved', title: 'Five title' }),
+          }),
+        }
+        getGate = new Promise<void>((res) => (release = res))
+        return json({ detail: 'stale', current }, 409)
+      }
+      renderPage()
+      await type()
+      fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+      expect(await screen.findByText('Reloading this risk…')).toBeInTheDocument()
+      expect(screen.queryByText('Seven')).not.toBeInTheDocument()
+      expect((document.getElementById('dup') as HTMLElement).textContent).not.toContain('Zero title')
+      expect((document.getElementById('dup') as HTMLElement).textContent).not.toContain('Five title')
+      await act(async () => release())
+      await waitFor(() => expect(screen.queryByText('Reloading this risk…')).not.toBeInTheDocument())
+      expect(screen.getByText('Seven')).toBeInTheDocument()
+      expect((document.getElementById('dup') as HTMLElement).textContent).toContain('Five title')
+    })
+
+    it('a failed reload shows its message inside the item, and a later successful fetch clears it', async () => {
+      stale409()
+      const client = renderPage()
+      await type()
+      failRisk = true
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+      expect(await screen.findByText(/Could not reload this risk/)).toBeInTheDocument()
+      // The item is still on the page; the early return for the fetch error did not replace it.
+      expect(screen.getByText('1 of 3 pending')).toBeInTheDocument()
+      expect(screen.getByText('changed by AI')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeDisabled()
+      failRisk = false
+      await invalidateRisk(client)
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeEnabled())
+      expect(screen.queryByText(/Could not reload this risk/)).not.toBeInTheDocument()
+      expect(screen.queryByText('risk fetch failed \\u202e')).not.toBeInTheDocument()
+    })
+
+    it('after a 409, buttons stay disabled until the risk query has advanced past it (offline)', async () => {
+      stale409()
+      const client = renderPage()
+      await type()
+      const spy = vi.spyOn(client, 'refetchQueries').mockResolvedValue(undefined) // a paused refetch resolves at once
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+      expect(await screen.findByText(STALE)).toBeInTheDocument()
+      await waitFor(() => expect(spy).toHaveBeenCalled())
+      await act(async () => {})
+      expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Reject T-1' })).toBeDisabled()
+      spy.mockRestore() // back online
+      await invalidateRisk(client)
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeEnabled())
+    })
+
+    it('?id= naming a risk that is not pending is pinned to the first pending one', async () => {
+      queue = [mkRisk('T-9', { review_state: 'approved' }), ...queue]
+      renderPage('/main/demo/review?id=T-9')
+      expect(await screen.findByText('1 of 3 pending')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/main/demo/review?id=T-1'))
+    })
+
+    it('a 409 without current shows the banner, refetches, and reconciles', async () => {
+      stale409({}, false)
+      renderPage()
+      await type()
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+      expect(await screen.findByText(STALE)).toBeInTheDocument()
+      expect(await screen.findByText('changed by AI')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Approve T-1' })).toBeEnabled())
+      fireEvent.click(screen.getByRole('button', { name: 'Approve T-1' }))
+      await waitFor(() => expect(posts).toHaveLength(2))
+      expect(posts[1].body.seen.notes).toBe('changed by AI')
+    })
+
+    it('the post-409 reload also refetches the risk history', async () => {
+      stale409()
+      renderPage()
+      await type()
+      await screen.findByText('Original notes of T-1')
+      await waitFor(() => expect(historyGets).toBeGreaterThan(0))
+      const before = historyGets
+      fireEvent.click(await screen.findByRole('button', { name: 'Approve T-1' }))
+      await screen.findByText(STALE)
+      await waitFor(() => expect(historyGets).toBe(before + 1))
+    })
+
+    it('counts the note in code points', async () => {
+      renderPage()
+      await type('😀'.repeat(7))
+      expect(screen.getByText('7 / 20')).toBeInTheDocument()
+    })
+
+    it('Previous and Next drop the note between items', async () => {
+      renderPage('/main/demo/review?id=T-2')
+      const box = await type()
+      expect(box.value).toBe(NOTE)
+      fireEvent.click(await screen.findByRole('button', { name: 'Next' }))
+      await screen.findByText('3 of 3 pending')
+      expect((screen.getByLabelText('Review note') as HTMLTextAreaElement).value).toBe('')
+      await type()
+      fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
+      await screen.findByText('2 of 3 pending')
+      expect((screen.getByLabelText('Review note') as HTMLTextAreaElement).value).toBe('')
+    })
+
+    it('keeps the stale banner text in one place', () => {
+      expect(reviewPageSrc).not.toContain('This risk changed after you opened it')
+    })
   })
 
   it('uses no raw HTML', () => {

@@ -36,6 +36,12 @@ describe('DecisionPanel', () => {
     expect(screen.getByText('19 / 20')).toBeInTheDocument()
   })
 
+  it('counts the note in code points, as core does', () => {
+    renderPanel({ note: '😀'.repeat(20) })
+    expect(screen.getByText('20 / 20')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve T-37' })).toBeEnabled()
+  })
+
   it('approve calls onApprove at exactly the minimum', () => {
     const p = renderPanel({ note: NOTE })
     const approve = screen.getByRole('button', { name: 'Approve T-37' })

@@ -6,6 +6,8 @@ export interface DecisionPanelProps {
   duplicateId: string | null
   noteMin: number
   busy: boolean
+  /** The risk is being reloaded after a 409; nothing can be decided yet. */
+  reloading?: boolean
   error: string | null
   note: string
   onNote: (v: string) => void
@@ -18,9 +20,9 @@ export interface DecisionPanelProps {
 const PANEL_COPY =
   'You approve exactly the version on this page. If it changes while you read, nothing is saved and the new version is shown.'
 
-/** The note rule is the core's: outer whitespace does not count. */
+/** The note rule is the core's: outer whitespace does not count, and length is in code points. */
 export function DecisionPanel(p: DecisionPanelProps) {
-  const length = p.note.trim().length
+  const length = [...p.note.trim()].length
   const noteOk = length >= p.noteMin
   const locked = p.busy || !noteOk
 
@@ -46,6 +48,11 @@ export function DecisionPanel(p: DecisionPanelProps) {
           {length} / {p.noteMin}
         </Text>
       </Group>
+      {p.reloading && (
+        <Text size="sm" c="dimmed" mb="sm">
+          Reloading this risk…
+        </Text>
+      )}
       {p.error !== null && (
         <Alert color="red" mb="sm" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
           {p.error}

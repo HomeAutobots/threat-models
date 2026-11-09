@@ -65,7 +65,18 @@ function FieldRow({ field, value }: { field: string; value: unknown }) {
   )
 }
 
-export function RiskRecord({ detail, meta, history }: { detail: RiskDetail; meta: Meta; history: Change[] }) {
+export function RiskRecord({
+  detail,
+  meta,
+  history,
+  reloading = false,
+}: {
+  detail: RiskDetail
+  meta: Meta
+  history: Change[]
+  /** The context (elements, duplicate) belongs to a replaced record: hide it until it reloads. */
+  reloading?: boolean
+}) {
   const { risk } = detail
   const display = (f: string): unknown => (f === 'category' ? formatCategory(risk.category, meta) : risk[f])
   const pending = risk.review_state === 'pending'
@@ -94,6 +105,7 @@ export function RiskRecord({ detail, meta, history }: { detail: RiskDetail; meta
           </>
         )
       case 'where':
+        if (reloading) return null
         return <ElementTable ids={risk.elements ?? []} elements={detail.elements} dfd={detail.dfd} />
       case 'threat':
         return (
@@ -111,6 +123,7 @@ export function RiskRecord({ detail, meta, history }: { detail: RiskDetail; meta
           </>
         )
       case 'dup':
+        if (reloading) return null
         return detail.duplicate ? (
           <DuplicateCompare risk={risk} other={detail.duplicate} meta={meta} />
         ) : (

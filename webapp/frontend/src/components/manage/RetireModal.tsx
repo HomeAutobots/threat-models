@@ -27,8 +27,8 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef(false)
 
-  // The note rule is the core's: outer whitespace does not count.
-  const length = reason.trim().length
+  // The note rule is the core's: outer whitespace does not count, and length is in code points.
+  const length = [...reason.trim()].length
   const ok = length >= noteMin
 
   const retire = async () => {
