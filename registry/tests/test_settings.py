@@ -19,7 +19,8 @@ ALLOWED = ("list", "show", "history", "report", "verify", "runs", "dfd status", 
 READ_ONLY = ("grep", "rg", "ls", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "file", "find")
 INVOCATIONS = ("./tmreg", "tmreg", "python3 -m tmreg", "python3 ./tmreg", "python3 tmreg")
 # Browser and desktop automation MCP servers: they could act in the owner's signed-in browser.
-BROWSER_MCP = ("mcp__claude-in-chrome", "mcp__Claude_Browser", "mcp__computer-use")
+# mcp__remote-devices hosts the remote Claude_Browser and computer tools of a linked session.
+BROWSER_MCP = ("mcp__claude-in-chrome", "mcp__Claude_Browser", "mcp__computer-use", "mcp__remote-devices")
 TM_MODEL = ROOT / ".claude" / "commands" / "tm-model.md"
 REQUIRED_DENY = [f"Bash(./tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
     f"Bash(tmreg {sub}:*)" for sub in HUMAN_ONLY] + [

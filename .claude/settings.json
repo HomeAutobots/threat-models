@@ -74,7 +74,8 @@
       "Edit(/webapp/**)",
       "mcp__claude-in-chrome",
       "mcp__Claude_Browser",
-      "mcp__computer-use"
+      "mcp__computer-use",
+      "mcp__remote-devices"
     ],
     "additionalDirectories": [
       "/Users/tylerstandish/Developer/threat-model-framework"

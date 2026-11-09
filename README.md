@@ -225,8 +225,9 @@ repo, is not guarded by them, even when it works on files here.
      They also deny edits to `registry/`, `.claude/`, `webapp/`, `systems/*/register.md`, `tmreg`,
      `project.toml`, and `CLAUDE.md`, and every tool of the browser and desktop automation MCP
      servers: Claude in Chrome (`mcp__claude-in-chrome`), the Claude app's built-in browser
-     (`mcp__Claude_Browser`), and computer use (`mcp__computer-use`). `/tm-model` disallows the
-     same three for its run. A deny rule beats any allow rule.
+     (`mcp__Claude_Browser`), computer use (`mcp__computer-use`), and `mcp__remote-devices`, which
+     hosts the remote browser and computer tools of a linked session. `/tm-model` disallows the
+     same four for its run. A deny rule beats any allow rule.
    - Deny rules apply right away. The allow rules, and the read access to the guide in
      `additionalDirectories`, apply only after you accept the workspace-trust dialog for this
      folder.
@@ -276,10 +277,10 @@ Also:
 - The hook checks only the tools named above. A tool it does not name is not checked. That
   includes MCP tools that write local files or send data out, for example mail or drive
   connectors, so keep such servers off for this project. Of the MCP servers, the deny rules cover
-  only the three browser and desktop automation servers in layer 3. `/tm-model` also disallows the
+  only the four browser and desktop automation servers in layer 3. `/tm-model` also disallows the
   built-in web tools (WebFetch and WebSearch) for its run.
 - A browser-automation tool working in your signed-in browser, such as Claude in Chrome, can act
-  as you in the web app. A guarded session is denied those three servers. A Claude session started
+  as you in the web app. A guarded session is denied those four servers. A Claude session started
   elsewhere is not, nor is Claude in Chrome when you use it from Chrome itself. Never grant the
   extension `127.0.0.1` or `localhost`.
 - The upgrade path, which is not built, is signed approvals: each approval is signed with the
