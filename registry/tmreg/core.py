@@ -222,6 +222,12 @@ def _clean(fields) -> dict:
     return out
 
 
+def _detail_now_complete(row: dict) -> bool:
+    """An imported one-liner (detail_complete 0) whose every AI-required field is now filled."""
+    return row["detail_complete"] == 0 and all(row.get(f) not in (None, "", [])
+                                               for f in AI_REQUIRED)
+
+
 def _check_required(row: dict, *, ai: bool) -> None:
     required = AI_REQUIRED if ai else HUMAN_REQUIRED
     missing = [f for f in required if row.get(f) in (None, "", [])]
@@ -580,11 +586,15 @@ class Registry:
         self._write_register(slug, risk_id)
         return self.get_risk(slug, risk_id)
 
-    def edit_risk(self, slug, risk_id, fields: dict, *, run_id: str | None) -> dict:
+    def edit_risk(self, slug, risk_id, fields: dict, *, run_id: str | None,
+                  seen: dict | None = None, note: str = "") -> dict:
         self._require(slug)
+        note = (note or "").strip()
+        _no_controls("note", note)
         with self._write():
             actor = self._actor(slug, run_id)
             cur = self._risk(slug, risk_id)
+            self._check_seen(seen, cur)
             if cur["review_state"] == "rejected":
                 raise RegistryError("rejected risks are not edited; add a new risk")
             if cur["status"] == "retired":
@@ -608,12 +618,16 @@ class Registry:
             if not update:
                 raise RegistryError("no changes")
             if cur["review_state"] == "approved":
-                update["last_approved"] = {f: cur[f] for f in SNAPSHOT_FIELDS}
-                update.update(review_state="pending", reviewed_by=None, reviewed_at=None,
-                              review_note=None)
+                if actor.startswith("ai:"):
+                    update["last_approved"] = {f: cur[f] for f in SNAPSHOT_FIELDS}
+                    update.update(review_state="pending", reviewed_by=None, reviewed_at=None,
+                                  review_note=None)
+                elif _detail_now_complete(merged):
+                    update["detail_complete"] = 1  # the owner filled an imported one-liner
             update["dfd_approval_id"] = latest["id"]
             update["updated_at"] = db.now()
-            ledger.write_row(self.conn, slug, "risks", risk_id, update, op="edit", actor=actor)
+            ledger.write_row(self.conn, slug, "risks", risk_id, update, op="edit", actor=actor,
+                             note=note)
         self._write_register(slug, risk_id)
         return self.get_risk(slug, risk_id)
 
@@ -644,8 +658,7 @@ class Registry:
             cur = self._require_pending(slug, risk_id, "approved")
             update = {"review_state": "approved", **self._review_fields(session, note),
                       "last_approved": None}
-            if cur["detail_complete"] == 0 and all(cur.get(f) not in (None, "", [])
-                                                   for f in AI_REQUIRED):
+            if _detail_now_complete(cur):
                 update["detail_complete"] = 1  # an imported one-liner whose detail is now filled
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op="approve",
                              actor=f"human:{session.name}")

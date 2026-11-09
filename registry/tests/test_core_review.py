@@ -272,7 +272,7 @@ class ImportLegacyTest(TmpTestCase):
         with self.assertRaisesRegex(RegistryError, "once"):
             reg.import_legacy(session(), "demo")
 
-    def test_approve_marks_detail_complete_once_every_ai_field_is_filled(self):  # M2
+    def test_owner_edit_fills_imported_one_liner(self):
         reg = make_registry(self.tmp, legacy=True)
         reg.import_legacy(session(), "demo")
         have = ("title", "elements", "category", "method", "origin", "origin_ref", "description")
@@ -280,12 +280,23 @@ class ImportLegacyTest(TmpTestCase):
         with human_terminal():
             reg.edit_risk("demo", "T-01", detail, run_id=None)
             reg.edit_risk("demo", "T-02", {"notes": "Owner confirmed the webhook path."}, run_id=None)
-        reg.approve(session(), "demo", "T-01", NOTE)
-        reg.approve(session(), "demo", "T-02", NOTE)
-        self.assertEqual(reg.get_risk("demo", "T-01")["detail_complete"], 1)
+        r = reg.get_risk("demo", "T-01")
+        self.assertEqual((r["review_state"], r["detail_complete"]), ("approved", 1))
         self.assertEqual(reg.history("demo", "T-01")[-1]["diff"]["detail_complete"], [0, 1])
-        self.assertEqual(reg.get_risk("demo", "T-02")["detail_complete"], 0)
+        r = reg.get_risk("demo", "T-02")
+        self.assertEqual((r["review_state"], r["detail_complete"]), ("approved", 0))
         self.assertEqual(reg.verify("demo"), [])
+
+    def test_approve_still_marks_detail_complete_after_ai_edit(self):
+        reg = make_registry(self.tmp, legacy=True, trial=True)
+        reg.import_legacy(session(), "demo")
+        run = start(reg)
+        have = ("title", "elements", "category", "method", "origin", "origin_ref", "description")
+        detail = {f: ai_fields()[f] for f in model.AI_REQUIRED if f not in have}
+        reg.edit_risk("demo", "T-01", detail, run_id=run)
+        self.assertEqual(reg.get_risk("demo", "T-01")["review_state"], "pending")
+        reg.approve(session(), "demo", "T-01", NOTE)
+        self.assertEqual(reg.get_risk("demo", "T-01")["detail_complete"], 1)
 
     def _catalog_path(self, reg):
         return reg.config.framework_path / "docs/reference/reference-system.md"

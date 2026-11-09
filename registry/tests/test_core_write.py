@@ -356,6 +356,55 @@ class AddTest(TmpTestCase):
             reg.list_risks("demo", "open")
 
 
+class EditRuleTest(TmpTestCase):
+    def setUp(self):
+        super().setUp()
+        self.reg = make_registry(self.tmp)
+        self.run = start(self.reg)
+        self.reg.add_risk("demo", ai_fields(), run_id=self.run)
+        self.reg.approve(session(), "demo", "T-01", NOTE)
+
+    def test_human_edit_of_approved_risk_keeps_approval(self):
+        with tty():
+            r = self.reg.edit_risk("demo", "T-01", {"owner": "A. Okafor"}, run_id=None,
+                                   note="Owner confirmed in the November review.")
+        self.assertEqual((r["review_state"], r["last_approved"], r["owner"]), ("approved", None, "A. Okafor"))
+        self.assertEqual((r["reviewed_by"], r["review_note"]), ("Test Reviewer", NOTE))  # last review kept
+        last = self.reg.history("demo", "T-01")[-1]
+        self.assertEqual((last["op"], last["actor"], last["note"]),
+                         ("edit", "human:Test Reviewer", "Owner confirmed in the November review."))
+        self.assertEqual(self.reg.verify("demo"), [])
+
+    def test_ai_edit_after_human_edit_snapshots_the_human_version(self):
+        with tty():
+            self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None)
+        r = self.reg.edit_risk("demo", "T-01", {"owner": "B"}, run_id=self.run)
+        self.assertEqual((r["review_state"], r["last_approved"]["owner"]), ("pending", "A"))
+
+    def test_human_edit_of_pending_stays_pending(self):
+        self.reg.add_risk("demo", ai_fields(), run_id=self.run)  # T-02, pending
+        with tty():
+            r = self.reg.edit_risk("demo", "T-02", {"owner": "A"}, run_id=None)
+        self.assertEqual(r["review_state"], "pending")
+
+    def test_edit_refuses_stale_seen_and_writes_nothing(self):
+        seen = self.reg.get_risk("demo", "T-01")
+        self.reg.edit_risk("demo", "T-01", {"notes": "ai change"}, run_id=self.run)
+        before = len(self.reg.history("demo"))
+        with tty(), self.assertRaisesRegex(StaleRecord, "changed since it was shown"):
+            self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None, seen=seen)
+        self.assertEqual(len(self.reg.history("demo")), before)
+
+    def test_edit_with_current_seen_applies(self):
+        seen = self.reg.get_risk("demo", "T-01")
+        with tty():
+            self.assertEqual(self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None, seen=seen)["owner"], "A")
+
+    def test_edit_note_refuses_control_characters(self):
+        with tty(), self.assertRaisesRegex(RegistryError, "note"):
+            self.reg.edit_risk("demo", "T-01", {"owner": "A"}, run_id=None, note="ok\x1b[2J")
+
+
 class EditTest(TmpTestCase):
     def setUp(self):
         super().setUp()

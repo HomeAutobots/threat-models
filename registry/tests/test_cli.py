@@ -6,7 +6,7 @@ import sqlite3
 import unittest
 from unittest import mock
 
-from helpers import TmpTestCase, ai_fields, human_terminal, make_registry
+from helpers import TmpTestCase, ai_fields, human_terminal, make_registry, start
 from tmreg import cli, ledger, model, report
 
 NOTE = "Checked against the DFD and the evidence."
@@ -105,7 +105,7 @@ class CliTest(TmpTestCase):
     def test_re_review_shows_diff(self):
         self.ai_add()
         self.run_cli("approve", "demo", "T-01", tty=True, inputs=[NOTE, "T-01"])
-        self.run_cli("edit", "demo", "T-01", "--set", "status=planned", tty=True)
+        self.reg.edit_risk("demo", "T-01", {"status": "planned"}, run_id=start(self.reg))
         code, out, _ = self.run_cli("show", "demo", "T-01")
         self.assertIn("Status:\n  - open\n  + planned", out)
 
