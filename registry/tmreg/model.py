@@ -7,7 +7,8 @@ RISK_FIELDS = (
     "recommended_controls", "control_refs", "exception_ref", "treatment", "decision_requested",
     "evidence", "ai_confidence", "owner", "due", "status", "status_reason", "test", "ticket",
     "notes", "review_state", "last_approved", "drafted_by", "reviewed_by", "reviewed_at",
-    "review_note", "possible_duplicate_of", "merged_into", "dfd_approval_id", "detail_complete",
+    "review_note", "possible_duplicate_of", "merged_into", "dfd_approval_id", "model_approval_id",
+    "detail_complete",
     "created_at", "updated_at",
 )
 
@@ -19,14 +20,15 @@ EDITABLE_FIELDS = tuple(
 SYSTEM_FIELDS = tuple(f for f in RISK_FIELDS if f not in EDITABLE_FIELDS)
 
 SNAPSHOT_FIELDS = EDITABLE_FIELDS + (
-    "reviewed_by", "reviewed_at", "review_note", "dfd_approval_id", "updated_at",
+    "reviewed_by", "reviewed_at", "review_note", "dfd_approval_id", "model_approval_id", "updated_at",
 )
 
 JSON_FIELDS = ("elements", "control_refs", "last_approved")
 
 # Per-table JSON-encoded columns and the column that holds each table's row key.
-JSON_COLUMNS = {"risks": JSON_FIELDS, "dfd_approvals": ("ids",), "runs": ()}
-KEY_COLUMNS = {"risks": "id", "dfd_approvals": "id", "runs": "run_id"}
+JSON_COLUMNS = {"risks": JSON_FIELDS, "dfd_approvals": ("ids",), "model_approvals": ("ids", "model"),
+                "runs": ()}
+KEY_COLUMNS = {"risks": "id", "dfd_approvals": "id", "model_approvals": "id", "runs": "run_id"}
 
 AI_REQUIRED = (
     "title", "elements", "category", "method", "origin", "origin_ref", "description",
@@ -98,6 +100,7 @@ LABELS = {
     "possible_duplicate_of": "Possible duplicate of",
     "merged_into": "Merged into",
     "dfd_approval_id": "DFD approval",
+    "model_approval_id": "Model approval",
     "detail_complete": "Detail complete",
     "created_at": "Created at",
     "updated_at": "Updated at",

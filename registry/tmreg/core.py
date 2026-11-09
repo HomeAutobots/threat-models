@@ -28,6 +28,7 @@ LIST_FIELDS = ("elements", "control_refs")
 
 _RISK_ID_RE = re.compile(r"(P?T)-([0-9]+)")
 _DFD_APPROVAL_RE = re.compile(r"DFD-([0-9]+)")
+_MODEL_APPROVAL_RE = re.compile(r"MODEL-([0-9]+)")
 _DFD_ID_RE = re.compile(r"(E|P|D|F|TB)([0-9]+)")
 _EXC_RE = re.compile(r"EXC-[0-9]{2,}")
 _SUPERSEDED = re.compile(SUPERSEDED_RE, re.ASCII)
@@ -553,7 +554,7 @@ class Registry:
         if row is None:
             raise RegistryError(f"sequence {prefix} is missing for {slug}; run ./tmreg verify {slug}")
         n = row["next"]
-        new_id = f"DFD-{n}" if prefix == "DFD" else f"{prefix}-{n:02d}"
+        new_id = f"{prefix}-{n}" if prefix in ("DFD", "MODEL") else f"{prefix}-{n:02d}"
         t, keycol = db.table(slug, tbl), KEY_COLUMNS[tbl]
         if self.conn.execute(f"SELECT 1 FROM {t} WHERE {keycol} = ?", (new_id,)).fetchone():
             raise RegistryError(f"sequence {prefix} is behind: {new_id} already exists; "
@@ -705,7 +706,7 @@ class Registry:
                 update = {"review_state": "rejected", **self._review_fields(session, note)}
                 op, log_note = "reject", ""
             else:  # a re-review: put back what the last human approval covered
-                update = {f: snap[f] for f in SNAPSHOT_FIELDS}
+                update = {f: snap.get(f) for f in SNAPSHOT_FIELDS}  # older snapshots lack newer fields
                 update.update(review_state="approved", last_approved=None)
                 op, log_note = "revert", note
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op=op,
@@ -892,20 +893,30 @@ class Registry:
         return problems
 
     def _verify_sequences(self, slug: str, tables: dict, logged: dict) -> list[str]:
-        top = {"T": 0, "PT": 0, "DFD": 0}
+        top = {"T": 0, "PT": 0, "DFD": 0, "MODEL": 0}
         topid: dict[str, str] = {}
-        ids = [(t, k) for t in ("risks", "dfd_approvals") for k in tables[t]] + list(logged)
+        approval_res = {"dfd_approvals": ("DFD", _DFD_APPROVAL_RE),
+                        "model_approvals": ("MODEL", _MODEL_APPROVAL_RE)}
+        ids = [(t, k) for t in ("risks", "dfd_approvals", "model_approvals") for k in tables[t]] + list(logged)
         for tbl, key in ids:
-            m = (_RISK_ID_RE if tbl == "risks" else _DFD_APPROVAL_RE).fullmatch(key) if isinstance(key, str) else None
-            if m is None or tbl == "runs":
+            if tbl == "risks":
+                m = _RISK_ID_RE.fullmatch(key) if isinstance(key, str) else None
+                prefix, n = (m.group(1), int(m.group(2))) if m else (None, 0)
+            elif tbl in approval_res:
+                prefix, rx = approval_res[tbl]
+                m = rx.fullmatch(key) if isinstance(key, str) else None
+                n = int(m.group(1)) if m else 0
+                prefix = prefix if m else None
+            else:
                 continue
-            prefix, n = (m.group(1), int(m.group(2))) if tbl == "risks" else ("DFD", int(m.group(1)))
+            if prefix is None:
+                continue
             if prefix not in topid or n > top[prefix]:
                 top[prefix], topid[prefix] = n, key
         problems = []
         seqs = {r["prefix"]: r["next"] for r in
                 self.conn.execute(f"SELECT prefix, next FROM {db.table(slug, 'sequences')}")}
-        for prefix in ("T", "PT", "DFD"):
+        for prefix in ("T", "PT", "DFD", "MODEL"):
             nxt = seqs.get(prefix)
             if prefix not in seqs:
                 problems.append(f"sequence {prefix} is missing")

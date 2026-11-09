@@ -68,11 +68,18 @@ class VerifyTest(TmpTestCase):
         self.assertIn("risks T-01 is in the change log but not in the table", problems)
         self.assertIn("sequence PT is missing", problems)
 
+    def test_verify_reports_model_sequence_behind(self):
+        reg = self._reg()
+        reg.conn.execute("DROP TRIGGER demo__model_approvals_no_update")
+        reg.conn.execute("INSERT INTO demo__model_approvals (id, version) VALUES ('MODEL-3', '1.0')")
+        reg.conn.commit()
+        self.assertIn("sequence MODEL is behind MODEL-3", reg.verify("demo"))
+
     def test_detects_schema_version_and_dfd_sequence(self):
         reg = self._reg()
         reg.conn.execute("UPDATE meta SET value='9' WHERE key='schema_version'")
         reg.conn.execute("UPDATE demo__sequences SET next=1 WHERE prefix='DFD'")
         reg.conn.commit()
         problems = reg.verify("demo")
-        self.assertIn("schema_version is 9, expected 1", problems)
+        self.assertIn("schema_version is 9, expected 2", problems)
         self.assertIn("sequence DFD is behind DFD-1", problems)
