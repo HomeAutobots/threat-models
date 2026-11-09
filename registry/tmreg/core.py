@@ -31,18 +31,20 @@ TEMPLATE_PATH = Path("docs/templates/threat-model-document.md")
 LIST_FIELDS = ("elements", "control_refs")
 
 _RISK_ID_RE = re.compile(r"(P?T)-([0-9]+)")
-_ROUTE_END_RE = re.compile(r"[ASCK][0-9]+")
-_OPEN_STATUSES = ("open", "planned", "in-progress")
-
-
-def _natural(item_id: str) -> tuple:
-    """R2 before R10: text and numbers compared as such."""
-    return tuple(int(p) if p.isdigit() else p for p in re.split(r"([0-9]+)", item_id) if p)
 _DFD_APPROVAL_RE = re.compile(r"DFD-([0-9]+)")
 _MODEL_APPROVAL_RE = re.compile(r"MODEL-([0-9]+)")
 _C4_ID_RE = re.compile(r"(A|S|C|K|R|TB|N|I|ENV|SEQ)([1-9][0-9]*)", re.ASCII)
 _DFD_ID_RE = re.compile(r"(E|P|D|F|TB)([0-9]+)")
 _EXC_RE = re.compile(r"EXC-[0-9]{2,}")
+_ROUTE_END_RE = re.compile(r"[ASCK][0-9]+")
+_OPEN_STATUSES = ("open", "planned", "in-progress")
+_ROUTE_EXPANSION_LIMIT = 100_000  # node expansions in one route search (ruling R24)
+ROUTE_TOO_BROAD_MSG = "this route search is too broad: pick endpoints closer together or fewer hops"
+
+
+def _natural(item_id: str) -> tuple:
+    """R2 before R10: text and numbers compared as such."""
+    return tuple(int(p) if p.isdigit() else p for p in re.split(r"([0-9]+)", item_id) if p)
 _SUPERSEDED = re.compile(SUPERSEDED_RE, re.ASCII)
 _TEMPLATE_BLOCK_RE = re.compile(r"^````markdown[ \t]*\n(.*?)^````[ \t]*$", re.M | re.S)
 _PLAIN_STATUSES = tuple(s for s in STATUSES if s != "retired")
@@ -687,37 +689,55 @@ class Registry:
         (`against_arrow` marks a hop taken from destination to source). A system or container
         end also stands for everything inside it (ruling R22): a chain starts at the item or any
         of its descendants and ends when it first reaches the target or any of its descendants.
-        Chains are simple (no node twice), sorted by hop count then by the hop path IDs."""
+        Chains are simple (no node twice) and pass through neither end set; they are found one hop
+        count at a time and the search stops after the depth that reaches max_chains, so a dense
+        model stays cheap (ruling R24). Sorted by hop count then by the hop path IDs."""
         self._require(slug)
+        if max_hops < 1 or max_chains < 1:
+            raise RegistryError("max_hops and max_chains must be at least 1")
         record = self._require_model(slug)["model"]
         items, rels = record["items"], record["rels"]
         for iid in (from_id, to_id):
             if not _ROUTE_END_RE.fullmatch(str(iid)) or iid not in items:
                 raise RegistryError(f"{iid} is not a person, system, container or component "
                                     f"in the approved model of {slug}")
-        inside = lambda root: {i for i, it in items.items() if root in it["where"]}  # noqa: E731
-        starts, targets = inside(from_id) - inside(to_id), inside(to_id)
+
+        def inside(root):
+            return {i for i, it in items.items() if root in it["where"]}
+
+        targets = inside(to_id)
+        starts = inside(from_id) - targets
         adj: dict[str, list[tuple[str, str, bool]]] = {}
         for rid, r in rels.items():
             adj.setdefault(r["source"], []).append((rid, r["destination"], False))
             adj.setdefault(r["destination"], []).append((rid, r["source"], True))
-        found: list[list[tuple[str, str, str, bool]]] = []
+        expansions = 0
 
-        def walk(node, seen, hops):
-            if len(hops) >= max_hops:
-                return
+        def walk(node, seen, hops, depth, found):
+            nonlocal expansions
+            expansions += 1
+            if expansions > _ROUTE_EXPANSION_LIMIT:
+                raise RegistryError(ROUTE_TOO_BROAD_MSG)
             for rid, nxt, against in adj.get(node, ()):
                 if nxt in seen:
                     continue
                 step = hops + [(rid, node, nxt, against)]
                 if nxt in targets:
-                    found.append(step)
-                else:
-                    walk(nxt, seen | {nxt}, step)
+                    if len(step) == depth:
+                        found.append(step)
+                elif len(step) < depth and nxt not in starts:
+                    walk(nxt, seen | {nxt}, step, depth, found)
 
-        for start in sorted(starts):
-            walk(start, {start}, [])
-        found.sort(key=lambda c: (len(c), [_natural(h[0]) for h in c]))
+        chains_found: list[list[tuple[str, str, str, bool]]] = []
+        for depth in range(1, max_hops + 1):  # each depth complete, so its tie-break is right
+            found: list[list[tuple[str, str, str, bool]]] = []
+            for start in sorted(starts):
+                walk(start, {start}, [], depth, found)
+            found.sort(key=lambda c: [_natural(h[0]) for h in c])
+            chains_found += found
+            if len(chains_found) >= max_chains:
+                break
+        found = chains_found
         by_cited = self._risks_by_cited(slug)
         none = {"open": [], "pending": []}
         chains = []
