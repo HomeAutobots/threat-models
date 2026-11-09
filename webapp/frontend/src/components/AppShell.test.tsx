@@ -1,6 +1,7 @@
 import { MantineProvider } from '@mantine/core'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useNavigate } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -103,5 +104,13 @@ describe('AppShell', () => {
     expect(await screen.findByText('Signed in as Sam Reviewer')).toBeInTheDocument()
     expect(document.querySelectorAll('main')).toHaveLength(1)
     expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+  })
+
+  it("hides the closed navbar under Mantine's collapsed-mobile query exactly", () => {
+    // jsdom has no layout, so pin the query text: (max-width: 47.99375em) is the breakpoint less
+    // 0.1px, as in @mantine/core's assign-navbar-variables.
+    const shellCss = readFileSync('src/components/AppShell.module.css', 'utf8') // vitest runs from the frontend dir
+    const rule = /@media\s*([^{]+)\{\s*\.navbar\[data-collapsed\]\s*\{\s*visibility:\s*hidden/.exec(shellCss)
+    expect(rule?.[1].trim()).toBe('(max-width: 47.99375em)')
   })
 })

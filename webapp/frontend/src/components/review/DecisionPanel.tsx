@@ -1,4 +1,5 @@
 import { Alert, Badge, Button, Card, Group, Stack, Text, Textarea, Title } from '@mantine/core'
+import { noteLength } from '../../lib/pyStrip'
 
 export interface DecisionPanelProps {
   riskId: string
@@ -22,9 +23,9 @@ export interface DecisionPanelProps {
 const PANEL_COPY =
   'You approve exactly the version on this page. If it changes while you read, nothing is saved and the new version is shown.'
 
-/** The note rule is the core's: outer whitespace does not count, and length is in code points. */
+/** The note rule is the core's: outer whitespace (Python's set) does not count, and length is in code points. */
 export function DecisionPanel(p: DecisionPanelProps) {
-  const length = [...p.note.trim()].length
+  const length = noteLength(p.note)
   const noteOk = length >= p.noteMin
   const locked = p.busy || !noteOk
 

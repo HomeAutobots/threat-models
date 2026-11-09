@@ -106,78 +106,78 @@ export function RegisterPage() {
           <Tabs.Panel key={t.id} value={t.id}>
             {t.id === tab && (
               <>
-              <Group mb="md" align="end" wrap="wrap">
-                <TextInput label="Search" placeholder="ID or title" value={search} onChange={(e) => setSearch(e.currentTarget.value)} />
-                <NativeSelect
-                  label="Status"
-                  value={status}
-                  onChange={(e) => setStatus(e.currentTarget.value)}
-                  data={options(sorted([...(meta.data.statuses ?? []), ...all.map((r) => r.status).filter((s): s is string => !!s)]))}
-                />
-                <NativeSelect
-                  label="Element"
-                  value={element}
-                  onChange={(e) => setElement(e.currentTarget.value)}
-                  data={options(sorted(all.flatMap((r) => r.elements ?? [])))}
-                />
-                <NativeSelect
-                  label="Category"
-                  value={category}
-                  onChange={(e) => setCategory(e.currentTarget.value)}
-                  data={[
-                    { value: '', label: 'All' },
-                    ...sorted(all.map((r) => r.category).filter((c): c is string => !!c)).map((c) => ({
-                      value: c,
-                      label: visible(formatCategory(c, meta.data)),
-                    })),
-                  ]}
-                />
-                <NativeSelect
-                  label="Origin"
-                  value={origin}
-                  onChange={(e) => setOrigin(e.currentTarget.value)}
-                  data={options(sorted([...(meta.data.origins ?? []), ...all.map((r) => r.origin).filter((o): o is string => !!o)]))}
-                />
-              </Group>
+                <Group mb="md" align="end" wrap="wrap">
+                  <TextInput label="Search" placeholder="ID or title" value={search} onChange={(e) => setSearch(e.currentTarget.value)} />
+                  <NativeSelect
+                    label="Status"
+                    value={status}
+                    onChange={(e) => setStatus(e.currentTarget.value)}
+                    data={options(sorted([...(meta.data.statuses ?? []), ...all.map((r) => r.status).filter((s): s is string => !!s)]))}
+                  />
+                  <NativeSelect
+                    label="Element"
+                    value={element}
+                    onChange={(e) => setElement(e.currentTarget.value)}
+                    data={options(sorted(all.flatMap((r) => r.elements ?? [])))}
+                  />
+                  <NativeSelect
+                    label="Category"
+                    value={category}
+                    onChange={(e) => setCategory(e.currentTarget.value)}
+                    data={[
+                      { value: '', label: 'All' },
+                      ...sorted(all.map((r) => r.category).filter((c): c is string => !!c)).map((c) => ({
+                        value: c,
+                        label: visible(formatCategory(c, meta.data)),
+                      })),
+                    ]}
+                  />
+                  <NativeSelect
+                    label="Origin"
+                    value={origin}
+                    onChange={(e) => setOrigin(e.currentTarget.value)}
+                    data={options(sorted([...(meta.data.origins ?? []), ...all.map((r) => r.origin).filter((o): o is string => !!o)]))}
+                  />
+                </Group>
 
-              {rows.length === 0 ? (
-                <Text c="dimmed">No risks here.</Text>
-              ) : (
-                <Table.ScrollContainer minWidth={900}>
-                  <Table highlightOnHover>
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>ID</Table.Th>
-                        <Table.Th>Title</Table.Th>
-                        <Table.Th>Elements</Table.Th>
-                        <Table.Th>Category</Table.Th>
-                        <Table.Th>Status</Table.Th>
-                        <Table.Th>Origin</Table.Th>
-                        <Table.Th>Drafted by</Table.Th>
-                        <Table.Th>Updated</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {rows.map((r) => (
-                        <Table.Tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => navigate(href(r))}>
-                          <Table.Td style={WRAP_STYLE}>
-                            <Anchor component={Link} to={href(r)} onClick={(e) => e.stopPropagation()}>
-                              {visible(r.id)}
-                            </Anchor>
-                          </Table.Td>
-                          <Table.Td style={WRAP_STYLE}>{visible(r.title ?? '')}</Table.Td>
-                          <Table.Td style={WRAP_STYLE}>{visible((r.elements ?? []).join(', '))}</Table.Td>
-                          <Table.Td style={WRAP_STYLE}>{visible(formatCategory(r.category, meta.data))}</Table.Td>
-                          <Table.Td style={WRAP_STYLE}>{visible(r.status ?? '')}</Table.Td>
-                          <Table.Td style={WRAP_STYLE}>{visible(r.origin ?? '')}</Table.Td>
-                          <Table.Td style={WRAP_STYLE}>{visible(formatActor(r.drafted_by))}</Table.Td>
-                          <Table.Td>{formatTime(r.updated_at)}</Table.Td>
+                {rows.length === 0 ? (
+                  <Text c="dimmed">No risks here.</Text>
+                ) : (
+                  <Table.ScrollContainer minWidth={900}>
+                    <Table highlightOnHover>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>ID</Table.Th>
+                          <Table.Th>Title</Table.Th>
+                          <Table.Th>Elements</Table.Th>
+                          <Table.Th>Category</Table.Th>
+                          <Table.Th>Status</Table.Th>
+                          <Table.Th>Origin</Table.Th>
+                          <Table.Th>Drafted by</Table.Th>
+                          <Table.Th>Updated</Table.Th>
                         </Table.Tr>
-                      ))}
-                    </Table.Tbody>
-                  </Table>
-                </Table.ScrollContainer>
-              )}
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {rows.map((r) => (
+                          <Table.Tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => navigate(href(r))}>
+                            <Table.Td style={WRAP_STYLE}>
+                              <Anchor component={Link} to={href(r)} onClick={(e) => e.stopPropagation()}>
+                                {visible(r.id)}
+                              </Anchor>
+                            </Table.Td>
+                            <Table.Td style={WRAP_STYLE}>{visible(r.title ?? '')}</Table.Td>
+                            <Table.Td style={WRAP_STYLE}>{visible((r.elements ?? []).join(', '))}</Table.Td>
+                            <Table.Td style={WRAP_STYLE}>{visible(formatCategory(r.category, meta.data))}</Table.Td>
+                            <Table.Td style={WRAP_STYLE}>{visible(r.status ?? '')}</Table.Td>
+                            <Table.Td style={WRAP_STYLE}>{visible(r.origin ?? '')}</Table.Td>
+                            <Table.Td style={WRAP_STYLE}>{visible(formatActor(r.drafted_by))}</Table.Td>
+                            <Table.Td>{formatTime(r.updated_at)}</Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                )}
               </>
             )}
           </Tabs.Panel>

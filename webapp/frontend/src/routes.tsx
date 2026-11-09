@@ -1,8 +1,4 @@
-import { Loader } from '@mantine/core'
-import { Navigate, Outlet, useParams, type RouteObject } from 'react-router'
-import { useSession, useSignedOut } from './api/queries'
-import type { Reg } from './api/types'
-import { AppShell } from './components/AppShell'
+import { Navigate, type RouteObject } from 'react-router'
 import { DfdPage } from './pages/DfdPage'
 import { EditRiskPage } from './pages/EditRiskPage'
 import { HistoryPage } from './pages/HistoryPage'
@@ -11,25 +7,7 @@ import { RegisterPage } from './pages/RegisterPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { RiskPage } from './pages/RiskPage'
-import { SignedOut } from './pages/SignedOut'
-
-function Root() {
-  const signedOut = useSignedOut()
-  const session = useSession()
-  if (signedOut) return <SignedOut />
-  if (session.isLoading) return <Loader m="xl" aria-label="Loading" />
-  return <Outlet />
-}
-
-function SystemLayout() {
-  const { reg, slug } = useParams()
-  if ((reg !== 'main' && reg !== 'trial') || !slug) return <Navigate to="/" replace />
-  return (
-    <AppShell reg={reg as Reg} slug={slug}>
-      <Outlet />
-    </AppShell>
-  )
-}
+import { Root, SystemLayout } from './pages/Layouts'
 
 export const routes: RouteObject[] = [
   {

@@ -136,7 +136,7 @@ export function RiskRecord({
             <Text size="xs" fw={600} c="dimmed" tt="uppercase" mt="md" mb="xs">
               History
             </Text>
-            <HistoryTable history={history} />
+            {reloading ? <NotProvided text="Reloading history…" /> : <HistoryTable history={history} />}
           </>
         )
       default:

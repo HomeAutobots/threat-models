@@ -7,7 +7,6 @@ import panelSrc from '../components/review/DecisionPanel.tsx?raw'
 import diffSrc from '../components/review/ReReviewDiff.tsx?raw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DecisionPanelProps } from '../components/review/DecisionPanel'
-import type { RiskDetail as Detail } from '../api/types'
 import { makeQueryClient } from '../api/queries'
 import type { Risk, RiskDetail } from '../api/types'
 import { ReviewPage } from './ReviewPage'
@@ -22,7 +21,7 @@ vi.mock('../components/record/RiskRecord', async (orig) => {
   const m = await orig<typeof import('../components/record/RiskRecord')>()
   return {
     ...m,
-    RiskRecord: (p: { detail: Detail; meta: unknown; history: unknown[]; reloading?: boolean }) => {
+    RiskRecord: (p: { detail: RiskDetail; meta: unknown; history: unknown[]; reloading?: boolean }) => {
       renders.dup = p.reloading ? null : p.detail.duplicate?.title
       return <m.RiskRecord {...(p as Parameters<typeof m.RiskRecord>[0])} />
     },
@@ -93,6 +92,7 @@ let failList: boolean
 let failRisk: boolean
 let historyGets: number
 let historyGate: Promise<void> | null
+let historyBody: unknown[]
 
 function mockApi() {
   vi.stubGlobal(
@@ -107,7 +107,7 @@ function mockApi() {
       if (url.endsWith('/history')) {
         historyGets++
         if (historyGate) await historyGate
-        return json([])
+        return json(historyBody)
       }
       const m = url.match(/\/risks\/([^/]+)$/)
       if (m && getGate) await getGate
@@ -158,6 +158,7 @@ beforeEach(() => {
   failRisk = false
   historyGets = 0
   historyGate = null
+  historyBody = []
   queue = [mkRisk('T-1'), mkRisk('T-2'), mkRisk('T-3')]
   details = Object.fromEntries(queue.map((r) => [r.id, mkDetail(r)]))
   postReply = (p) => json({ risk: { ...p.body.seen, review_state: 'approved' } })
@@ -671,6 +672,29 @@ describe('ReviewPage', () => {
         await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
         expect(screen.queryByText('Reloading this risk…')).not.toBeInTheDocument()
         expect(dup()).toContain('Five title')
+      })
+
+      it('hides the old history while reloading and shows the new one when it lands', async () => {
+        setup()
+        const row = (seq: number, note: string) => ({
+          seq, at: '2026-01-01T00:00:00Z', op: 'edit', tbl: 'risks', row_key: 'T-1',
+          actor: 'ai:run-1', diff: {}, note, prev_hash: '', hash: '',
+        })
+        historyBody = [row(1, 'Old history note')]
+        renderPage()
+        await type()
+        expect(await screen.findByText('Old history note')).toBeInTheDocument()
+        let release: () => void = () => {}
+        historyGate = new Promise<void>((res) => (release = res))
+        historyBody = [row(1, 'Old history note'), row(2, 'New history note')]
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
+        await waitFor(() => expect(historyGets).toBeGreaterThan(1))
+        expect(screen.getByText('Reloading this risk…')).toBeInTheDocument()
+        expect(screen.queryByText('Old history note')).not.toBeInTheDocument()
+        expect(screen.getByText('Reloading history…')).toBeInTheDocument()
+        await act(async () => release())
+        expect(await screen.findByText('New history note')).toBeInTheDocument()
+        expect(screen.queryByText('Reloading history…')).not.toBeInTheDocument()
       })
 
       it('no render enables the buttons while the replaced context is shown', async () => {

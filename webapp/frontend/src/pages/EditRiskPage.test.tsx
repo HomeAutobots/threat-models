@@ -128,7 +128,7 @@ describe('EditRiskPage', () => {
     })
   })
 
-  it('approved goes to the risk page; pending goes to review, or where ?return= says', async () => {
+  it('saving an approved risk goes to the risk page', async () => {
     renderPage('edit', '/main/demo/risks/T-1/edit')
     fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'X' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))

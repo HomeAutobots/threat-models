@@ -66,6 +66,16 @@ describe('RetireModal', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 
+  it('strips outer whitespace the way Python does: U+001C and U+0085 go, U+FEFF stays', async () => {
+    renderModal()
+    const box = await screen.findByLabelText('Reason')
+    fireEvent.change(box, { target: { value: `\u001c\u0085${'x'.repeat(5)}\u0085` } })
+    expect(screen.getByText('5 / 20')).toBeInTheDocument()
+    fireEvent.change(box, { target: { value: `\ufeff${'x'.repeat(19)}` } })
+    expect(screen.getByText('20 / 20')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retire T-1' })).toBeEnabled()
+  })
+
   it('counts the reason in code points, as core does', async () => {
     renderModal()
     fireEvent.change(await screen.findByLabelText('Reason'), { target: { value: '😀'.repeat(20) } })

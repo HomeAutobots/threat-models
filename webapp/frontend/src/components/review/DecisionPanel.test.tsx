@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { DecisionPanel } from './DecisionPanel'
 
@@ -47,6 +47,15 @@ function renderPanel(over: Partial<Parameters<typeof DecisionPanel>[0]> = {}) {
 }
 
 describe('DecisionPanel', () => {
+  it("strips outer whitespace the way Python does: U+001C and U+0085 go, U+FEFF stays", () => {
+    renderPanel({ note: `\u001c\u0085${'x'.repeat(5)}\u0085` })
+    expect(screen.getByText('5 / 20')).toBeInTheDocument()
+    cleanup()
+    renderPanel({ note: `\ufeff${'x'.repeat(19)}` })
+    expect(screen.getByText('20 / 20')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve T-37' })).toBeEnabled()
+  })
+
   it('approve enables at the minimum', () => {
     renderPanel({ note: 'x'.repeat(19) })
     expect(screen.getByRole('button', { name: 'Approve T-37' })).toBeDisabled()

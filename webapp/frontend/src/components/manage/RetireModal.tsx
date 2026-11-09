@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { apiPath } from '../../api/client'
 import { useAction } from '../../api/queries'
 import type { Reg, Risk } from '../../api/types'
+import { noteLength } from '../../lib/pyStrip'
 import { visible } from '../../lib/visible'
 import { failure, STALE_TEXT } from './errors'
 
@@ -30,9 +31,9 @@ export function RetireModal({ reg, slug, risk, noteMin, opened, onClose }: Props
   const [error, setError] = useState<string | null>(null)
   const inFlight = useRef(false)
 
-  // The note rule is the core's: outer whitespace does not count, and length is in code points.
+  // The note rule is the core's: outer whitespace (Python's set) does not count, and length is in code points.
   const id = visible(risk.id)
-  const length = [...reason.trim()].length
+  const length = noteLength(reason)
   const ok = length >= noteMin
 
   // Adjusted while rendering, not in an effect: the refetched record has arrived.

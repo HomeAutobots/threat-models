@@ -106,6 +106,12 @@ describe('RegisterPage', () => {
     expect(screen.getByText('Title of A-1')).toBeInTheDocument()
   })
 
+  it('has the row ID as a link to the risk page, for keyboard users', async () => {
+    renderPage()
+    await screen.findByText('Title of A-1')
+    expect(screen.getByRole('link', { name: 'A-1' })).toHaveAttribute('href', '/main/demo/risks/A-1')
+  })
+
   it('filters by element and status', async () => {
     renderPage()
     await screen.findByText('Title of A-1')
