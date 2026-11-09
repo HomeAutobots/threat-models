@@ -2,7 +2,7 @@
 description: Draft a DFD or threats for one system into the registry as pending review, following the guide's framework
 argument-hint: <slug> [--trial] [element IDs, e.g. P7,F18,F19]
 allowed-tools: Read, Grep, Glob, Write, Edit, Bash(./tmreg list:*), Bash(./tmreg show:*), Bash(./tmreg history:*), Bash(./tmreg report:*), Bash(./tmreg verify:*), Bash(./tmreg runs:*), Bash(./tmreg dfd status:*), Bash(./tmreg dfd check:*), Bash(./tmreg run start:*), Bash(./tmreg add:*), Bash(./tmreg edit:*), Bash(git log:*), Bash(grep:*), Bash(rg:*), Bash(find:*), Bash(ls:*), Bash(cat:*), Bash(head:*), Bash(tail:*), Bash(wc:*), Bash(sort:*), Bash(uniq:*), Bash(cut:*), Bash(file:*)
-disallowed-tools: WebFetch, WebSearch, NotebookEdit
+disallowed-tools: WebFetch, WebSearch, NotebookEdit, mcp__claude-in-chrome, mcp__Claude_Browser, mcp__computer-use
 ---
 # Threat model run: $ARGUMENTS
 

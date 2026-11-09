@@ -18,6 +18,9 @@ ALLOWED = ("list", "show", "history", "report", "verify", "runs", "dfd status", 
            "run start", "add", "edit")
 READ_ONLY = ("grep", "rg", "ls", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "file", "find")
 INVOCATIONS = ("./tmreg", "tmreg", "python3 -m tmreg", "python3 ./tmreg", "python3 tmreg")
+# Browser and desktop automation MCP servers: they could act in the owner's signed-in browser.
+BROWSER_MCP = ("mcp__claude-in-chrome", "mcp__Claude_Browser", "mcp__computer-use")
+TM_MODEL = ROOT / ".claude" / "commands" / "tm-model.md"
 REQUIRED_DENY = [f"Bash(./tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
     f"Bash(tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
     "Bash(python3 -m tmreg:*)", "Bash(python3 ./tmreg:*)", "Bash(python3 tmreg:*)",
@@ -27,7 +30,7 @@ REQUIRED_DENY = [f"Bash(./tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
     "Edit(/registry/**)", "Edit(/.claude/**)", "Edit(/systems/*/register.md)", "Edit(/tmreg)",
     "Edit(/project.toml)", "Edit(/CLAUDE.md)", "Edit(/.githooks/**)", "Edit(/.gitignore)",
     "Edit(/webapp/**)",
-]
+] + list(BROWSER_MCP)
 
 
 def _denied(command: str, deny: list) -> bool:
@@ -121,6 +124,16 @@ class SettingsTest(unittest.TestCase):
         for sub in ("verify", "dfd status", "add"):
             with self.subTest(sub=sub):
                 self.assertIn(f"./tmreg {sub} is denied", found)
+
+
+class TmModelCommandTest(unittest.TestCase):
+    def test_tm_model_disallows_web_and_browser_tools(self):
+        front = TM_MODEL.read_text().split("---")[1]
+        line = next(l for l in front.splitlines() if l.startswith("disallowed-tools:"))
+        tools = {t.strip() for t in line.split(":", 1)[1].split(",")}
+        for tool in ("WebFetch", "WebSearch", "NotebookEdit") + BROWSER_MCP:
+            with self.subTest(tool=tool):
+                self.assertIn(tool, tools)
 
 
 if __name__ == "__main__":

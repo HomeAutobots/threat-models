@@ -71,7 +71,10 @@
       "Edit(/CLAUDE.md)",
       "Edit(/.githooks/**)",
       "Edit(/.gitignore)",
-      "Edit(/webapp/**)"
+      "Edit(/webapp/**)",
+      "mcp__claude-in-chrome",
+      "mcp__Claude_Browser",
+      "mcp__computer-use"
     ],
     "additionalDirectories": [
       "/Users/tylerstandish/Developer/threat-model-framework"

@@ -222,7 +222,10 @@ repo, is not guarded by them, even when it works on files here.
    - The deny rules cover the human-only subcommands, the other ways of invoking tmreg, terminal
      wrappers, inline interpreters, `sqlite3`, and git `checkout`, `restore`, `reset`, and `stash`.
      They also deny edits to `registry/`, `.claude/`, `webapp/`, `systems/*/register.md`, `tmreg`,
-     `project.toml`, and `CLAUDE.md`. A deny rule beats any allow rule.
+     `project.toml`, and `CLAUDE.md`, and every tool of the browser and desktop automation MCP
+     servers: Claude in Chrome (`mcp__claude-in-chrome`), the Claude app's built-in browser
+     (`mcp__Claude_Browser`), and computer use (`mcp__computer-use`). `/tm-model` disallows the
+     same three for its run. A deny rule beats any allow rule.
    - Deny rules apply right away. The allow rules, and the read access to the guide in
      `additionalDirectories`, apply only after you accept the workspace-trust dialog for this
      folder.
@@ -250,7 +253,8 @@ Also:
   fonts, and connections. Every `/api` response is `Cache-Control: no-store`. Websockets are refused.
 - Each write route names one system and at most one risk. There is no approve-all.
 - `Edit(/webapp/**)` is a deny rule in `.claude/settings.json`, and the guard's allow-list already
-  blocks starting the server and every command that makes web requests.
+  blocks starting the server and every command that makes web requests. The browser and desktop
+  automation MCP servers are denied too (layer 3).
 - `webapp/backend/tests/test_lock.py` walks every `/api` route and expects 401 without a session.
 
 **Limits.**
@@ -268,11 +272,14 @@ Also:
   alias (`alias -g`) expands anywhere in a command, so it could turn an allowed word into shell
   syntax. Keep global aliases out of the profile Claude Code's shell loads.
 - The hook checks only the tools named above. A tool it does not name is not checked. That
-  includes MCP tools that write local files or send data out, for example browser, mail, or drive
-  connectors, so keep such servers off for this project. `/tm-model` disallows the built-in web
-  tools (WebFetch and WebSearch) for its run, but not MCP tools.
+  includes MCP tools that write local files or send data out, for example mail or drive
+  connectors, so keep such servers off for this project. Of the MCP servers, the deny rules cover
+  only the three browser and desktop automation servers in layer 3. `/tm-model` also disallows the
+  built-in web tools (WebFetch and WebSearch) for its run.
 - A browser-automation tool working in your signed-in browser, such as Claude in Chrome, can act
-  as you in the web app. Never grant it `127.0.0.1` or `localhost`.
+  as you in the web app. A guarded session is denied those three servers. A Claude session started
+  elsewhere is not, nor is Claude in Chrome when you use it from Chrome itself. Never grant the
+  extension `127.0.0.1` or `localhost`.
 - The upgrade path, which is not built, is signed approvals: each approval is signed with the
   reviewer's SSH key, and the registry rejects an approved row without a valid signature.
   `webapp/DESIGN.md` section 5 describes it.
