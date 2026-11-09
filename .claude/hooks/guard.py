@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: an allow-list of what Claude may run or write in this project.
+"""PreToolUse hook: an allow-list of the tools Claude may use in this project, and of what it may
+run or write with them.
 
-Claude Code sends the tool call as JSON on stdin. Exit 0 lets it run. Exit 2 blocks it, and Claude
-Code shows stderr to Claude. Anything unexpected also exits 2: the guard fails closed.
+Claude Code sends every tool call as JSON on stdin (the hook's matcher is "*"). Exit 0 lets it run.
+Exit 2 blocks it, and Claude Code shows stderr to Claude. Anything unexpected also exits 2: the
+guard fails closed.
 
 Standard library only, no tmreg imports, and Python 3.9 or later, because the hook may run under
 /usr/bin/python3. Keep TMREG_OPTIONS in step with registry/tmreg/cli.py, and TMREG_OPTIONS and
@@ -21,7 +23,17 @@ from typing import NamedTuple
 PREFIX = "threat-models guard: "
 
 SHELL_TOOLS = ("Bash", "Monitor")  # both carry tool_input.command
-WRITE_TOOLS = ("Edit", "Write", "MultiEdit")
+# Monitor's other source, ws, opens a WebSocket: a network channel. Only these keys pass.
+MONITOR_KEYS = ("command", "description", "timeout_ms", "persistent")
+WRITE_TOOLS = ("Edit", "Write", "MultiEdit")  # each writes tool_input.file_path
+# Tools that only read, keep the session's checklist (TodoWrite, or the Task* tools that replaced
+# it by default), ask the owner, or load a deferred tool's schema (ToolSearch; the tool it loads
+# still comes through here). Every tool not named here or above is blocked: skills (whose
+# frontmatter hooks run shell commands outside this guard), subagents, the web, worktrees,
+# notebooks, and every MCP tool, such as a connector that could send risk data off the machine.
+OTHER_TOOLS = ("Read", "Grep", "Glob", "TodoWrite", "TaskCreate", "TaskGet", "TaskList",
+               "TaskUpdate", "AskUserQuestion", "ToolSearch")
+ALLOWED_TOOLS = SHELL_TOOLS + WRITE_TOOLS + OTHER_TOOLS
 
 # The whole command is one plain command: no shell operators, quotes, globs, $, redirection,
 # line breaks, or tabs. ./tmreg and git calls must be plain; read-only commands may also quote.
@@ -108,11 +120,12 @@ TMREG_OPTIONS = {
     "runs": ("--trial",),
     "add": ("--trial", "--run", "--json"),
     "edit": ("--trial", "--run", "--json"),
-    "dfd status": ("--trial",),
-    "dfd check": ("--trial",),
+    "c4 status": ("--trial",),
+    "c4 check": (),  # it reads workspace.dsl and both registers; it takes no --trial
     "run start": ("--trial",),
 }
-TMREG_HUMAN_ONLY = ("review", "approve", "reject", "merge", "retire", "import-legacy", "dfd approve")
+TMREG_HUMAN_ONLY = ("review", "approve", "reject", "merge", "retire", "import-legacy", "c4 approve")
+TMREG_GROUPS = ("c4", "run")  # subcommands named by two words
 TMREG_JSON_INPUT = ("add", "edit")  # --json PATH; for list, show, and history it is an output flag
 TMREG_FORBIDDEN = ("--db", "--out")
 GIT_SUBCOMMANDS = ("status", "diff", "log")
@@ -121,10 +134,21 @@ GIT_SUBCOMMANDS = ("status", "diff", "log")
 GIT_FORBIDDEN = ("--output", "--ext-diff", "--no-index", "--order-file")
 
 _SLUG = r"[a-z][a-z0-9-]{1,39}"
-_PART = r"[A-Za-z0-9._-]+"
-DFD_FILE = re.compile(rf"systems/{_SLUG}/dfd\.md")
-RUN_FILE = re.compile(rf"systems/{_SLUG}/runs/{_PART}/(?:{_PART}/)*{_PART}\.(?:md|json)")
-CANDIDATE_FILE = re.compile(rf"systems/{_SLUG}/runs/{_PART}/(?:{_PART}/)*{_PART}\.json")
+_RUN = r"(?:trial-)?[0-9]{8}-[0-9]{2,}"  # a run ID, as core.start_run makes it
+_RISK = r"P?T-[0-9]{2,}"  # a risk ID, as core._allocate makes it
+_CANDIDATE = rf"candidates/(?:[0-9]{{2,}}|edit-{_RISK})\.json"
+MODEL_FILE = re.compile(rf"systems/{_SLUG}/workspace\.dsl")
+# The run files tm-model.md names, and nothing else: no other name, no other folder, no deeper path.
+# Claude Code loads a CLAUDE.md, or a skill under .claude/skills/, that it finds in a subfolder.
+RUN_FILE = re.compile(rf"systems/{_SLUG}/runs/{_RUN}/(?:worksheet\.md|summary\.md|model-check\.md"
+                      rf"|{_CANDIDATE})")
+CANDIDATE_FILE = re.compile(rf"systems/{_SLUG}/runs/{_RUN}/{_CANDIDATE}")
+# Never written, whatever the folder: CLAUDE.md, which Claude Code loads as instructions; the DFD
+# that workspace.dsl replaced; and Structurizr's layout file, which its tools read beside a
+# workspace.dsl. Nor is anything under diagrams/, where the web app keeps the exported viewer
+# sites it serves, or any file or folder whose name starts with a dot.
+NEVER_WRITTEN = ("claude.md", "dfd.md", "workspace.json")
+EXPORTS = "diagrams"
 
 ALLOWED_COMMANDS = ("./tmreg (" + ", ".join(TMREG_OPTIONS) + ") and git status, git diff, and "
                     "git log, one plain command per call; and the read-only commands "
@@ -137,8 +161,15 @@ def _names(word: str, option: str) -> bool:
     return name.startswith(option) or (len(name) > 2 and option.startswith(name))
 
 
+def _has_dotdot(text: str) -> bool:
+    return ".." in text.replace(os.sep, "/").split("/")
+
+
 def _project_path(text: str, root: Path) -> str | None:
-    """text as a POSIX path relative to the project root, symlinks resolved; None if outside it."""
+    """text as a POSIX path relative to the project root, symlinks resolved; None if outside it,
+    or if text has a .. part at all, even one that stays inside (systems/a/../b/workspace.dsl)."""
+    if _has_dotdot(text):
+        return None
     try:
         base = os.path.realpath(str(root))
         real = os.path.realpath(text if os.path.isabs(text) else os.path.join(base, text))
@@ -152,7 +183,10 @@ def _project_path(text: str, root: Path) -> str | None:
 def _check_tmreg(args: list[str], root: Path) -> tuple[bool, str]:
     if not args:
         return False, f"./tmreg needs a subcommand; Claude may run {ALLOWED_COMMANDS}"
-    n = 2 if args[0] in ("dfd", "run") and len(args) > 1 else 1
+    if args[0] == "dfd":
+        return False, ("./tmreg dfd was replaced by ./tmreg c4: Claude may run c4 status and "
+                       "c4 check; c4 approve is the owner's")
+    n = 2 if args[0] in TMREG_GROUPS and len(args) > 1 else 1
     sub, rest = " ".join(args[:n]), args[n:]
     if sub in TMREG_HUMAN_ONLY:
         return False, (f"./tmreg {sub} is human-only. Do not look for another route: ask the owner "
@@ -170,11 +204,14 @@ def _check_tmreg(args: list[str], root: Path) -> tuple[bool, str]:
             path = rest[i + 1] if i + 1 < len(rest) else ""
             rel = _project_path(path, root) if path else None
             if rel is None or not CANDIDATE_FILE.fullmatch(rel):
-                return False, (f"./tmreg {sub}: --json must name a .json file under "
-                               f"systems/<slug>/runs/<run-id>/ in this project (got {path or 'nothing'})")
+                return False, (f"./tmreg {sub}: --json must name candidates/<nn>.json or "
+                               "candidates/edit-<risk-id>.json under systems/<slug>/runs/<run-id>/ "
+                               f"in this project (got {path or 'nothing'})")
             i += 2
             continue
         if word.startswith("-") and word not in allowed:
+            if not allowed:
+                return False, f"./tmreg {sub} takes no options (got {word})"
             return False, (f"./tmreg {sub}: option {word} is not allowed; use only "
                            f"{', '.join(allowed)}, spelled in full, as separate words")
         i += 1
@@ -401,14 +438,29 @@ def check_command(tool: str, command, root: Path) -> tuple[bool, str]:
 
 
 def check_write(tool: str, tool_input: dict, root: Path) -> tuple[bool, str]:
-    path = tool_input.get("file_path") or tool_input.get("notebook_path")
+    path = tool_input.get("file_path")  # never notebook_path: these tools write file_path
     if not isinstance(path, str) or not path:
         return False, f"malformed {tool} call: no file_path"
+    allowed = (f"{tool} may write only systems/<slug>/workspace.dsl and, under "
+               "systems/<slug>/runs/<run-id>/, worksheet.md, model-check.md, summary.md, "
+               "candidates/<nn>.json, and candidates/edit-<risk-id>.json")
+    if _has_dotdot(path) or path.endswith(("/", "/.")):
+        return False, f"{allowed}, named without .. or a final / or /. (got {path})"
     rel = _project_path(path, root)
-    if rel is not None and (DFD_FILE.fullmatch(rel) or RUN_FILE.fullmatch(rel)):
+    if rel is None:
+        return False, f"{allowed}; {path} is outside this project"
+    parts = rel.split("/")
+    if any(part.startswith(".") for part in parts):
+        return False, (f"{tool} never writes a file or folder whose name starts with . (got "
+                       f"{path}): Claude Code reads skills, settings, and servers from such "
+                       f"folders. {allowed}")
+    lower = [part.lower() for part in parts]
+    if lower[-1] in NEVER_WRITTEN or lower[0] == EXPORTS:
+        return False, (f"{tool} never writes CLAUDE.md, dfd.md, workspace.json, or anything under "
+                       f"diagrams/ (got {path}). {allowed}")
+    if MODEL_FILE.fullmatch(rel) or RUN_FILE.fullmatch(rel):
         return True, ""
-    return False, (f"{tool} may write only systems/<slug>/dfd.md and .md or .json files under "
-                   f"systems/<slug>/runs/<run-id>/; {path} is not one of them")
+    return False, f"{allowed}; {path} is not one of them"
 
 
 def decide(payload: dict, root: Path) -> tuple[bool, str]:
@@ -418,13 +470,23 @@ def decide(payload: dict, root: Path) -> tuple[bool, str]:
     tool = payload.get("tool_name")
     if not isinstance(tool, str) or not tool:
         return False, "malformed hook payload: no tool_name"
-    if tool == "NotebookEdit":
-        return False, "NotebookEdit is not allowed in this project"
+    if tool == "Monitor":
+        given = payload.get("tool_input", {})
+        if not isinstance(given, dict):
+            return False, "malformed Monitor call: tool_input is not an object"
+        extra = sorted(k for k in given if k not in MONITOR_KEYS)
+        if extra:
+            return False, (f"Monitor may pass only {', '.join(MONITOR_KEYS)} (got "
+                           f"{', '.join(map(repr, extra))}); its ws source opens a network "
+                           "connection, so watch a command instead")
     if tool in SHELL_TOOLS:
         return check_command(tool, payload.get("tool_input", {}).get("command"), root)
     if tool in WRITE_TOOLS:
         return check_write(tool, payload.get("tool_input", {}), root)
-    return True, ""
+    if tool in OTHER_TOOLS:
+        return True, ""
+    return False, (f"the tool {tool!r} is not allowed in this project. Do not look for another "
+                   f"route: Claude may use only {', '.join(ALLOWED_TOOLS)}")
 
 
 def _block(reason: str) -> int:
