@@ -34,11 +34,24 @@ function show(v: unknown): string {
   return typeof v === 'string' ? v : JSON.stringify(v)
 }
 
+/** One line per property that differs, sorted by name. tm.was is left out, as core's `changed`
+ * leaves it out (spec 7.4). */
+function propertyLines(a: unknown, b: unknown): string[] {
+  const pa = (a ?? {}) as Record<string, string>
+  const pb = (b ?? {}) as Record<string, string>
+  return [...new Set([...Object.keys(pa), ...Object.keys(pb)])]
+    .filter((k) => k !== 'tm.was' && pa[k] !== pb[k])
+    .sort()
+    .map((k) => `property ${k}: ${show(pa[k])} → ${show(pb[k])}`)
+}
+
 /** Old -> new for each field core's `changed` names. Display only: core decides what changed. */
 function changeLines(id: string, fields: string[], oldRecord: C4Record | null, newRecord: C4Record): string[] {
   const a = entry(oldRecord, id)
   const b = entry(newRecord, id)
-  return fields.map((f) => `${f}: ${show(a?.[f])} → ${show(b?.[f])}`)
+  return fields.flatMap((f) =>
+    f === 'properties' ? propertyLines(a?.[f], b?.[f]) : [`${f}: ${show(a?.[f])} → ${show(b?.[f])}`],
+  )
 }
 
 export function ApprovePanel({ reg, slug, data }: Props) {
