@@ -174,7 +174,7 @@ an adversarial review before commit:
 2. **Edit takes `seen` and a reason.** `edit_risk` gains keyword-only `seen` (as on `approve`,
    raising `StaleRecord` if the row changed since it was shown) and an optional `note`, stored as
    the change log's note. The web app always passes `seen`. The CLI keeps working without either.
-3. **DFD element details.** `dfd.py` additionally returns each ID's details from the `dfd.md`
+3. *Superseded by `2026-11-09-c4-model-design.md`.* **DFD element details.** `dfd.py` additionally returns each ID's details from the `dfd.md`
    tables: name, type, and description for elements; from, to, and label for flows; name and
    enforcement for trust boundaries. Read-only, for display. Parsing rules and the hash do not
    change.
@@ -267,6 +267,8 @@ Rejected and retired risks are read-only, as core requires.
 - Core's error messages show inline, next to the form.
 
 ### 6.5 DFD
+
+*Superseded by `2026-11-09-c4-model-design.md`.*
 
 The current status (none, current, changed), the list of approvals, `dfd.md`, and the preview of
 added and removed IDs, with any risks that cite removed IDs. Approve DFD takes a note and sends
