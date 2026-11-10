@@ -257,7 +257,8 @@ file so that it passes the first time.
 - `tm.auth` is the authentication and authorization on this hop, including any change of identity.
 - Tag `Async` a message sent through a queue or an event.
 - Its two ends are different people, systems, containers, or components, never the system in scope
-  itself. When a container is opened up, point its paths at the components and keep their IDs.
+  itself, and never a component and its own container. When a container is opened up, point its
+  paths at the components and keep their IDs.
 - Every person and every system is an end of some path. A system counts through its containers and
   components.
 
@@ -265,6 +266,7 @@ file so that it passes the first time.
 - A trust boundary is a deployment node with a `TB` ID and the `Trust boundary` tag: a box around
   what it protects, such as the internet edge, a cloud account, a subnet, a cluster, an admin
   network, or a third party. Nest nodes for nested zones. `tm.enforced_by` says what enforces it.
+- Every deployment node, `TB` or `N`, holds at least one node, instance, or infrastructure node.
 - Every container of the system in scope has a `containerInstance` in every environment.
 - A person, and an `External` system with no instance in an environment, carries
   `"tm.zone.<ENV>"`: a `TB` node in that environment, or `outside`. Nothing else carries one.
@@ -304,10 +306,14 @@ code.
 - `component C2 "components-C2" {` for each opened container, titled
   `Component diagram for C2 <name>`;
 - `deployment * ENV1 "deployment-ENV1" {` for each environment, titled `Deployment diagram for ...`;
-- `dynamic S1 "SEQ1" {` for a sequence, titled `SEQ1 <name>`, listing its path IDs one per line, in
-  order, instead of `include *`.
+- `dynamic C2 "SEQ1" {` or `dynamic S1 "SEQ1" {` for a sequence, titled `SEQ1 <name>`, listing
+  its path IDs one per line, in order, instead of `include *`. Scope a sequence to a container when
+  any of its steps touches that container's components, as the worked example does with
+  `dynamic C2`, and to the system otherwise. A sequence's steps never end at its own scope
+  element, and one sequence never shows a container together with one of its own components.
 
-`include *` is the only include. Copy the reference's `styles` block unchanged.
+`include *` is the only include. Copy the reference's `styles` block unchanged: tmreg refuses any
+style line that isn't in it.
 
 **Wording.**
 - Where `inputs/` do not state a technology, an owner, what enforces a boundary, or how a hop is

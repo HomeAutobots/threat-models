@@ -20,9 +20,29 @@ from dataclasses import dataclass
 STRUCTURIZR_IMAGE = "structurizr/structurizr:2026.09.19@sha256:721136283c2f9cf1ba69037bc9de136c579d66fdcb2d771cb60546ec68def1a5"
 # The CSP hashes of the inline scripts in that image's static viewer (its index.html is the same
 # for every workspace), as reviewed on 2026-11-09. The web app refuses an export whose scripts
-# differ. Update the two together: a new image's viewer JavaScript is reviewed against the web
-# app's CSP before its hashes go here.
+# differ. Update these together with the image: a new image's viewer JavaScript is reviewed
+# against the web app's CSP before its hashes go here, and webapp/backend/tmweb/diagrams.py's
+# _RAN (the line Structurizr prints once it has started an export, which decides whether a
+# refusal is Structurizr's own and so kept) is checked against the new image's output.
+# webapp/backend/tests/test_diagrams_docker.py checks all three against the pinned image.
 EXPECTED_INLINE_HASHES = ("'sha256-YY3Nh7+f2MosCEdDn0KbYJuNVHQFPTfIpIWHkyXfwq4='",)
+# The standard styles block (spec section 5.9), as the worked example and the reference workspace
+# hold it: (selector, tag, property, value). A workspace's styles use only these lines, in any
+# order or any subset (ruling R41), because Structurizr refuses values tmreg doesn't check one by
+# one, such as shape Bogus, strokeWidth abc or color notacolor.
+STANDARD_STYLES = (
+    ("element", "Person", "shape", "Person"),
+    ("element", "Data store", "shape", "Cylinder"),
+    ("element", "External", "background", "#8c8c8c"),
+    ("element", "External", "color", "#ffffff"),
+    ("element", "Trust boundary", "border", "Dashed"),
+    ("element", "Trust boundary", "stroke", "#c0392b"),
+    ("element", "Trust boundary", "strokeWidth", "5"),
+    ("element", "Group", "border", "Dashed"),
+    ("element", "Group", "stroke", "#c0392b"),
+    ("element", "Group", "strokeWidth", "5"),
+    ("relationship", "Async", "style", "Dashed"),
+)
 ID_RE = r"^(A|S|C|K|R|TB|N|I|ENV|SEQ)[1-9][0-9]*$"
 KINDS = ("A", "S", "C", "K", "R", "TB", "N", "I", "ENV", "SEQ")
 MAX_BYTES = 512 * 1024
@@ -162,6 +182,8 @@ class Model:
     views: dict[str, View]
     scope: str | None = None  # the configuration's scope (only "softwaresystem" parses), or None
     line: int = 1  # the workspace statement's line, where problems with the header are reported
+    # Each style line: (selector "element" or "relationship", tag, property, value token, line).
+    styles: tuple[tuple[str, str, str, str, int], ...] = ()
 
     def ids(self) -> dict[str, list[str]]:
         """Every KIND's IDs, sorted by number. SEQ IDs are dynamic view keys; TB includes groups."""
@@ -303,6 +325,7 @@ class _Parser:
         self.props: dict[str | None, dict[str, str]] = {None: {}}  # None: the workspace's
         self.instances: list[Instance] = []
         self.views: dict[str, dict] = {}
+        self.styles: list[tuple[str, str, str, str, int]] = []
         self.refs: list[tuple[int, str, tuple[str, ...], str]] = []  # checked once all is read
 
     def statement(self, t: list[str], n: int) -> None:
@@ -326,7 +349,7 @@ class _Parser:
         if key not in _ALLOWED[ctx]:
             self.misplaced(t, key, n)
         if ctx in ("element", "relationship"):
-            return self.style_line(t, n, block)
+            return self.style_line(t, n, block, ctx, owner)
         if key.startswith("=") and key != "=path":
             return self.element(t, n, block, owner)
         getattr(self, _METHODS[key])(t, n, block, owner)
@@ -546,11 +569,12 @@ class _Parser:
         if _text(t[1]) not in TAGS + _BUILTIN_TAGS:
             raise C4Error(f'line {n}: a style names a tag, and "{_show(_text(t[1]))}" is not one: '
                           + ", ".join(TAGS + _BUILTIN_TAGS))
-        self.push(t[0], None, n)
+        self.push(t[0], _text(t[1]), n)  # the block's owner is the tag it styles
 
-    def style_line(self, t, n, block):
+    def style_line(self, t, n, block, selector, tag):
         if len(t) != 2 or block:
             raise C4Error(f"line {n}: a style line is one property and one value")
+        self.styles.append((selector, tag, t[0], t[1], n))  # problems checks the values
 
     def finish(self, sha: str) -> Model:
         if len(self.stack) > 1:
@@ -576,7 +600,7 @@ class _Parser:
             instances=tuple(self.instances),
             views={k: View(key=k, kind=v["kind"], scope=v["scope"], env=v["env"], title=v["title"],
                            steps=tuple(v["steps"]), line=v["line"]) for k, v in self.views.items()},
-            scope=self.config_scope, line=ws_line)
+            scope=self.config_scope, line=ws_line, styles=tuple(self.styles))
 
 
 _METHODS = {"workspace": "workspace_", "!identifiers": "identifiers", "properties": "block",
@@ -886,7 +910,8 @@ def problems(m: Model) -> list[str]:
     An empty list means the model may be approved."""
     rules = _Rules(m)
     for check in (rules.header, rules.text, rules.properties, rules.tags, rules.scope,
-                  rules.zones, rules.paths, rules.zoom, rules.deployment, rules.views):
+                  rules.zones, rules.paths, rules.zoom, rules.deployment, rules.views,
+                  rules.styles):
         check()
     rules.found.sort(key=lambda p: p[0])
     return [f"line {n}: {text}" for n, text in rules.found]
@@ -1057,6 +1082,13 @@ class _Rules:
             if r.source == r.destination:
                 self.add(r.line, f"{r.id} starts and ends at {r.source}: a path joins two "
                          "different elements")
+            elif r.source in where(self.m, r.destination) or \
+                    r.destination in where(self.m, r.source):
+                inner, outer = ((r.source, r.destination) if r.destination in where(self.m, r.source)
+                                else (r.destination, r.source))
+                self.add(r.line, f"{r.id} joins {inner} and {outer}, which {inner} sits inside: "
+                         "Structurizr refuses a path between an element and its own container or "
+                         "system, so point it at another element")
             if self.in_scope in (r.source, r.destination):
                 self.add(r.line, f"{r.id} ends at {self.in_scope}, the system in scope: point it "
                          "at a container or component, so that its crossings are known")
@@ -1089,9 +1121,10 @@ class _Rules:
             if i.kind in ("deploymentNode", "infrastructureNode")}
         filled = {i.group for i in self.m.items.values() if i.kind == "component"}
         for it in self.m.items.values():
-            if _is_tb_node(self.m, it.id) and it.id not in held:
-                self.add(it.line, f"{it.id} holds nothing: a trust boundary holds at least one "
-                         "node, instance or infrastructure node, or Structurizr does not draw it")
+            if it.kind == "deploymentNode" and it.id not in held:  # ruling R43: N nodes too
+                what = "a trust boundary" if _kind(it.id) == "TB" else "a deployment node"
+                self.add(it.line, f"{it.id} holds nothing: {what} holds at least one node, "
+                         "instance or infrastructure node, or Structurizr does not draw it")
             if it.kind == "group" and it.id not in filled:
                 self.add(it.line, f"{it.id} holds nothing: a trust boundary group holds at least "
                          "one component, or Structurizr does not draw it")
@@ -1122,3 +1155,45 @@ class _Rules:
         for v in m.views.values():
             if not v.title.strip():
                 self.add(v.line, f'view "{v.key}" has no title')
+            if v.kind == "dynamic":
+                self.sequence(v)
+
+    def sequence(self, v: View) -> None:
+        """What the pinned Structurizr refuses in a dynamic view (probed 2026-11-09): a component
+        in a sequence scoped to a software system, a step that ends at the view's own scope, and a
+        container shown together with one of its own components."""
+        m = self.m
+        shown: dict[str, str] = {}  # each step end -> the first step that shows it
+        for rid in v.steps:
+            for end in (m.rels[rid].source, m.rels[rid].destination):
+                shown.setdefault(end, rid)
+        if m.items[v.scope].kind == "softwareSystem":
+            part = next((e for e in shown if m.items[e].kind == "component"), None)
+            if part is not None:
+                self.add(v.line, f'view "{v.key}" is scoped to the software system {v.scope}, but '
+                         f"its step {shown[part]} touches the component {part}: Structurizr shows "
+                         "components only in a sequence scoped to a container, so write "
+                         f'dynamic {m.items[part].parent} "{v.key}"')
+        if v.scope in shown:
+            self.add(v.line, f'view "{v.key}"\'s step {shown[v.scope]} ends at {v.scope}, the '
+                     "view's own scope, which Structurizr refuses: scope the sequence to the "
+                     "system in scope, or to the container whose components its steps touch")
+        # The scope and the system in scope are left out: their own rules report them.
+        told: set[str] = set()
+        for end, rid in shown.items():
+            outer = next((a for a in where(m, end)[:-1] if a in shown
+                          and a not in (v.scope, self.in_scope)), None)
+            if outer is not None and outer not in told:
+                told.add(outer)
+                self.add(v.line, f'view "{v.key}" shows {outer} (step {shown[outer]}) and {end}, '
+                         f"which sits inside it (step {rid}): Structurizr refuses an element and "
+                         f"its own container in one sequence, so point {shown[outer]} at a "
+                         f"component of {outer}")
+
+    def styles(self) -> None:
+        standard = set(STANDARD_STYLES)
+        for selector, tag, prop, value, line in self.m.styles:
+            if (selector, tag, prop, value) not in standard:
+                self.add(line, f'{selector} "{_show(tag)}" sets {_show(prop)} {_show(value)}, '
+                         "which is not a line of the standard styles block: copy the reference "
+                         "workspace's styles (any subset, in any order)")

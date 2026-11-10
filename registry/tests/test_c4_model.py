@@ -7,7 +7,7 @@ from tmreg import c4
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SHOP = (FIXTURES / "c4/shop.dsl").read_bytes()
-I16, I20, I24 = " " * 16, " " * 20, " " * 24
+I12, I16, I20, I24 = " " * 12, " " * 16, " " * 20, " " * 24
 _ENV1_END = f"{I16}softwareSystemInstance S2\n            }}\n        }}\n"
 _SEQ1 = '        dynamic C2 "SEQ1" {'
 # mutate() pairs that add ENV2 "Staging": TB8 holds every container; A1 and S2 are outside, and
@@ -40,6 +40,24 @@ def mutate(*pairs: tuple[str, str]) -> bytes:
 def line_of(text: str, data: bytes = SHOP) -> int:
     """The line of data on which `text` starts."""
     return data[:data.index(text.encode())].count(b"\n") + 1
+
+
+_ENV1 = "        ENV1 = deploymentEnvironment"
+_STYLES = "        styles {"
+
+
+def add_path(line: str) -> tuple[str, str]:
+    """A mutate() pair adding a path, with its required properties, before ENV1."""
+    return (_ENV1, f'        {line} {{\n{I12}properties {{\n{I16}"tm.data.sent" "none"\n'
+                   f'{I16}"tm.data.returned" "none"\n{I16}"tm.auth" "None"\n{I12}}}\n        }}\n'
+                   + _ENV1)
+
+
+def add_seq(scope: str, *steps: str) -> tuple[str, str]:
+    """A mutate() pair adding the dynamic view SEQ2 with these steps, scoped to `scope`."""
+    body = "".join(f"{I12}{s}\n" for s in steps)
+    return (_STYLES, f'        dynamic {scope} "SEQ2" {{\n{I12}title "SEQ2 Probe"\n{body}'
+                     f'        }}\n{_STYLES}')
 
 
 class ExampleTest(unittest.TestCase):
@@ -290,7 +308,9 @@ class ProblemsTest(unittest.TestCase):
                                           '"tm.owner" "Web team"\n"tm.zoom" "1: x"')],
              c1, ["C1", "tm.zoom"]),
             # Deployment
-            ("C1 instance removed", [(f"{I20}containerInstance C1\n", "")], c1, ["C1", "ENV1"]),
+            ("C1 instance removed", [(f"{I20}containerInstance C1\n",  # N1 must still hold one
+                                      f'{I20}I2 = infrastructureNode "I2 Extension" "Runs in the '
+                                      'browser." "WebExtension"\n')], c1, ["C1", "ENV1"]),
             ("empty group", [(f'{I16}group "TB6 Admin handlers" {{\n',
                               f'{I16}group "TB8 Empty" {{\n{I16}}}\n'
                               f'{I16}group "TB6 Admin handlers" {{\n'),
@@ -320,10 +340,78 @@ class ProblemsTest(unittest.TestCase):
                                              '            include *\n        }\n'
                                              '        dynamic C2 "SEQ1" {')],
              '"more"', ["more", "title"]),
+            # Shapes the pinned Structurizr refuses (probed 2026-11-09)
+            ("path to its own container (R38)", [add_path('R8 = K1 -> C2 "R8 Calls back" "HTTPS"')],
+             "R8 = ", ["R8", "K1", "C2", "inside"]),
+            ("path from a container to its own component (R38)",
+             [add_path('R8 = C2 -> K1 "R8 Calls into" "HTTPS"')], "R8 = ", ["R8", "K1", "C2", "inside"]),
+            ("system-scoped sequence with a component step", [add_seq("S1", "R1", "R2", "R4")],
+             'dynamic S1 "SEQ2"', ["SEQ2", "S1", "R2", "K1", "dynamic C2"]),
+            ("external-system-scoped sequence with a component step", [add_seq("S2", "R4")],
+             'dynamic S2 "SEQ2"', ["SEQ2", "S2", "R4", "K1", "dynamic C2"]),
+            ("step ends at the sequence's container scope",
+             [add_path('R8 = A1 -> C2 "R8 Calls" "HTTPS"'), add_seq("C2", "R8")],
+             'dynamic C2 "SEQ2"', ["SEQ2", "R8", "C2", "own scope"]),
+            ("step ends at the sequence's system scope",
+             [add_path('R8 = A1 -> S2 "R8 Pays" "HTTPS"'), add_seq("S2", "R8")],
+             'dynamic S2 "SEQ2"', ["SEQ2", "R8", "S2", "own scope"]),
+            ("sequence shows a container and its component",
+             [add_path('R8 = A1 -> C2 "R8 Calls" "HTTPS"'), add_seq("C3", "R8", "R2")],
+             'dynamic C3 "SEQ2"', ["SEQ2", "C2", "K1", "R8", "R2"]),
+            ("empty deployment node (R43)",
+             [(f"{I16}TB4 = deploymentNode", f'{I16}N2 = deploymentNode "N2 Spare host" "Nothing '
+               f'runs here." "Linux" {{\n{I16}}}\n{I16}TB4 = deploymentNode')],
+             "N2 = ", ["N2", "holds nothing"]),
+            # Styles (R41): only lines of the standard block
+            ("style shape Bogus", [("shape Cylinder", "shape Bogus")], "shape Bogus",
+             ["Data store", "shape Bogus", "standard"]),
+            ("style strokeWidth abc", [('element "Group" {\n                border Dashed\n'
+                                        '                stroke #c0392b\n                strokeWidth 5',
+                                        'element "Group" {\n                border Dashed\n'
+                                        '                stroke #c0392b\n                strokeWidth abc')],
+             "strokeWidth abc", ["Group", "strokeWidth abc"]),
+            ("style color notacolor", [("color #ffffff", "color notacolor")], "color notacolor",
+             ["External", "color notacolor"]),
+            ("relationship style Wavy", [("style Dashed", "style Wavy")], "style Wavy",
+             ["Async", "style Wavy"]),
+            ("standard value under another tag", [("shape Person", "shape Cylinder")],
+             "shape Cylinder", ["Person", "shape Cylinder"]),
+            ("element value under a relationship selector",
+             [('            relationship "Async" {',
+               '            relationship "External" {\n                color #ffffff\n'
+               '            }\n            relationship "Async" {')],
+             "                color #ffffff\n            }\n            relationship",
+             ["relationship", "External", "color #ffffff"]),
         ):
             with self.subTest(rule):
                 data = mutate(*pairs)
                 self.assertOneProblem(data, line_of(at, data), *words)
+
+    def test_standard_styles_in_any_order_or_a_subset(self):
+        text = SHOP.decode()
+        block = text[text.index(_STYLES):text.index("        }\n    }\n}")]
+        reordered = (f'{_STYLES}\n            relationship "Async" {{\n{I16}style Dashed\n'
+                     f'{I12}}}\n            element "External" {{\n{I16}color #ffffff\n'
+                     f'{I16}background #8c8c8c\n{I12}}}\n            element "Group" {{\n'
+                     f'{I16}strokeWidth 5\n{I16}border Dashed\n{I16}stroke #c0392b\n{I12}}}\n'
+                     f'            element "Person" {{\n{I16}shape Person\n{I12}}}\n')
+        for label, new in (("reordered", reordered), ("empty", f"{_STYLES}\n"),
+                           ("only Data store", f'{_STYLES}\n            element "Data store" '
+                                               f'{{\n{I16}shape Cylinder\n{I12}}}\n')):
+            with self.subTest(label):
+                self.assertEqual(c4.problems(c4.parse(mutate((block, new)))), [])
+        self.assertEqual(sorted(c4.STANDARD_STYLES), sorted(set(c4.STANDARD_STYLES)))
+        self.assertEqual(len(c4.STANDARD_STYLES), 11)
+        self.assertEqual(c4.parse(SHOP).styles[0][:4], ("element", "Person", "shape", "Person"))
+
+    def test_sequences_structurizr_accepts_have_no_problems(self):
+        for label, pairs in (
+                ("system scope, container steps", [add_seq("S1", "R1")]),
+                ("container scope, steps inside another container", [add_seq("C1", "R4")]),
+                ("container scope, steps on its components", [add_seq("C2", "R6", "R7")]),
+                ("path to an opened container", [add_path('R8 = A1 -> C2 "R8 Calls" "HTTPS"')])):
+            with self.subTest(label):
+                self.assertEqual(c4.problems(c4.parse(mutate(*pairs))), [])
 
     def test_a_bare_workspace(self):
         data = (b'workspace "X" "Y" {\n    !identifiers flat\n    properties {\n'
