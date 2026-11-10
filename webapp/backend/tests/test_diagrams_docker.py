@@ -148,6 +148,49 @@ def test_the_site_needs_only_the_hashes(exported):
                for u in re.findall(r"url\(\s*([^)]{0,6})", css))
 
 
+def _refused_bytes() -> bytes:
+    """shop.dsl plus a path from K1 to its own container C2. It parses, and Structurizr refuses
+    it ("Relationships cannot be added between parents and children"). Since ruling R38 tmreg's
+    problems refuse it too, so the app never exports it: the test hands the bytes straight to
+    diagrams.export, past c4_checked_bytes. After fixes 1-3 of the final wave no file that tmreg
+    accepts is known to be refused by the pinned image."""
+    env = "        ENV1 = deploymentEnvironment"
+    path = ('        R8 = K1 -> C2 "R8 Calls back" "HTTPS" {\n            properties {\n'
+            '                "tm.data.sent" "none"\n                "tm.data.returned" "none"\n'
+            '                "tm.auth" "None"\n            }\n        }\n')
+    text = SHOP.read_text(encoding="utf-8")
+    assert text.count(env) == 1
+    return text.replace(env, path + env).encode("utf-8")
+
+
+def test_a_structurizr_refusal_is_kept(tmp_path):
+    data = _refused_bytes()
+    assert any("R8 joins K1 and C2" in p for p in c4.problems(c4.parse(data)))  # tmreg refuses
+    sha = hashlib.sha256(data).hexdigest()
+    procs = []
+
+    def run(*args, **kwargs):
+        proc = subprocess.run(*args, **kwargs)
+        procs.append(proc)
+        return proc
+
+    result = diagrams.export(tmp_path, "main", "shop", data, sha, run=run)
+    assert result["state"] == "refused", result
+    assert "Relationships cannot be added between parents and children" in result["message"]
+    assert (result["hashes"], result["views"]) == ([], [])
+    (proc,) = procs
+    assert 0 < proc.returncode < 125, proc.returncode  # Structurizr's own exit, not Docker's
+    assert diagrams._RAN in proc.stdout, proc.stdout  # it started, so the refusal is its verdict
+    target = diagrams.site_dir(tmp_path, "main", "shop", sha)
+    assert json.loads((target / "result.json").read_text(encoding="utf-8")) == result  # kept
+    assert sorted(p.name for p in target.parent.iterdir()) == [sha]  # no temp folder left
+
+    def no_docker(*args, **kwargs):
+        raise AssertionError("a kept refusal is reused, not exported again")
+
+    assert diagrams.export(tmp_path, "main", "shop", data, sha, run=no_docker) == result
+
+
 def test_served_behind_the_lock(exported):
     app = create_app(exported["root"], port=8765, signin_token="T0KEN")
     base = exported["base"]
