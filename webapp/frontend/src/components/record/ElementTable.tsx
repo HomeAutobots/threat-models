@@ -25,6 +25,26 @@ function Line({ label, children }: { label?: string; children: string }) {
   )
 }
 
+const NAMED = ['tm.data.sent', 'tm.data.returned', 'tm.auth']
+
+/** Every property in `props` except `skip`, one line per key, sorted by key. */
+function Props({ props, skip = [] }: { props: Record<string, string> | undefined; skip?: string[] }) {
+  return (
+    <>
+      {Object.keys(props ?? {})
+        .filter((k) => !skip.includes(k))
+        .sort()
+        .map((k) => (
+          <Line key={k}>{`${k}: ${(props ?? {})[k]}`}</Line>
+        ))}
+    </>
+  )
+}
+
+function Tags({ tags }: { tags: string[] | undefined }) {
+  return tags && tags.length > 0 ? <Line label="Tags">{tags.join(', ')}</Line> : null
+}
+
 function Item({ e }: { e: C4Item }) {
   return (
     <>
@@ -44,6 +64,12 @@ function Item({ e }: { e: C4Item }) {
       {e.technology && <Line>{e.technology}</Line>}
       {e.description && <Line>{e.description}</Line>}
       {e.role && <Line>{e.role}</Line>}
+      <Tags tags={e.tags} />
+      {e.group && <Line label="Group">{e.group}</Line>}
+      <Props props={e.properties} />
+      {Object.entries(e.zones ?? {}).map(([env, tbs]) => (
+        <Line key={env} label="Zone">{`${env}: ${tbs.join(' \u203a ')}`}</Line>
+      ))}
     </>
   )
 }
@@ -52,6 +78,9 @@ function Rel({ e }: { e: C4Rel }) {
   const p = e.properties ?? {}
   return (
     <>
+      <Badge variant="default" tt="none">
+        Path
+      </Badge>
       <Text fw={600} inherit style={WRAP_STYLE}>
         {visible(`${e.source} → ${e.destination}`)}
       </Text>
@@ -64,6 +93,8 @@ function Rel({ e }: { e: C4Rel }) {
       {Object.entries(e.crossings ?? {}).map(([env, tbs]) => (
         <Line key={env} label="Crosses">{`${env}: ${tbs.join(', ')}`}</Line>
       ))}
+      <Tags tags={e.tags} />
+      <Props props={p} skip={NAMED} />
     </>
   )
 }
@@ -77,6 +108,8 @@ function View({ e }: { e: C4View }) {
       <Text fw={600} inherit style={WRAP_STYLE}>
         {visible(e.title ?? '')}
       </Text>
+      {e.scope && <Line label="Scope">{e.scope}</Line>}
+      {e.env && <Line label="Environment">{e.env}</Line>}
       {e.steps.map((s, i) => (
         <Line key={i}>{s}</Line>
       ))}
@@ -89,17 +122,18 @@ function Entry({ e }: { e: ModelEntry }) {
 }
 
 function Details({ c, model }: { c: CitedItem; model: ModelInfo }) {
-  if (c.state === 'dfd' || !c.written) return <NotProvided text="IDs as written" />
+  if (c.state === 'dfd') return <NotProvided text="IDs as written" />
+  if (!c.written) return <NotProvided text="Not in the approval this risk was written against" />
   if (c.state === 'changed' && c.latest) {
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-        <div>
+        <div data-col>
           <Text size="xs" fw={600} c="dimmed" tt="uppercase">
             As written
           </Text>
           <Entry e={c.written} />
         </div>
-        <div>
+        <div data-col>
           <Text size="xs" fw={600} c="dimmed" tt="uppercase">
             Now
           </Text>

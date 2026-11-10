@@ -93,6 +93,52 @@ describe('ElementTable', () => {
     expect(container.textContent).not.toContain('‮')
   })
 
+  it('shows tags, every property, group and zones of an item', () => {
+    renderTable(['C1'], { C1: cited('same', item({ name: 'Web', tags: ['edge', 'pii'], group: 'Team A', properties: { 'tm.owner': 'Web team', 'a.b': 'x' }, zones: { ENV1: ['TB2', 'TB3'] } })) })
+    const r = within(row('C1'))
+    expect(r.getByText('edge, pii')).toBeInTheDocument()
+    expect(r.getByText('Team A')).toBeInTheDocument()
+    expect(r.getByText('a.b: x')).toBeInTheDocument()
+    expect(r.getByText('tm.owner: Web team')).toBeInTheDocument()
+    expect(r.getByText('ENV1: TB2 \u203a TB3')).toBeInTheDocument()
+    const t = row('C1').textContent ?? ''
+    expect(t.indexOf('a.b: x')).toBeLessThan(t.indexOf('tm.owner: Web team'))
+  })
+
+  it('shows tags and other properties of a path, after the named ones', () => {
+    renderTable(['R1'], { R1: cited('same', rel({ source: 'C1', destination: 'C2', tags: ['sync'], properties: { 'tm.auth': 'tok', 'z.k': 'v', 'a.k': 'w' } })) })
+    const r = within(row('R1'))
+    expect(r.getByText('Path')).toBeInTheDocument()
+    expect(r.getByText('sync')).toBeInTheDocument()
+    expect(r.getByText('a.k: w')).toBeInTheDocument()
+    expect(r.getByText('z.k: v')).toBeInTheDocument()
+    expect(r.queryByText('tm.auth: tok')).toBeNull()
+  })
+
+  it('shows the scope and env of a view', () => {
+    renderTable(['SEQ1'], { SEQ1: cited('same', { kind: 'dynamic', scope: 'S1', env: 'ENV1', title: 'Checkout', steps: ['R1'] }) })
+    const r = within(row('SEQ1'))
+    expect(r.getByText('S1')).toBeInTheDocument()
+    expect(r.getByText('ENV1')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['a tag', { tags: ['b'] }],
+    ['a property', { properties: { 'x.y': '2' } }],
+    ['a zone', { zones: { ENV1: ['TB9'] } }],
+  ])('a changed entry whose only difference is %s shows it in the Now column', (_n, over) => {
+    const w = item({ name: 'Same', tags: ['a'], properties: { 'x.y': '1' }, zones: { ENV1: ['TB1'] } })
+    renderTable(['C1'], { C1: cited('changed', w, { ...w, ...over }) }, modelInfo({ moved_on: true, changed: ['C1'] }))
+    const cols = row('C1').querySelectorAll('div[data-col]')
+    expect(cols).toHaveLength(2)
+    expect(cols[0].textContent).not.toEqual(cols[1].textContent)
+  })
+
+  it('a non-DFD entry missing from the written approval says so', () => {
+    renderTable(['C1'], { C1: cited('same', null) })
+    expect(screen.getByText('Not in the approval this risk was written against')).toBeInTheDocument()
+  })
+
   it('captions', () => {
     expect(elementCaption(modelInfo())).toBe('From MODEL-1 (current)')
     expect(elementCaption(modelInfo({ latest_id: 'MODEL-2', moved_on: true }))).toBe('Written against MODEL-1; the latest is MODEL-2')
