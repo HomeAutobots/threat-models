@@ -78,26 +78,30 @@ export interface Risk {
   [field: string]: unknown
 }
 
-export interface ElementDetail {
-  name: string
-  type: string
-  description?: string
-  [key: string]: unknown
+/** An item, a path or a dynamic view of a model record, as the risk detail returns it. */
+export type ModelEntry = C4Item | C4Rel | C4View
+
+export type CitedState = 'same' | 'changed' | 'removed' | 'dfd'
+
+export interface CitedItem {
+  written: ModelEntry | null
+  latest: ModelEntry | null
+  state: CitedState
 }
 
-export type DfdState = 'none' | 'current' | 'changed'
-
-export interface DfdInfo {
-  state: DfdState
+export interface ModelInfo {
+  state: ModelState
   latest_id: string | null
   written_against: string | null
-  error: string | null
+  moved_on: boolean
+  changed: string[]
+  basis: 'model' | 'dfd'
 }
 
 export interface RiskDetail {
   risk: Risk
-  elements: Record<string, ElementDetail | null>
-  dfd: DfdInfo
+  elements: Record<string, CitedItem>
+  model: ModelInfo
   editors_since_approval: string[]
   duplicate: Risk | null
 }
@@ -137,22 +141,6 @@ export interface Conflict409 {
   detail: string
   current?: Risk
   current_sha256?: string | null
-}
-
-export interface DfdResponse {
-  status: { state: DfdState; latest: Approval | null; current_sha256: string | null }
-  approvals: Approval[]
-  preview: {
-    version: string | null
-    sha256: string
-    ids: Record<string, string[]>
-    details: Record<string, ElementDetail>
-    added: string[]
-    removed: string[]
-    warnings: string[]
-  } | null
-  preview_error: string | null
-  text: string | null
 }
 
 // ---- C4 model (api_read.py c4, c4/routes; api_write.py c4/approve, c4/export) --------------------

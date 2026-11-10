@@ -102,7 +102,7 @@ beforeEach(() => {
       return json({
         risk: stored,
         elements: {},
-        dfd: { state: 'current', latest_id: null, written_against: null, error: null },
+        model: { state: 'current', latest_id: 'MODEL-1', written_against: 'MODEL-1', moved_on: false, changed: [], basis: 'model' },
         editors_since_approval: [],
         duplicate: null,
       })

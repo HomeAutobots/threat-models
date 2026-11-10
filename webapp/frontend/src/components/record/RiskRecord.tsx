@@ -106,7 +106,7 @@ export function RiskRecord({
         )
       case 'where':
         if (reloading) return null
-        return <ElementTable ids={risk.elements ?? []} elements={detail.elements} dfd={detail.dfd} />
+        return <ElementTable ids={risk.elements ?? []} elements={detail.elements} model={detail.model} />
       case 'threat':
         return (
           <>
@@ -184,7 +184,7 @@ export function RiskRecord({
             suffix={
               s.id === 'where' && !reloading ? (
                 <Text size="xs" c="dimmed" component="span">
-                  {'·'} {visible(elementCaption(detail.dfd))}
+                  {'·'} {visible(elementCaption(detail.model))}
                 </Text>
               ) : s.id === 'dup' ? (
                 <Text size="sm" component="span" fw={600}>

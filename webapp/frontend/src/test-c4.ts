@@ -1,5 +1,5 @@
 import real from './fixtures/c4-real.json'
-import type { C4Item, C4Rel, C4Response, Risk } from './api/types'
+import type { C4Item, C4Rel, C4Response, CitedItem, CitedState, ModelEntry, ModelInfo, Risk } from './api/types'
 
 export function item(over: Partial<C4Item> & { name: string }): C4Item {
   return {
@@ -61,4 +61,14 @@ export function c4(over: Partial<C4Response> = {}): C4Response {
 
 export function risk(id: string, elements: string[], over: Partial<Risk> = {}): Risk {
   return { id, title: `Title ${id}`, elements, review_state: 'approved', status: 'open', merged_into: null, ...over } as Risk
+}
+
+/** The `model` key of a risk detail. */
+export function modelInfo(over: Partial<ModelInfo> = {}): ModelInfo {
+  return { state: 'current', latest_id: 'MODEL-1', written_against: 'MODEL-1', moved_on: false, changed: [], basis: 'model', ...over }
+}
+
+/** One entry of a risk detail's `elements`. */
+export function cited(state: CitedState, written: ModelEntry | null, latest: ModelEntry | null = null): CitedItem {
+  return { written, latest, state }
 }

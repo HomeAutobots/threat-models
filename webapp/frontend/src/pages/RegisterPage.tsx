@@ -1,7 +1,7 @@
-import { Alert, Anchor, Badge, Button, Group, Loader, NativeSelect, Table, Tabs, Text, TextInput, Title } from '@mantine/core'
+import { Alert, Anchor, Badge, Button, Checkbox, Group, Loader, NativeSelect, Table, Tabs, Text, TextInput, Title } from '@mantine/core'
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { useMeta, useRisks } from '../api/queries'
+import { useC4, useMeta, useRisks } from '../api/queries'
 import type { Reg, Risk } from '../api/types'
 import { WRAP_STYLE } from '../components/record/FieldValue'
 import { formatActor, formatCategory, formatTime } from '../lib/format'
@@ -29,9 +29,12 @@ export function RegisterPage() {
   const navigate = useNavigate()
   const risks = useRisks(reg as Reg, slug ?? '')
   const meta = useMeta()
+  const c4 = useC4(reg as Reg, slug ?? '')
+  const model = c4.data?.latest_record ?? null
   const [tab, setTab] = useState<Tab>('approved')
   const [status, setStatus] = useState('')
   const [element, setElement] = useState('')
+  const [inside, setInside] = useState(false)
   const [category, setCategory] = useState('')
   const [origin, setOrigin] = useState('')
   const [search, setSearch] = useState('')
@@ -49,13 +52,18 @@ export function RegisterPage() {
 
   const base = `/${reg}/${encodeURIComponent(slug as string)}`
   const aiChanged = all.filter((r) => r.review_state === 'pending' && r.last_approved !== null).length
+  // The chosen ID, and with the checkbox on every item whose `where` has it (its descendants).
+  const wanted = new Set(element ? [element] : [])
+  if (element && inside && model) {
+    for (const [id, it] of Object.entries(model.items)) if (it.where.includes(element)) wanted.add(id)
+  }
   const needle = search.trim().toLowerCase()
 
   const rows = all.filter(
     (r) =>
       tabOf(r) === tab &&
       (!status || r.status === status) &&
-      (!element || (r.elements ?? []).includes(element)) &&
+      (!element || (r.elements ?? []).some((e) => wanted.has(e))) &&
       (!category || r.category === category) &&
       (!origin || r.origin === origin) &&
       (!needle || r.id.toLowerCase().includes(needle) || (r.title ?? '').toLowerCase().includes(needle)),
@@ -120,6 +128,14 @@ export function RegisterPage() {
                     onChange={(e) => setElement(e.currentTarget.value)}
                     data={options(sorted(all.flatMap((r) => r.elements ?? [])))}
                   />
+                  {model && (
+                    <Checkbox
+                      label="Include what's inside"
+                      checked={inside}
+                      onChange={(e) => setInside(e.currentTarget.checked)}
+                      pb={6}
+                    />
+                  )}
                   <NativeSelect
                     label="Category"
                     value={category}

@@ -1,7 +1,7 @@
 import { MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSyncExternalStore } from 'react'
 import { ApiError, apiGet, apiPath, apiPost } from './client'
-import type { C4ExportResponse, C4Response, C4RoutesResponse, Change, DfdResponse, Meta, Reg, Risk, RiskDetail, Session, System } from './types'
+import type { C4ExportResponse, C4Response, C4RoutesResponse, Change, Meta, Reg, Risk, RiskDetail, Session, System } from './types'
 
 // ---- signed-out flag: set when any query or mutation fails with 401 ----------------------------
 
@@ -105,14 +105,6 @@ export function useVerify(reg: Reg, slug: string) {
   return useQuery({
     queryKey: [reg, slug, 'verify'],
     queryFn: () => apiGet<{ problems: string[] }>(apiPath(reg, slug, 'verify')),
-    enabled: !!slug,
-  })
-}
-
-export function useDfd(reg: Reg, slug: string) {
-  return useQuery({
-    queryKey: [reg, slug, 'dfd'],
-    queryFn: () => apiGet<DfdResponse>(apiPath(reg, slug, 'dfd')),
     enabled: !!slug,
   })
 }

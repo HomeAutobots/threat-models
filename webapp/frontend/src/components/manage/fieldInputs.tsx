@@ -8,6 +8,9 @@ export type FormValues = Record<string, FormValue>
 const LIST_FIELDS = new Set(['elements', 'control_refs'])
 const SELECT_FIELDS = new Set(['category', 'method', 'origin', 'treatment', 'ai_confidence', 'status'])
 
+/** The IDs a risk cites are the C4 model's, not DFD IDs. */
+export const ELEMENTS_HINT = 'Item and path IDs from the approved C4 model, such as C2, K1 or R1.'
+
 export const isList = (field: string) => LIST_FIELDS.has(field)
 
 /** A stored value as the form holds it: text as a string, lists as string arrays. */
@@ -88,6 +91,7 @@ export function FieldInput({ field, meta, value, required, disabled, onChange }:
     return (
       <TagsInput
         label={label}
+        description={field === 'elements' ? ELEMENTS_HINT : undefined}
         required={required}
         disabled={disabled}
         value={value as string[]}

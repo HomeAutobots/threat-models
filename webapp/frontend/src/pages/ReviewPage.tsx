@@ -1,7 +1,7 @@
 import { Alert, Anchor, Button, Group, Loader, Text } from '@mantine/core'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAction, useMeta, useRisk, useRiskHistory, useRisks } from '../api/queries'
 import { ApiError, apiPath } from '../api/client'
 import type { Conflict409, Reg, Risk, RiskDetail } from '../api/types'
@@ -200,7 +200,7 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
     }
   }
 
-  const dfd = shown.dfd
+  const model = shown.model
   return (
     <div>
       <Group justify="space-between" mb="md" wrap="wrap">
@@ -239,16 +239,11 @@ function ReviewItem({ reg, slug, id, position, total, previousId, nextId, afterD
               </Anchor>
             </Alert>
           )}
-          {dfd.state === 'changed' && !awaiting && (
+          {model.moved_on && !awaiting && (
             <Alert color="yellow" mb="md">
-              <Text inherit>
-                {visible(
-                  `DFD has moved on. This draft was written against ${dfd.written_against ?? 'an unknown version'}, and dfd.md has changed since. Element IDs may be out of date.`,
-                )}
-              </Text>
-              <Anchor component={Link} to={`${base}/dfd`} inherit>
-                Open the DFD page
-              </Anchor>
+              {visible(
+                `The model has moved on: written against ${model.written_against ?? 'an unknown version'}, latest is ${model.latest_id ?? 'none'}. Changed: ${model.changed.join(', ') || 'nothing listed'}.`,
+              )}
             </Alert>
           )}
           {isReReview && <ReReviewDiff risk={risk} editable={meta.data.editable} labels={meta.data.labels} />}
