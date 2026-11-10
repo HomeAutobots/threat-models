@@ -1,7 +1,7 @@
 import { MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSyncExternalStore } from 'react'
 import { ApiError, apiGet, apiPath, apiPost } from './client'
-import type { Change, DfdResponse, Meta, Reg, Risk, RiskDetail, Session, System } from './types'
+import type { C4ExportResponse, C4Response, C4RoutesResponse, Change, DfdResponse, Meta, Reg, Risk, RiskDetail, Session, System } from './types'
 
 // ---- signed-out flag: set when any query or mutation fails with 401 ----------------------------
 
@@ -114,6 +114,34 @@ export function useDfd(reg: Reg, slug: string) {
     queryKey: [reg, slug, 'dfd'],
     queryFn: () => apiGet<DfdResponse>(apiPath(reg, slug, 'dfd')),
     enabled: !!slug,
+  })
+}
+
+export function useC4(reg: Reg, slug: string) {
+  return useQuery({
+    queryKey: [reg, slug, 'c4'],
+    queryFn: () => apiGet<C4Response>(apiPath(reg, slug, 'c4')),
+    enabled: !!slug,
+  })
+}
+
+/** Chains of paths between two items; runs only when both ends are chosen. */
+export function useC4Routes(reg: Reg, slug: string, from: string | null, to: string | null) {
+  return useQuery({
+    queryKey: [reg, slug, 'c4', 'routes', from, to],
+    queryFn: () =>
+      apiGet<C4RoutesResponse>(`${apiPath(reg, slug, 'c4', 'routes')}?from=${encodeURIComponent(from ?? '')}&to=${encodeURIComponent(to ?? '')}`),
+    enabled: !!slug && !!from && !!to,
+    retry: false,
+  })
+}
+
+/** Exports the current file with Structurizr; on success the system's queries are refetched. */
+export function useC4Export(reg: Reg, slug: string) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiPost<C4ExportResponse>(apiPath(reg, slug, 'c4', 'export'), {}),
+    onSuccess: () => client.invalidateQueries({ queryKey: [reg, slug] }),
   })
 }
 

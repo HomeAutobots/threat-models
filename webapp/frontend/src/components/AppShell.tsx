@@ -8,7 +8,7 @@ import classes from './AppShell.module.css'
 
 export const TRIAL_BANNER = 'Trial register: practice data, not the real register'
 
-const SECTIONS = ['register', 'review', 'dfd', 'history', 'reports']
+const SECTIONS = ['register', 'review', 'architecture', 'history', 'reports']
 const HEADER_MIN_HEIGHT = 64
 
 interface Props {
@@ -44,7 +44,7 @@ export function AppShell({ reg, slug, children }: Props) {
     ['register', 'Register'],
     ['review', 'Review queue', <PendingBadge key="n" count={pending} />],
     ['history', 'History'],
-    ['dfd', 'DFD'],
+    ['architecture', 'Architecture'],
     ['reports', 'Reports'],
   ]
 

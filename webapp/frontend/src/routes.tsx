@@ -1,5 +1,5 @@
 import { Navigate, type RouteObject } from 'react-router'
-import { DfdPage } from './pages/DfdPage'
+import { ArchitecturePage } from './pages/ArchitecturePage'
 import { EditRiskPage } from './pages/EditRiskPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { Home, RegisterHome } from './pages/Home'
@@ -26,7 +26,8 @@ export const routes: RouteObject[] = [
           { path: 'risks/new', element: <EditRiskPage mode="add" /> },
           { path: 'risks/:id', element: <RiskPage /> },
           { path: 'risks/:id/edit', element: <EditRiskPage mode="edit" /> },
-          { path: 'dfd', element: <DfdPage /> },
+          { path: 'architecture', element: <ArchitecturePage /> },
+          { path: 'dfd', element: <Navigate to="../architecture" replace /> },
           { path: 'history', element: <HistoryPage /> },
           { path: 'reports', element: <ReportsPage /> },
         ],

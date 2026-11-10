@@ -154,3 +154,131 @@ export interface DfdResponse {
   preview_error: string | null
   text: string | null
 }
+
+// ---- C4 model (api_read.py c4, c4/routes; api_write.py c4/approve, c4/export) --------------------
+
+export type ModelState = 'none' | 'current' | 'changed'
+
+export interface C4Item {
+  kind: string
+  name: string
+  description: string | null
+  technology: string | null
+  tags: string[]
+  properties: Record<string, string>
+  parent: string | null
+  group: string | null
+  role: string | null
+  where: string[]
+  zones: Record<string, string[]>
+}
+
+export interface C4Rel {
+  source: string
+  destination: string
+  description: string | null
+  technology: string | null
+  tags: string[]
+  properties: Record<string, string>
+  role: string | null
+  crossings: Record<string, string[]>
+}
+
+export interface C4View {
+  kind: string
+  scope: string | null
+  env: string | null
+  title: string | null
+  steps: string[]
+}
+
+export interface C4Record {
+  version?: string | null
+  name?: string | null
+  description?: string | null
+  items: Record<string, C4Item>
+  rels: Record<string, C4Rel>
+  views: Record<string, C4View>
+}
+
+export interface ModelApproval {
+  id: string
+  version: string | null
+  sha256: string | null
+  ids: Record<string, string[]> | null
+  approved_by: string | null
+  approved_at: string | null
+  note: string | null
+}
+
+export interface Adoption {
+  gaps: { id: string; cited_by: string[] }[]
+  pending_rereviews: string[]
+  rewrites?: Record<string, unknown>
+}
+
+export interface C4Preview {
+  sha256: string
+  version: string | null
+  ids: Record<string, string[]>
+  record: C4Record
+  added: string[]
+  removed: string[]
+  changed: Record<string, string[]>
+  warnings: string[]
+  next_ids: Record<string, string>
+  reused: string[]
+  problems: string[]
+  diff: string[]
+  adoption: Adoption | null
+}
+
+export interface ExportView {
+  key: string
+  url: string
+}
+
+export interface StructurizrVerdict {
+  state: 'accepted' | 'refused' | 'not-checked'
+  message: string | null
+  base: string | null
+  views: ExportView[]
+}
+
+export interface C4Response {
+  status: { state: ModelState; latest: ModelApproval | null; current_sha256: string | null }
+  approvals: ModelApproval[]
+  preview: C4Preview | null
+  error: string | null
+  text: string
+  counts: Record<string, { open: number; pending: number }>
+  latest_record: C4Record | null
+  structurizr: StructurizrVerdict
+}
+
+export interface C4ExportResponse extends StructurizrVerdict {
+  sha256: string
+}
+
+export interface RouteRisks {
+  open: string[]
+  pending: string[]
+}
+
+export interface RouteHop {
+  path: string
+  from: string
+  to: string
+  against_arrow: boolean
+  crossings: Record<string, string[]>
+  risks: RouteRisks
+}
+
+export interface RouteChain {
+  hops: RouteHop[]
+  elements: Record<string, RouteRisks>
+}
+
+export interface C4RoutesResponse {
+  chains: RouteChain[]
+}
