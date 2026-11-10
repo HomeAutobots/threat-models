@@ -295,6 +295,25 @@ describe('ArchitecturePage: the model under review (R39a)', () => {
     expect(screen.queryByRole('radio', { name: /Approved/ })).toBeNull()
   })
 
+  it('the file under review shows the approved counts, labelled with their approval', async () => {
+    renderPage() // c4(): a changed file, MODEL-1 approved, counts { C2: 1 open, 1 pending }
+    expect(await screen.findByText(REVIEW)).toBeInTheDocument()
+    const containers = () => screen.getByRole('table', { name: 'Containers' })
+    expect(within(containers()).getByRole('columnheader', { name: 'Open risks (MODEL-1)' })).toBeInTheDocument()
+    expect(within(containers()).getByText('1 open, 1 pending')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: 'Approved MODEL-1' }))
+    expect(within(containers()).getByRole('columnheader', { name: 'Open risks (MODEL-1)' })).toBeInTheDocument()
+    expect(within(containers()).getByText('1 open, 1 pending')).toBeInTheDocument()
+  })
+
+  it('with nothing approved the column says so and shows no counts', async () => {
+    model = realC4('first')
+    renderPage()
+    expect(await screen.findByText(REVIEW)).toBeInTheDocument()
+    const containers = screen.getByRole('table', { name: 'Containers' })
+    expect(within(containers).getByRole('columnheader', { name: 'Open risks (none approved)' })).toBeInTheDocument()
+  })
+
   it('a changed file shows the new model by default and a switch to the approved one', async () => {
     model = realC4('changed')
     model.preview!.record.items.C2.name = 'C2 NEW API'

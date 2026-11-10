@@ -6,7 +6,10 @@ import { byId, idName, prefix } from './order'
 
 interface Props {
   record: C4Record
+  /** Open and pending risks per ID, from the latest approval (core's open_risk_counts). */
   counts: Record<string, { open: number; pending: number }>
+  /** The counts column's heading, naming the approval the counts come from. */
+  countsLabel?: string
   selected: string | null
   onSelect: (id: string) => void
 }
@@ -28,6 +31,7 @@ function Section<T>({
   rows,
   cols,
   counts,
+  countsLabel,
   selected,
   onSelect,
   heading = 'h3',
@@ -36,6 +40,7 @@ function Section<T>({
   rows: [string, T][]
   cols: Col<T>[]
   counts: Props['counts']
+  countsLabel: string
   selected: string | null
   onSelect: (id: string) => void
   heading?: 'h3' | 'h4'
@@ -55,7 +60,7 @@ function Section<T>({
               {cols.map((c) => (
                 <Table.Th key={c.head}>{c.head}</Table.Th>
               ))}
-              <Table.Th>Risks</Table.Th>
+              <Table.Th>{countsLabel}</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -91,13 +96,13 @@ function Section<T>({
   )
 }
 
-export function ItemTables({ record, counts, selected, onSelect }: Props) {
+export function ItemTables({ record, counts, countsLabel = 'Open risks', selected, onSelect }: Props) {
   const items = Object.entries(record.items)
   const of = (...kinds: string[]) =>
     items.filter(([id]) => kinds.includes(prefix(id))).sort(([a], [b]) => byId(a, b)) as [string, C4Item][]
   const t = (s: string | null | undefined) => visible(s ?? '')
   const prop = (it: C4Item, key: string) => t(it.properties[key])
-  const common = { counts, selected, onSelect }
+  const common = { counts, countsLabel, selected, onSelect }
 
   const paths = Object.entries(record.rels).sort(([a], [b]) => byId(a, b))
   const seqs = (Object.entries(record.views) as [string, C4View][])

@@ -35,6 +35,9 @@ export function ArchitecturePage() {
   const noFile = data.status.state === 'none' && data.status.current_sha256 === null
   const shown = review && approved && which === 'approved' ? approved : (review ?? approved)
   const shownIsReview = shown !== null && shown === review
+  // Counts always come from the latest approval. IDs are never reused, so they also hold for the
+  // IDs the file under review shares with it.
+  const countsLabel = data.status.latest ? `Open risks (${visible(data.status.latest.id)})` : 'Open risks (none approved)'
 
   return (
     <Stack>
@@ -76,7 +79,8 @@ export function ArchitecturePage() {
               </Title>
               <ItemTables
                 record={shown}
-                counts={shownIsReview ? {} : data.counts}
+                counts={data.counts}
+                countsLabel={countsLabel}
                 selected={selected}
                 onSelect={setSelected}
               />
