@@ -168,12 +168,38 @@ class CountsTest(TmpTestCase):
         super().setUp()
         self.reg = make_registry_shop(self.tmp)
 
-    def test_a_pending_mitigated_risk_is_not_counted(self):
+    def test_a_pending_mitigated_claim_counts_only_the_approved_exposure(self):
         a = draft(self.reg, ["R2"])
         self.reg.approve(session(), "demo", a, NOTE)
         self.reg.edit_risk("demo", a, {"status": "mitigated"}, run_id=start(self.reg))  # AI edit
         self.assertEqual(self.reg.get_risk("demo", a)["review_state"], "pending")
+        # R42: the approved, open snapshot still stands; the mitigated draft is no exposure (R23).
+        self.assertEqual(self.reg.open_risk_counts("demo"), {"R2": {"open": 1, "pending": 0}})
+        self.reg.approve(session(), "demo", a, NOTE)  # the owner accepts the mitigation
         self.assertEqual(self.reg.open_risk_counts("demo"), {})
+
+    def test_a_rereview_keeps_its_approved_exposure(self):  # R42, spec section 7.5
+        reg, h = self.reg, session()
+        a = draft(reg, ["C3", "R3"], title="The orders database is reachable")
+        reg.approve(h, "demo", a, NOTE)
+        reg.edit_risk("demo", a, {"elements": ["K1", "R3"]}, run_id=start(reg))  # AI drops C3
+        self.assertEqual(reg.get_risk("demo", a)["review_state"], "pending")
+        counts = reg.open_risk_counts("demo")
+        self.assertEqual(counts["C3"], {"open": 1, "pending": 0})  # what the owner approved
+        self.assertEqual(counts["R3"], {"open": 1, "pending": 1})
+        self.assertEqual(counts["K1"], {"open": 0, "pending": 1})  # what awaits review
+        chain = reg.c4_routes("demo", "A1", "C3")[0]
+        self.assertEqual([hop["path"] for hop in chain["hops"]], ["R1", "R2", "R3"])
+        self.assertEqual(chain["elements"]["C3"], {"open": [a], "pending": []})
+        self.assertEqual(chain["elements"]["K1"], {"open": [], "pending": [a]})
+        self.assertEqual(chain["hops"][2]["risks"], {"open": [a], "pending": [a]})
+        reg.reject(h, "demo", a, NOTE)  # back to the approved version: counted once, as open
+        self.assertEqual(reg.open_risk_counts("demo"), {"C3": {"open": 1, "pending": 0},
+                                                        "R3": {"open": 1, "pending": 0}})
+        reg.edit_risk("demo", a, {"elements": ["K1", "R3"]}, run_id=start(reg))
+        reg.approve(h, "demo", a, NOTE)  # approved now: only the new elements count
+        self.assertEqual(reg.open_risk_counts("demo"), {"K1": {"open": 1, "pending": 0},
+                                                        "R3": {"open": 1, "pending": 0}})
 
     def test_open_risk_counts(self):
         reg, h = self.reg, session()

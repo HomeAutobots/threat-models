@@ -587,27 +587,38 @@ class Registry:
     # ---- routes and open-risk counts (spec section 7.5) -------------------------------------
 
     @staticmethod
-    def _risk_bucket(risk: dict) -> str | None:
-        """How a risk counts on a route: "open" (approved, open/planned/in-progress), "pending"
-        (awaiting review, with a live status), or None. Rejected, merged, retired, mitigated,
-        accepted, wont-fix and superseded risks never count."""
-        if risk.get("merged_into") or risk["status"] not in _OPEN_STATUSES:
-            return None
+    def _risk_buckets(risk: dict) -> list[tuple[str, list[str]]]:
+        """How a risk counts on a route: [(bucket, the IDs it counts on)], spec section 7.5.
+
+        "open" is an approved risk whose status is open, planned or in-progress; "pending" is a
+        risk awaiting review with such a status. A pending re-review (last_approved set) counts
+        both ways (ruling R42): a re-review is not a draft, and the approved exposure still
+        stands. So its snapshot, which is only ever taken of an approved row, counts under "open"
+        on the snapshot's elements while the snapshot's status is live, and its current row counts
+        under "pending" on the current elements. Rejected, merged, retired, mitigated, accepted,
+        wont-fix and superseded risks never count."""
+        if risk.get("merged_into"):
+            return []
+        live = risk["status"] in _OPEN_STATUSES
         if risk["review_state"] == "approved":
-            return "open"
-        if risk["review_state"] == "pending":
-            return "pending"
-        return None
+            return [("open", list(risk.get("elements") or ()))] if live else []
+        if risk["review_state"] != "pending":
+            return []
+        out = []
+        snap = risk.get("last_approved")
+        if snap and snap.get("status") in _OPEN_STATUSES:
+            out.append(("open", list(snap.get("elements") or ())))
+        if live:
+            out.append(("pending", list(risk.get("elements") or ())))
+        return out
 
     def _risks_by_cited(self, slug: str) -> dict[str, dict[str, list[str]]]:
         """{cited ID: {"open": [risk IDs], "pending": [risk IDs]}}, risk IDs in id_sort_key order."""
         out: dict[str, dict[str, list[str]]] = {}
         for risk in self.list_risks(slug):  # sorted by id_sort_key
-            bucket = self._risk_bucket(risk)
-            if bucket is None:
-                continue
-            for cited in risk.get("elements") or ():
-                out.setdefault(cited, {"open": [], "pending": []})[bucket].append(risk["id"])
+            for bucket, cited_ids in self._risk_buckets(risk):
+                for cited in dict.fromkeys(cited_ids):
+                    out.setdefault(cited, {"open": [], "pending": []})[bucket].append(risk["id"])
         return out
 
     def open_risk_counts(self, slug) -> dict[str, dict[str, int]]:
