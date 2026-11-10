@@ -22,10 +22,11 @@ from tmweb import diagrams
 from tmweb.app import CSP, create_app
 
 SHOP = REPO_ROOT / "registry" / "tests" / "fixtures" / "c4" / "shop.dsl"
-# The pinned image's index.html is the same for every workspace, with one inline script. If the
-# image changes, review its exported JS against the CSP again (eval, workers, frames, fonts,
-# requests to other origins) before updating this.
-PINNED_HASHES = ["'sha256-YY3Nh7+f2MosCEdDn0KbYJuNVHQFPTfIpIWHkyXfwq4='"]
+# c4.EXPECTED_INLINE_HASHES sits beside c4.STRUCTURIZR_IMAGE. The pinned image's index.html is the
+# same for every workspace, with one inline script. If the image changes, review its exported JS
+# against the CSP again (eval, workers, frames, fonts, requests to other origins) before updating
+# them together.
+PINNED_HASHES = list(c4.EXPECTED_INLINE_HASHES)
 
 
 def _skip_reason():
@@ -87,6 +88,17 @@ def test_real_export_is_accepted(exported):
     assert sorted(p.name for p in target.parent.iterdir()) == [exported["sha"]]  # no temp left
     assert sorted(p.name for p in (target / "in").iterdir()) == ["site", "workspace.dsl"]
     assert (target / "in" / "workspace.dsl").read_bytes() == SHOP.read_bytes()
+    # --rm with --name: the named container is gone once the export ends.
+    names = subprocess.run(["docker", "ps", "-a", "--filter", "name=tm-c4-export-",
+                            "--format", "{{.Names}}"], capture_output=True, text=True, timeout=60)
+    assert names.returncode == 0 and names.stdout.strip() == "", names.stdout
+
+
+def test_the_constant_matches_the_real_export(exported):
+    """c4.EXPECTED_INLINE_HASHES is what the pinned image's viewer really has."""
+    html = (exported["site"] / "index.html").read_text(encoding="utf-8")
+    assert tuple(diagrams.inline_script_hashes(html)) == c4.EXPECTED_INLINE_HASHES
+    assert len(c4.EXPECTED_INLINE_HASHES) == 1
 
 
 def test_hashes_match_index_html(exported):
@@ -147,6 +159,8 @@ def test_served_behind_the_lock(exported):
         assert page.headers["content-security-policy"] == CSP.replace(
             "script-src 'self';", f"script-src 'self' {PINNED_HASHES[0]};")
         assert page.headers["x-content-type-options"] == "nosniff"
+        assert page.headers["cross-origin-opener-policy"] == "same-origin"
+        assert page.headers["referrer-policy"] == "no-referrer"
         # nosniff makes the browser check each type, so every file the page loads must have one.
         refs = _Refs()
         refs.feed(page.text)

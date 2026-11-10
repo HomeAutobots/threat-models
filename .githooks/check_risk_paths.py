@@ -3,7 +3,8 @@
 
 Refused anywhere: database files. Refused under systems/<slug>/: generated registers, run records,
 threat model documents, inputs, every DFD, C4 models (workspace.dsl) other than the reference
-system's, and Structurizr's workspace.json. Refused under diagrams/: the exported diagrams.
+system's, and Structurizr's workspace.json. Refused at the root: diagrams, the exported diagrams,
+and anything under it (a link named diagrams is a file to git, so the bare path too).
 
     check_risk_paths.py staged          pre-commit: check the staged paths
     check_risk_paths.py push <remote>   pre-push: check every commit being pushed (stdin as git gives it)
@@ -28,7 +29,7 @@ def forbidden(path: str) -> str | None:
     if any(fnmatch.fnmatch(p.name, pat) for pat in DB_PATTERNS):
         return "database file"
     parts = p.parts
-    if len(parts) >= 2 and parts[0] == "diagrams":
+    if parts and parts[0] == "diagrams":
         return "diagrams/ holds exported diagrams of system models"
     if len(parts) >= 4 and parts[0] == "systems" and parts[2] in ("runs", "inputs"):
         return f"{parts[2]}/ holds risk or system data"

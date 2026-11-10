@@ -62,6 +62,10 @@ def _locked_headers(response, path: str) -> None:
         # No other origin may load these files, not even a page on another localhost port that
         # the browser sends the session cookie to.
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        # The viewer opens AI-written http(s) property values with window.open and no noopener:
+        # a page opened that way gets no handle on this one, and no URL of it.
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Referrer-Policy"] = "no-referrer"
 
 
 def create_app(
@@ -102,8 +106,11 @@ def create_app(
     @app.middleware("http")
     async def csp(request: Request, call_next):
         response = await call_next(request)
-        # Only the /diagrams route sets its own: the app's CSP plus that export's script hashes.
-        response.headers.setdefault("Content-Security-Policy", CSP)
+        # Every response gets the app's CSP, except that a /diagrams/ response keeps its own: the
+        # app's CSP plus that export's script hashes (diagrams_csp).
+        own = "content-security-policy" in response.headers
+        if not (own and request.scope["path"].startswith("/diagrams/")):
+            response.headers["Content-Security-Policy"] = CSP
         return response
 
     @app.exception_handler(Exception)

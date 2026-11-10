@@ -28,6 +28,7 @@ FORBIDDEN = [
     "systems/acme/inputs/design.md", "systems/acme/dfd.md", "systems/ordering-platform/dfd.md",
     "systems/acme/workspace.dsl", "systems/acme/workspace.json",
     "systems/ordering-platform/workspace.json", "diagrams/a", "diagrams/main/acme/abc/index.html",
+    "diagrams",  # a link named diagrams is a file to git, so the bare path counts too
 ]
 ALLOWED = [
     "systems/ordering-platform/workspace.dsl", "systems/ordering-platform/system.toml",
@@ -130,6 +131,19 @@ class HookTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         for path in paths:
             self.assertIn(path, result.stderr)
+        self.assertEqual(git("rev-list", "--count", "HEAD", cwd=self.repo).stdout.strip(), "1")
+
+    def test_pre_commit_refuses_a_diagrams_link(self):
+        # A link named diagrams would commit only its target path, but it is still refused.
+        outside = Path(self._tmp.name) / "exports"
+        outside.mkdir()
+        (self.repo / "diagrams").symlink_to(outside, target_is_directory=True)
+        self.assertEqual(git("check-ignore", "-q", "diagrams", cwd=self.repo,
+                             check_=False).returncode, 0, "a diagrams link is not git-ignored")
+        git("add", "-f", "diagrams", cwd=self.repo)
+        result = git("commit", "-m", "oops", cwd=self.repo, check_=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("diagrams:", result.stderr)
         self.assertEqual(git("rev-list", "--count", "HEAD", cwd=self.repo).stdout.strip(), "1")
 
     def test_pre_commit_allows_tool_and_reference_files(self):

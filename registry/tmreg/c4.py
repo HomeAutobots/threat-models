@@ -18,6 +18,11 @@ import re
 from dataclasses import dataclass
 
 STRUCTURIZR_IMAGE = "structurizr/structurizr:2026.09.19@sha256:721136283c2f9cf1ba69037bc9de136c579d66fdcb2d771cb60546ec68def1a5"
+# The CSP hashes of the inline scripts in that image's static viewer (its index.html is the same
+# for every workspace), as reviewed on 2026-11-09. The web app refuses an export whose scripts
+# differ. Update the two together: a new image's viewer JavaScript is reviewed against the web
+# app's CSP before its hashes go here.
+EXPECTED_INLINE_HASHES = ("'sha256-YY3Nh7+f2MosCEdDn0KbYJuNVHQFPTfIpIWHkyXfwq4='",)
 ID_RE = r"^(A|S|C|K|R|TB|N|I|ENV|SEQ)[1-9][0-9]*$"
 KINDS = ("A", "S", "C", "K", "R", "TB", "N", "I", "ENV", "SEQ")
 MAX_BYTES = 512 * 1024
