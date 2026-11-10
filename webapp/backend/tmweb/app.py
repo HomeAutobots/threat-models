@@ -32,8 +32,9 @@ NOT_BUILT = (
     "The app's pages aren't built yet. Start it with webapp/start.command or make web."
 )
 
-# Nothing from the network loads at run time. Styles need 'unsafe-inline' (Mantine's style tag,
-# mermaid's SVG); scripts stay 'self' only.
+# Nothing from the network loads at run time. Styles need 'unsafe-inline' (Mantine's style tags);
+# scripts stay 'self' only, except that a /diagrams/ page also allows its export's inline scripts
+# by their hashes (diagrams_csp).
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "

@@ -333,8 +333,10 @@ def _c4_problem_lines(preview: dict) -> list[str]:
         kind = re.match(r"[A-Z]+", iid).group(0)
         line = (f"problem: {iid} was used by an earlier approval; next free {kind}: "
                 f"{preview['next_ids'].get(kind, '?')}")
-        if iid in preview["reused_dfd"]:
-            line += f'; if it is the same boundary, add "tm.was" "{iid}" to it'
+        if iid in preview["reused_dfd"]:  # a group takes no properties (ruling R28)
+            line += (f'; if {iid} is now a deployment node, add "tm.was" "{iid}" to it; if it '
+                     f"became a group, give the group {preview['next_ids'].get('TB', '?')} and "
+                     f"add {iid} to its container's tm.was")
         lines.append(line)
     return lines
 

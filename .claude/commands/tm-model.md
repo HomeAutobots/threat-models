@@ -24,8 +24,9 @@ disallowed-tools: WebFetch, WebSearch, NotebookEdit, Skill, mcp__claude-in-chrom
   files this command names: `worksheet.md`, `model-check.md`, `summary.md`, `candidates/<nn>.json`,
   and `candidates/edit-<id>.json`. Never write any other file, a `CLAUDE.md`, `dfd.md`,
   `workspace.json`, anything under `diagrams/`, or a name that starts with `.`. Write creates the
-  directories. Use only Read, Grep, Glob, Write, Edit, Bash, and the session's checklist; the
-  guard blocks every tool not in `CLAUDE.md`'s list, including skills, subagents, and MCP tools.
+  directories. Use only Read, Grep, Glob, Write, Edit, Bash, the session's checklist, and
+  ToolSearch, which loads the checklist's tools when they are deferred; the guard blocks every tool
+  not in `CLAUDE.md`'s list, including skills, subagents, and MCP tools, even one ToolSearch loads.
   Read files with Read. Search with Grep and Glob where this Claude Code has them, or with the
   read-only commands in `CLAUDE.md` (`grep`, `find`, `ls`, and the rest), which may be joined with
   `|`. Pass `--no-ignore-files` to grep, because `inputs/`, `threat-model.md`, and most

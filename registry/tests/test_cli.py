@@ -407,6 +407,22 @@ class CliTest(TmpTestCase):
         self.assertEqual(code, 1)
         self.assertIn("problem: C3 was used by an earlier approval; next free C: C10", out)
 
+    def test_c4_check_hints_how_an_old_boundary_is_claimed(self):
+        reg = make_registry(self.tmp / "era", approve=False)
+        self.root = reg.root
+        seed_dfd_era(reg, "demo")
+        write_model(reg, "demo", self.dsl('                    "tm.was" "TB1"\n', ""))
+        code, out, err = self.run_cli("c4", "check", "demo")
+        self.assertEqual(code, 1)
+        (line,) = [l for l in out.splitlines() if l.startswith("problem: TB1 ")]
+        # A deployment node claims its old number; a group takes no properties (ruling R28).
+        self.assertIn('if TB1 is now a deployment node, add "tm.was" "TB1" to it', line)
+        self.assertIn("if it became a group, give the group TB3 and add TB1 to its "
+                      "container's tm.was", line)
+        with human_terminal(), self.assertRaises(Exception) as cm:
+            approve_model(reg, "demo")
+        self.assertIn("give the group TB3 and add TB1 to its container's tm.was", str(cm.exception))
+
     def test_c4_check_lists_adoption_gaps_and_pending_rereviews(self):
         reg = make_registry(self.tmp / "era", approve=False)
         self.root = reg.root

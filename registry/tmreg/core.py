@@ -363,7 +363,7 @@ class Registry:
                 if not self.conn.in_transaction:
                     self.conn.execute("BEGIN IMMEDIATE")
                 yield
-        except ValueError as e:  # ledger, db, dfd, and config raise ValueError subclasses
+        except ValueError as e:  # ledger, db, c4, and config raise ValueError subclasses
             raise RegistryError(str(e)) from e
 
     # ---- systems and runs -------------------------------------------------------------------
@@ -901,8 +901,10 @@ class Registry:
                        + ". Next free: " + ", ".join(info["next_ids"].values()))
                 if info["reused_dfd"]:
                     tb = info["reused_dfd"][0]
-                    msg += (f'. For a boundary from the old DFD, add "tm.was" "{tb}" if this is the '
-                            f'same boundary, or take {info["next_ids"]["TB"]}')
+                    nxt = info["next_ids"]["TB"]  # a group takes no properties (ruling R28)
+                    msg += (f'. For a boundary from the old DFD: if {tb} is now a deployment node, '
+                            f'add "tm.was" "{tb}" to it; if it became a group, give the group '
+                            f"{nxt} and add {tb} to its container's tm.was; otherwise take {nxt}")
                 raise RegistryError(msg)
             adoption = info["adoption"]
             if adoption is not None:
