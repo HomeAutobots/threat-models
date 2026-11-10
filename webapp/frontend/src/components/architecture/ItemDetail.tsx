@@ -11,9 +11,9 @@ interface Props {
   risks: Risk[]
 }
 
-function text(v: unknown): string {
+function text(v: unknown, joiner = ', '): string {
   if (v === null || v === undefined) return ''
-  if (Array.isArray(v)) return v.map(text).join(', ')
+  if (Array.isArray(v)) return v.map((x) => text(x)).join(joiner)
   if (typeof v === 'object')
     return Object.entries(v as Record<string, unknown>)
       .map(([k, x]) => `${k}: ${text(x)}`)
@@ -50,6 +50,7 @@ function RiskList({ reg, slug, risks }: { reg: Reg; slug: string; risks: Risk[] 
             {visible(r.id)}
           </Anchor>{' '}
           {visible(r.title ?? '')}
+          {r.status ? ` (${visible(String(r.status))})` : ''}
         </List.Item>
       ))}
     </List>
@@ -94,7 +95,7 @@ export function ItemDetail({ reg, slug, id, record, risks }: Props) {
               {label}
             </Text>
             <Text size="sm" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-              {visible(text((entry as unknown as Record<string, unknown>)[k]))}
+              {visible(text((entry as unknown as Record<string, unknown>)[k], k === 'where' ? ' › ' : ', '))}
             </Text>
           </div>
         ))}

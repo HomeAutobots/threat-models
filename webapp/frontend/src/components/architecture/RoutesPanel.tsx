@@ -4,6 +4,7 @@ import { ApiError } from '../../api/client'
 import { useC4Routes } from '../../api/queries'
 import type { C4Record, Reg, RouteRisks } from '../../api/types'
 import { visible } from '../../lib/visible'
+import { byId, idName } from './order'
 
 interface Props {
   reg: Reg
@@ -16,7 +17,8 @@ const ENDS = /^(A|S|C|K)\d+$/
 export function endpointOptions(record: C4Record) {
   return Object.entries(record.items)
     .filter(([id]) => ENDS.test(id))
-    .map(([id, it]) => ({ value: id, label: visible(`${id} ${it.name}`) }))
+    .sort(([a], [b]) => byId(a, b))
+    .map(([id, it]) => ({ value: id, label: idName(id, it.name) }))
 }
 
 function Risks({ risks }: { risks: RouteRisks }) {

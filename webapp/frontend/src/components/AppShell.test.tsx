@@ -99,6 +99,12 @@ describe('AppShell', () => {
     expect(burger).toHaveAttribute('aria-expanded', 'false')
   })
 
+  it('links to Architecture, not DFD', async () => {
+    renderShell('main')
+    expect(await screen.findByRole('link', { name: 'Architecture' })).toHaveAttribute('href', '/main/demo/architecture')
+    expect(screen.queryByRole('link', { name: 'DFD' })).toBeNull()
+  })
+
   it('renders one main landmark and leaves the page its own h1', async () => {
     renderShell('main')
     expect(await screen.findByText('Signed in as Sam Reviewer')).toBeInTheDocument()

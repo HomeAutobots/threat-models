@@ -1,7 +1,8 @@
-import { Stack, Table, Text, Title, UnstyledButton } from '@mantine/core'
+import { Stack, Table, Title, UnstyledButton } from '@mantine/core'
 import type { ReactNode } from 'react'
 import type { C4Item, C4Record, C4Rel, C4View } from '../../api/types'
 import { visible } from '../../lib/visible'
+import { byId, idName, prefix } from './order'
 
 interface Props {
   record: C4Record
@@ -9,10 +10,6 @@ interface Props {
   selected: string | null
   onSelect: (id: string) => void
 }
-
-const prefix = (id: string) => /^[A-Z]+/.exec(id)?.[0] ?? ''
-const num = (id: string) => Number(/\d+$/.exec(id)?.[0] ?? 0)
-const byId = (a: string, b: string) => num(a) - num(b) || a.localeCompare(b)
 
 function crossingText(r: C4Rel): string {
   return Object.entries(r.crossings)
@@ -109,17 +106,33 @@ export function ItemTables({ record, counts, selected, onSelect }: Props) {
   const boundaries = of('TB')
   const components = of('K')
   const containers = of('C')
+  const envs = items.filter(([id]) => prefix(id) === 'ENV').map(([id]) => id).sort(byId)
+  const perEnv = (lines: (env: string) => string[]) =>
+    envs
+      .map((env) => [env, lines(env)] as const)
+      .filter(([, ids]) => ids.length > 0)
+      .map(([env, ids]) => `${env}: ${ids.join(', ')}`)
+      .join('\n')
+  // Inside: what core's zones place within the boundary in each environment, plus the nodes and
+  // infrastructure the deployment nests under it.
   const inside = (tb: string) =>
-    items
-      .filter(([, it]) => it.parent === tb || it.group === tb)
-      .map(([id]) => id)
-      .sort(byId)
-      .join(', ')
+    perEnv((env) =>
+      items
+        .filter(([id, it]) =>
+          ['A', 'S', 'C', 'K'].includes(prefix(id))
+            ? (it.zones[env] ?? []).includes(tb)
+            : ['N', 'I'].includes(prefix(id)) && it.where[0] === env && it.where.includes(tb) && id !== tb,
+        )
+        .map(([id]) => id)
+        .sort(byId),
+    )
   const crossedBy = (tb: string) =>
-    paths
-      .filter(([, r]) => Object.values(r.crossings).some((tbs) => tbs.includes(tb)))
-      .map(([id]) => id)
-      .join(', ')
+    perEnv((env) =>
+      paths
+        .filter(([, r]) => (r.crossings[env] ?? []).includes(tb))
+        .map(([id]) => id)
+        .sort(byId),
+    )
 
   return (
     <Stack>
@@ -152,7 +165,7 @@ export function ItemTables({ record, counts, selected, onSelect }: Props) {
           <Section
             key={cid}
             heading="h4"
-            title={`Components of ${visible(cid)} ${visible(record.items[cid].name)}`}
+            title={`Components of ${idName(cid, record.items[cid].name)}`}
             rows={ks}
             {...common}
             cols={[
@@ -207,7 +220,6 @@ export function ItemTables({ record, counts, selected, onSelect }: Props) {
           { head: 'Steps', cell: (_, v) => t(v.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')) },
         ]}
       />
-      {items.length === 0 && paths.length === 0 && seqs.length === 0 && <Text size="sm">The model has no items.</Text>}
     </Stack>
   )
 }

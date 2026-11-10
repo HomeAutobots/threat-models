@@ -1,4 +1,4 @@
-import { Alert, Loader, Stack, Text, Title } from '@mantine/core'
+import { Alert, Loader, SegmentedControl, Stack, Text, Title } from '@mantine/core'
 import { useState } from 'react'
 import { useParams } from 'react-router'
 import { useC4, useRisks } from '../api/queries'
@@ -14,54 +14,83 @@ import { visible } from '../lib/visible'
 export const NO_MODEL = (slug: string) =>
   `There's no C4 model for this system yet. The modeling agent drafts one in systems/${slug}/workspace.dsl.`
 
+export const REVIEW_LABEL = 'The file under review (not approved)'
+
 export function ArchitecturePage() {
   const { reg, slug } = useParams()
   const c4 = useC4(reg as Reg, slug as string)
   const risks = useRisks(reg as Reg, slug as string)
   const [selected, setSelected] = useState<string | null>(null)
+  const [which, setWhich] = useState<'file' | 'approved'>('file')
 
   if (c4.isLoading) return <Loader m="xl" aria-label="Loading" />
-  if (c4.error || !c4.data) return <Alert color="red">{visible(c4.error?.message ?? 'Could not load the model.')}</Alert>
+  // A failed refetch keeps the data on screen; only a page that never loaded shows the error.
+  if (!c4.data) return <Alert color="red">{visible(c4.error?.message ?? 'Could not load the model.')}</Alert>
 
   const data = c4.data
-  const record = data.latest_record
-  const none = data.preview === null && data.status.state === 'none'
+  const approved = data.latest_record
+  const approvedLabel = data.status.latest ? `Approved ${data.status.latest.id}` : 'Approved model'
+  const review = data.status.state === 'current' ? null : (data.preview?.record ?? null)
+  // Nothing approved and no file at all: the API's error says so, and the page says it better.
+  const noFile = data.status.state === 'none' && data.status.current_sha256 === null
+  const shown = review && approved && which === 'approved' ? approved : (review ?? approved)
+  const shownIsReview = shown !== null && shown === review
 
   return (
     <Stack>
       <Title order={1} size="h3">
         Architecture
       </Title>
-      {data.error && (
-        <Alert color="red" title="The file cannot be read" style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
-          {visible(data.error)}
-        </Alert>
-      )}
-      {none ? (
-        !data.error && <Text>{NO_MODEL(slug as string)}</Text>
+      {noFile ? (
+        <Text>{NO_MODEL(slug as string)}</Text>
       ) : (
         <>
+          {data.error && (
+            <Alert color="red" title="The file cannot be read" style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
+              {visible(data.error)}
+            </Alert>
+          )}
           <ModelStatus state={data.status.state} latest={data.status.latest} approvals={data.approvals} />
-          <DiagramLinks reg={reg as Reg} slug={slug as string} />
-          {record && (
+          <DiagramLinks
+            reg={reg as Reg}
+            slug={slug as string}
+            sha256={data.status.current_sha256}
+            version={data.preview?.version ?? data.status.latest?.version ?? null}
+            verdict={data.structurizr}
+          />
+          {shown && (
+            <>
+              {review && approved ? (
+                <SegmentedControl
+                  aria-label="Model shown"
+                  value={which}
+                  onChange={(v) => setWhich(v as 'file' | 'approved')}
+                  data={[
+                    { value: 'file', label: 'The file under review' },
+                    { value: 'approved', label: approvedLabel },
+                  ]}
+                />
+              ) : null}
+              <Title order={2} size="h4">
+                {shownIsReview ? REVIEW_LABEL : approvedLabel}
+              </Title>
+              <ItemTables
+                record={shown}
+                counts={shownIsReview ? {} : data.counts}
+                selected={selected}
+                onSelect={setSelected}
+              />
+              {selected && (
+                <ItemDetail reg={reg as Reg} slug={slug as string} id={selected} record={shown} risks={risks.data ?? []} />
+              )}
+            </>
+          )}
+          {approved && (
             <>
               <Title order={2} size="h4">
-                The approved model
+                {`Routes (${approvedLabel.replace(/^Approved/, 'approved')})`}
               </Title>
-              <ItemTables record={record} counts={data.counts} selected={selected} onSelect={setSelected} />
-              {selected && (
-                <ItemDetail
-                  reg={reg as Reg}
-                  slug={slug as string}
-                  id={selected}
-                  record={record}
-                  risks={risks.data ?? []}
-                />
-              )}
-              <Title order={2} size="h4">
-                Routes
-              </Title>
-              <RoutesPanel reg={reg as Reg} slug={slug as string} record={record} />
+              <RoutesPanel reg={reg as Reg} slug={slug as string} record={approved} />
             </>
           )}
           <ApprovePanel reg={reg as Reg} slug={slug as string} data={data} />
