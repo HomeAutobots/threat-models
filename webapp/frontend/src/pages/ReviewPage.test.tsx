@@ -207,7 +207,8 @@ describe('ReviewPage', () => {
     expect(posts[0].url).toBe('/api/main/systems/demo/risks/T-1/approve')
     expect(posts[0].body).toEqual({ note: NOTE, seen: details['T-1'].risk })
     expect(await screen.findByRole('button', { name: 'Approve T-2' })).toBeInTheDocument()
-    expect(screen.getByTestId('where').textContent).toContain('id=T-2')
+    // The refetched list shows T-2 a render before the effect pins it into the URL.
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toContain('id=T-2'))
     expect((screen.getByLabelText('Review note') as HTMLTextAreaElement).value).toBe('')
   })
 
