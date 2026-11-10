@@ -30,6 +30,49 @@ def _skip_reason():
     return None if ok else "c4 conformance tests need a running Docker (`docker info` failed)"
 
 
+SKIP = _skip_reason()  # once: it may run docker info
+ENV1 = "        ENV1 = deploymentEnvironment"
+STYLES = "        styles {"
+
+
+def _swap(text: str, *pairs: tuple[str, str]) -> str:
+    for old, new in pairs:
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+    return text
+
+
+def _seq(key: str, scope: str, *steps: str) -> tuple[str, str]:
+    body = "".join(f"            {s}\n" for s in steps)
+    return (STYLES, f'        dynamic {scope} "{key}" {{\n            title "{key} Probe"\n{body}'
+                    f"        }}\n{STYLES}")
+
+
+def _path(line: str) -> tuple[str, str]:
+    return (ENV1, f"        {line} {{\n            properties {{\n"
+                  '                "tm.data.sent" "none"\n                "tm.data.returned" "none"\n'
+                  '                "tm.auth" "None"\n            }\n        }\n' + ENV1)
+
+
+# Files tmreg's problems refuse because the pinned Structurizr refuses them too (probed
+# 2026-11-09): (label, shop.dsl changes, words of Structurizr's message).
+REFUSED = (
+    ("a path from a component to its own container (R38)",
+     [_path('R8 = K1 -> C2 "R8 Calls back" "HTTPS"')], "between parents and children"),
+    ("a path from a container to its own component (R38)",
+     [_path('R8 = C2 -> K1 "R8 Calls into" "HTTPS"')], "between parents and children"),
+    ("a component in a system-scoped sequence", [_seq("SEQ2", "S1", "R2")],
+     "Components can't be added to a dynamic view"),
+    ("a step that ends at the sequence's scope",
+     [_path('R8 = A1 -> C2 "R8 Calls" "HTTPS"'), _seq("SEQ2", "C2", "R8")],
+     "is already the scope of this view"),
+    ("a container and its own component in one sequence",
+     [_path('R8 = A1 -> C2 "R8 Calls" "HTTPS"'), _seq("SEQ2", "C3", "R8", "R2")],
+     "is already in this view"),
+    ("a non-standard style value", [("shape Cylinder", "shape Bogus")], "is not valid"),
+)
+
+
 def _inputs():
     """(label, bytes) for each fixture and each variant of shop.dsl."""
     out = []
@@ -51,23 +94,34 @@ def _inputs():
     out.append(("shop.dsl with comment-like strings", strings.encode("utf-8")))
     crlf = shop.replace("\n", "\r\n").encode("utf-8")
     out.append(("shop.dsl with BOM and CRLF", b"\xef\xbb\xbf" + crlf))
+    # Sequences near the dynamic-view rules, which Structurizr accepts.
+    out.append(("shop.dsl with more sequences", _swap(
+        shop, _seq("SEQ2", "S1", "R1"), _seq("SEQ3", "C1", "R4"),
+        _seq("SEQ4", "C2", "R6", "R7")).encode("utf-8")))
+    # The standard styles in another order, and only some of them (ruling R41).
+    styles = shop[shop.index(STYLES):shop.index("        }\n    }\n}")]
+    out.append(("shop.dsl with some standard styles reordered", _swap(shop, (styles, (
+        f'{STYLES}\n            relationship "Async" {{\n                style Dashed\n'
+        '            }\n            element "External" {\n                color #ffffff\n'
+        '                background #8c8c8c\n            }\n            element "Group" {\n'
+        '                strokeWidth 5\n                border Dashed\n'
+        '                stroke #c0392b\n            }\n'))).encode("utf-8")))
     return out
 
 
-@unittest.skipIf(_skip_reason(), _skip_reason() or "")
+@unittest.skipIf(SKIP, SKIP or "")
 class ConformanceTest(unittest.TestCase):
-    runs: dict = {}  # label -> (model, validate result, exported json or None)
-
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="tm-c4-"))
-        cls.accepted = []
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)  # even if this raises
+        cls.runs = {}  # label -> (model, validate result, export result, exported json or None)
         for label, data in _inputs():
             model = c4.parse(data)  # a fixture tmreg refuses is a test bug, not a skip
             probs = c4.problems(model)
             if probs:
                 raise AssertionError(f"tmreg refuses {label}: {probs}")
-            d = cls.tmp / str(len(cls.accepted))
+            d = cls.tmp / str(len(cls.runs))
             d.mkdir()
             (d / "workspace.dsl").write_bytes(data)
             val = cls._docker(d, ["validate", "-workspace", "workspace.dsl"])
@@ -77,11 +131,6 @@ class ConformanceTest(unittest.TestCase):
             if exp.returncode == 0:
                 js = json.loads((d / "out" / "workspace.json").read_text(encoding="utf-8"))
             cls.runs[label] = (model, val, exp, js)
-            cls.accepted.append(label)
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.tmp, ignore_errors=True)
 
     @staticmethod
     def _docker(d, args):
@@ -89,10 +138,34 @@ class ConformanceTest(unittest.TestCase):
             ["docker", "run", "--rm", "--network", "none", "-v", f"{d}:/usr/local/structurizr",
              c4.STRUCTURIZR_IMAGE, *args], capture_output=True, text=True, timeout=300)
 
-    def each(self):
-        for label, (model, val, exp, js) in self.runs.items():
+    def each(self, check):
+        """check(model, js) for every input, each in a subtest of its own, so that one input's
+        failure is reported under its label and doesn't hide the others. An input that
+        Structurizr didn't export fails its own subtest here."""
+        for label, (model, _, exp, js) in self.runs.items():
             with self.subTest(label):
-                yield model, val, exp, js
+                self.assertIsNotNone(js, f"Structurizr exported no JSON: {exp.stdout}{exp.stderr}")
+                check(model, js)
+
+    def test_structurizr_validates(self):
+        for label, (_, val, exp, _) in self.runs.items():
+            with self.subTest(label):
+                self.assertEqual(val.returncode, 0, val.stdout + val.stderr)
+                self.assertEqual(exp.returncode, 0, exp.stdout + exp.stderr)
+
+    def test_structurizr_refuses_what_tmreg_refuses(self):
+        """Each shape behind one of tmreg's Structurizr rules is a real Structurizr refusal."""
+        shop = (FIXTURES / "shop.dsl").read_text(encoding="utf-8")
+        for i, (label, pairs, words) in enumerate(REFUSED):
+            with self.subTest(label):
+                data = _swap(shop, *pairs).encode("utf-8")
+                self.assertTrue(c4.problems(c4.parse(data)), "tmreg should refuse it")
+                d = self.tmp / f"refused-{i}"
+                d.mkdir()
+                (d / "workspace.dsl").write_bytes(data)
+                val = self._docker(d, ["validate", "-workspace", "workspace.dsl"])
+                self.assertNotEqual(val.returncode, 0, val.stdout + val.stderr)
+                self.assertIn(words, val.stdout + val.stderr)
 
     @staticmethod
     def _elements(js):
@@ -125,13 +198,8 @@ class ConformanceTest(unittest.TestCase):
         v = x.get("properties", {}).get(IDENT)
         return None if v is None or UUID.match(v) else v
 
-    def test_structurizr_validates(self):
-        for _, val, exp, _ in self.each():
-            self.assertEqual(val.returncode, 0, val.stdout + val.stderr)
-            self.assertEqual(exp.returncode, 0, exp.stdout + exp.stderr)
-
     def test_identifiers_match(self):
-        for model, _, _, js in self.each():
+        def check(model, js):
             elems, rels = self._elements(js)
             got = {i for i in map(self._ident, elems + rels) if i}
             ids = model.ids()
@@ -141,8 +209,10 @@ class ConformanceTest(unittest.TestCase):
             want.update(i for i in ids["TB"] if model.items[i].kind != "group")
             self.assertEqual(got, want)
 
+        self.each(check)
+
     def test_views_and_environments_match(self):
-        for model, _, _, js in self.each():
+        def check(model, js):
             views = js.get("views", {})
             keys = set()
             envs = {}
@@ -163,8 +233,10 @@ class ConformanceTest(unittest.TestCase):
             for env in want_envs:
                 self.assertTrue(any(g.startswith(env) for g in got_envs), (env, got_envs))
 
+        self.each(check)
+
     def test_deployment_pairs_match(self):
-        for model, _, _, js in self.each():
+        def check(model, js):
             elems, _ = self._elements(js)
             by_id = {e["id"]: e for e in elems}
             owner = {}  # instance id -> identifier of its container or system
@@ -195,8 +267,10 @@ class ConformanceTest(unittest.TestCase):
             if model.instances:
                 self.assertTrue(want)
 
+        self.each(check)
+
     def test_strings_match(self):
-        for model, _, _, js in self.each():
+        def check(model, js):
             elems, rels = self._elements(js)
             checked = 0
             for x in elems:
@@ -218,6 +292,8 @@ class ConformanceTest(unittest.TestCase):
                 self.assertEqual(x.get("technology", ""), r.technology, (i, "technology"))
                 checked += 1
             self.assertGreater(checked, 0)
+
+        self.each(check)
 
 
 if __name__ == "__main__":
