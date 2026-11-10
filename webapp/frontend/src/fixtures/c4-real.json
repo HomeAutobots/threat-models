@@ -1,0 +1,1749 @@
+{
+ "changed": {
+  "status": {
+   "state": "changed",
+   "latest": {
+    "id": "MODEL-1",
+    "version": "1.0",
+    "sha256": "da430831f35a9ef316dd3a077b186fdefe2c893fc3f30d0cba5d9ba42219f3f1",
+    "ids": {
+     "A": [
+      "A1"
+     ],
+     "C": [
+      "C1",
+      "C2",
+      "C3"
+     ],
+     "ENV": [
+      "ENV1"
+     ],
+     "I": [],
+     "K": [],
+     "N": [
+      "N1"
+     ],
+     "R": [
+      "R1",
+      "R2",
+      "R3"
+     ],
+     "S": [
+      "S1"
+     ],
+     "SEQ": [],
+     "TB": [
+      "TB1",
+      "TB2"
+     ]
+    },
+    "approved_by": "Test Reviewer",
+    "approved_at": "2026-11-10T00:57:52Z",
+    "note": "Checked against the DFD checklist."
+   },
+   "current_sha256": "341063b2755e540eca2e1c9c42f9a4c030982a5b0fcb377ed34c8cfb3b35608e"
+  },
+  "approvals": [
+   {
+    "id": "MODEL-1",
+    "version": "1.0",
+    "sha256": "da430831f35a9ef316dd3a077b186fdefe2c893fc3f30d0cba5d9ba42219f3f1",
+    "ids": {
+     "A": [
+      "A1"
+     ],
+     "C": [
+      "C1",
+      "C2",
+      "C3"
+     ],
+     "ENV": [
+      "ENV1"
+     ],
+     "I": [],
+     "K": [],
+     "N": [
+      "N1"
+     ],
+     "R": [
+      "R1",
+      "R2",
+      "R3"
+     ],
+     "S": [
+      "S1"
+     ],
+     "SEQ": [],
+     "TB": [
+      "TB1",
+      "TB2"
+     ]
+    },
+    "approved_by": "Test Reviewer",
+    "approved_at": "2026-11-10T00:57:52Z",
+    "note": "Checked against the DFD checklist."
+   }
+  ],
+  "preview": {
+   "sha256": "341063b2755e540eca2e1c9c42f9a4c030982a5b0fcb377ed34c8cfb3b35608e",
+   "version": "1.0",
+   "ids": {
+    "A": [
+     "A1"
+    ],
+    "S": [
+     "S1"
+    ],
+    "C": [
+     "C1",
+     "C2",
+     "C3"
+    ],
+    "K": [],
+    "R": [
+     "R1",
+     "R2",
+     "R3"
+    ],
+    "TB": [
+     "TB1",
+     "TB2"
+    ],
+    "N": [
+     "N1"
+    ],
+    "I": [],
+    "ENV": [
+     "ENV1"
+    ],
+    "SEQ": []
+   },
+   "record": {
+    "version": "1.0",
+    "name": "Demo",
+    "description": "Made-up example system for tests. Not a real system.",
+    "dataclasses": {
+     "PII": "Examples: name. Regulatory: none."
+    },
+    "items": {
+     "A1": {
+      "kind": "person",
+      "name": "A1 User",
+      "description": "Uses the demo.",
+      "technology": "",
+      "tags": [],
+      "properties": {
+       "tm.zone.ENV1": "TB1",
+       "tm.was": "E1"
+      },
+      "parent": null,
+      "group": null,
+      "role": "External entity",
+      "where": [
+       "A1"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB1"
+       ]
+      }
+     },
+     "S1": {
+      "kind": "softwareSystem",
+      "name": "S1 Demo",
+      "description": "The demo system.",
+      "technology": "",
+      "tags": [],
+      "properties": {},
+      "parent": null,
+      "group": null,
+      "role": null,
+      "where": [
+       "S1"
+      ],
+      "zones": {
+       "ENV1": []
+      }
+     },
+     "C1": {
+      "kind": "container",
+      "name": "C1 Web app",
+      "description": "Serves the pages.",
+      "technology": "Web app",
+      "tags": [],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "P1"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Process",
+      "where": [
+       "S1",
+       "C1"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB1"
+       ]
+      }
+     },
+     "C2": {
+      "kind": "container",
+      "name": "C2 API",
+      "description": "Answers the web app and more.",
+      "technology": "Python",
+      "tags": [],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "P2"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Process",
+      "where": [
+       "S1",
+       "C2"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB2"
+       ]
+      }
+     },
+     "C3": {
+      "kind": "container",
+      "name": "C3 Database",
+      "description": "Holds the data.",
+      "technology": "PostgreSQL",
+      "tags": [
+       "Data store"
+      ],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "D1",
+       "tm.data.stored": "PII"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Data store",
+      "where": [
+       "S1",
+       "C3"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB2"
+       ]
+      }
+     },
+     "TB1": {
+      "kind": "deploymentNode",
+      "name": "TB1 Internet",
+      "description": "Untrusted public network.",
+      "technology": "Public internet",
+      "tags": [
+       "Trust boundary"
+      ],
+      "properties": {
+       "tm.enforced_by": "Nothing: an untrusted zone",
+       "tm.was": "TB1"
+      },
+      "parent": "ENV1",
+      "group": null,
+      "role": "Trust boundary",
+      "where": [
+       "ENV1",
+       "TB1"
+      ],
+      "zones": {}
+     },
+     "TB2": {
+      "kind": "deploymentNode",
+      "name": "TB2 Cloud",
+      "description": "The demo's cloud network.",
+      "technology": "Cloud account",
+      "tags": [
+       "Trust boundary"
+      ],
+      "properties": {
+       "tm.enforced_by": "Security groups"
+      },
+      "parent": "ENV1",
+      "group": null,
+      "role": "Trust boundary",
+      "where": [
+       "ENV1",
+       "TB2"
+      ],
+      "zones": {}
+     },
+     "N1": {
+      "kind": "deploymentNode",
+      "name": "N1 User device",
+      "description": "The user's own device.",
+      "technology": "Web browser",
+      "tags": [],
+      "properties": {},
+      "parent": "TB1",
+      "group": null,
+      "role": null,
+      "where": [
+       "ENV1",
+       "TB1",
+       "N1"
+      ],
+      "zones": {}
+     },
+     "ENV1": {
+      "kind": "deploymentEnvironment",
+      "name": "ENV1 Production",
+      "description": "",
+      "technology": "",
+      "tags": [],
+      "properties": {},
+      "parent": null,
+      "group": null,
+      "role": null,
+      "where": [
+       "ENV1"
+      ],
+      "zones": {}
+     }
+    },
+    "rels": {
+     "R1": {
+      "source": "A1",
+      "destination": "C1",
+      "description": "R1 Browses using",
+      "technology": "HTTPS",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Session cookie",
+       "tm.was": "F1"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": []
+      }
+     },
+     "R2": {
+      "source": "C1",
+      "destination": "C2",
+      "description": "R2 Calls",
+      "technology": "HTTPS, JSON",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Service token",
+       "tm.was": "F2"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": [
+        "TB1",
+        "TB2"
+       ]
+      }
+     },
+     "R3": {
+      "source": "C2",
+      "destination": "C3",
+      "description": "R3 Reads and writes",
+      "technology": "SQL over TLS",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Database user",
+       "tm.was": "F3"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": []
+      }
+     }
+    },
+    "views": {
+     "context": {
+      "kind": "systemContext",
+      "scope": "S1",
+      "env": null,
+      "title": "System context diagram for S1 Demo",
+      "steps": []
+     },
+     "containers": {
+      "kind": "container",
+      "scope": "S1",
+      "env": null,
+      "title": "Container diagram for S1 Demo",
+      "steps": []
+     },
+     "deployment-ENV1": {
+      "kind": "deployment",
+      "scope": "*",
+      "env": "ENV1",
+      "title": "Deployment diagram for S1 Demo in ENV1 Production",
+      "steps": []
+     }
+    }
+   },
+   "added": [],
+   "removed": [],
+   "changed": {
+    "C2": [
+     "description"
+    ]
+   },
+   "warnings": [],
+   "next_ids": {
+    "A": "A2",
+    "S": "S2",
+    "C": "C4",
+    "K": "K1",
+    "R": "R4",
+    "TB": "TB3",
+    "N": "N2",
+    "I": "I1",
+    "ENV": "ENV2",
+    "SEQ": "SEQ1"
+   },
+   "reused": [],
+   "problems": [],
+   "diff": [
+    "--- approved",
+    "+++ current",
+    "@@ -28,7 +28,7 @@",
+    "                     \"tm.was\" \"P1\"",
+    "                 }",
+    "             }",
+    "-            C2 = container \"C2 API\" \"Answers the web app.\" \"Python\" {",
+    "+            C2 = container \"C2 API\" \"Answers the web app and more.\" \"Python\" {",
+    "                 properties {",
+    "                     \"tm.owner\" \"Demo team\"",
+    "                     \"tm.was\" \"P2\""
+   ],
+   "adoption": null
+  },
+  "error": null,
+  "text": "workspace \"Demo\" \"Made-up example system for tests. Not a real system.\" {\n\n    !identifiers flat\n\n    properties {\n        \"tm.version\" \"1.0\"\n        \"tm.dataclass.PII\" \"Examples: name. Regulatory: none.\"\n        \"structurizr.inspection.model.softwaresystem.documentation\" \"ignore\"\n        \"structurizr.inspection.model.softwaresystem.decisions\" \"ignore\"\n    }\n\n    configuration {\n        scope softwaresystem\n    }\n\n    model {\n        A1 = person \"A1 User\" \"Uses the demo.\" {\n            properties {\n                \"tm.zone.ENV1\" \"TB1\"\n                \"tm.was\" \"E1\"\n            }\n        }\n\n        S1 = softwareSystem \"S1 Demo\" \"The demo system.\" {\n            C1 = container \"C1 Web app\" \"Serves the pages.\" \"Web app\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"P1\"\n                }\n            }\n            C2 = container \"C2 API\" \"Answers the web app and more.\" \"Python\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"P2\"\n                }\n            }\n            C3 = container \"C3 Database\" \"Holds the data.\" \"PostgreSQL\" \"Data store\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"D1\"\n                    \"tm.data.stored\" \"PII\"\n                }\n            }\n        }\n\n        R1 = A1 -> C1 \"R1 Browses using\" \"HTTPS\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Session cookie\"\n                \"tm.was\" \"F1\"\n            }\n        }\n        R2 = C1 -> C2 \"R2 Calls\" \"HTTPS, JSON\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Service token\"\n                \"tm.was\" \"F2\"\n            }\n        }\n        R3 = C2 -> C3 \"R3 Reads and writes\" \"SQL over TLS\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Database user\"\n                \"tm.was\" \"F3\"\n            }\n        }\n\n        ENV1 = deploymentEnvironment \"ENV1 Production\" {\n            TB1 = deploymentNode \"TB1 Internet\" \"Untrusted public network.\" \"Public internet\" \"Trust boundary\" {\n                properties {\n                    \"tm.enforced_by\" \"Nothing: an untrusted zone\"\n                    \"tm.was\" \"TB1\"\n                }\n                N1 = deploymentNode \"N1 User device\" \"The user's own device.\" \"Web browser\" {\n                    containerInstance C1\n                }\n            }\n            TB2 = deploymentNode \"TB2 Cloud\" \"The demo's cloud network.\" \"Cloud account\" \"Trust boundary\" {\n                properties {\n                    \"tm.enforced_by\" \"Security groups\"\n                }\n                containerInstance C2\n                containerInstance C3\n            }\n        }\n    }\n\n    views {\n        systemContext S1 \"context\" {\n            title \"System context diagram for S1 Demo\"\n            include *\n            autoLayout lr\n        }\n        container S1 \"containers\" {\n            title \"Container diagram for S1 Demo\"\n            include *\n            autoLayout lr\n        }\n        deployment * ENV1 \"deployment-ENV1\" {\n            title \"Deployment diagram for S1 Demo in ENV1 Production\"\n            include *\n            autoLayout lr\n        }\n        styles {\n            element \"Person\" {\n                shape Person\n            }\n            element \"Data store\" {\n                shape Cylinder\n            }\n            element \"External\" {\n                background #8c8c8c\n                color #ffffff\n            }\n            element \"Trust boundary\" {\n                border Dashed\n                stroke #c0392b\n                strokeWidth 5\n            }\n            element \"Group\" {\n                border Dashed\n                stroke #c0392b\n                strokeWidth 5\n            }\n            relationship \"Async\" {\n                style Dashed\n            }\n        }\n    }\n}\n",
+  "counts": {},
+  "latest_record": {
+   "dataclasses": {
+    "PII": "Examples: name. Regulatory: none."
+   },
+   "description": "Made-up example system for tests. Not a real system.",
+   "items": {
+    "A1": {
+     "description": "Uses the demo.",
+     "group": null,
+     "kind": "person",
+     "name": "A1 User",
+     "parent": null,
+     "properties": {
+      "tm.was": "E1",
+      "tm.zone.ENV1": "TB1"
+     },
+     "role": "External entity",
+     "tags": [],
+     "technology": "",
+     "where": [
+      "A1"
+     ],
+     "zones": {
+      "ENV1": [
+       "TB1"
+      ]
+     }
+    },
+    "C1": {
+     "description": "Serves the pages.",
+     "group": null,
+     "kind": "container",
+     "name": "C1 Web app",
+     "parent": "S1",
+     "properties": {
+      "tm.owner": "Demo team",
+      "tm.was": "P1"
+     },
+     "role": "Process",
+     "tags": [],
+     "technology": "Web app",
+     "where": [
+      "S1",
+      "C1"
+     ],
+     "zones": {
+      "ENV1": [
+       "TB1"
+      ]
+     }
+    },
+    "C2": {
+     "description": "Answers the web app.",
+     "group": null,
+     "kind": "container",
+     "name": "C2 API",
+     "parent": "S1",
+     "properties": {
+      "tm.owner": "Demo team",
+      "tm.was": "P2"
+     },
+     "role": "Process",
+     "tags": [],
+     "technology": "Python",
+     "where": [
+      "S1",
+      "C2"
+     ],
+     "zones": {
+      "ENV1": [
+       "TB2"
+      ]
+     }
+    },
+    "C3": {
+     "description": "Holds the data.",
+     "group": null,
+     "kind": "container",
+     "name": "C3 Database",
+     "parent": "S1",
+     "properties": {
+      "tm.data.stored": "PII",
+      "tm.owner": "Demo team",
+      "tm.was": "D1"
+     },
+     "role": "Data store",
+     "tags": [
+      "Data store"
+     ],
+     "technology": "PostgreSQL",
+     "where": [
+      "S1",
+      "C3"
+     ],
+     "zones": {
+      "ENV1": [
+       "TB2"
+      ]
+     }
+    },
+    "ENV1": {
+     "description": "",
+     "group": null,
+     "kind": "deploymentEnvironment",
+     "name": "ENV1 Production",
+     "parent": null,
+     "properties": {},
+     "role": null,
+     "tags": [],
+     "technology": "",
+     "where": [
+      "ENV1"
+     ],
+     "zones": {}
+    },
+    "N1": {
+     "description": "The user's own device.",
+     "group": null,
+     "kind": "deploymentNode",
+     "name": "N1 User device",
+     "parent": "TB1",
+     "properties": {},
+     "role": null,
+     "tags": [],
+     "technology": "Web browser",
+     "where": [
+      "ENV1",
+      "TB1",
+      "N1"
+     ],
+     "zones": {}
+    },
+    "S1": {
+     "description": "The demo system.",
+     "group": null,
+     "kind": "softwareSystem",
+     "name": "S1 Demo",
+     "parent": null,
+     "properties": {},
+     "role": null,
+     "tags": [],
+     "technology": "",
+     "where": [
+      "S1"
+     ],
+     "zones": {
+      "ENV1": []
+     }
+    },
+    "TB1": {
+     "description": "Untrusted public network.",
+     "group": null,
+     "kind": "deploymentNode",
+     "name": "TB1 Internet",
+     "parent": "ENV1",
+     "properties": {
+      "tm.enforced_by": "Nothing: an untrusted zone",
+      "tm.was": "TB1"
+     },
+     "role": "Trust boundary",
+     "tags": [
+      "Trust boundary"
+     ],
+     "technology": "Public internet",
+     "where": [
+      "ENV1",
+      "TB1"
+     ],
+     "zones": {}
+    },
+    "TB2": {
+     "description": "The demo's cloud network.",
+     "group": null,
+     "kind": "deploymentNode",
+     "name": "TB2 Cloud",
+     "parent": "ENV1",
+     "properties": {
+      "tm.enforced_by": "Security groups"
+     },
+     "role": "Trust boundary",
+     "tags": [
+      "Trust boundary"
+     ],
+     "technology": "Cloud account",
+     "where": [
+      "ENV1",
+      "TB2"
+     ],
+     "zones": {}
+    }
+   },
+   "name": "Demo",
+   "rels": {
+    "R1": {
+     "crossings": {
+      "ENV1": []
+     },
+     "description": "R1 Browses using",
+     "destination": "C1",
+     "properties": {
+      "tm.auth": "Session cookie",
+      "tm.data.returned": "PII",
+      "tm.data.sent": "PII",
+      "tm.was": "F1"
+     },
+     "role": "Data flow",
+     "source": "A1",
+     "tags": [],
+     "technology": "HTTPS"
+    },
+    "R2": {
+     "crossings": {
+      "ENV1": [
+       "TB1",
+       "TB2"
+      ]
+     },
+     "description": "R2 Calls",
+     "destination": "C2",
+     "properties": {
+      "tm.auth": "Service token",
+      "tm.data.returned": "PII",
+      "tm.data.sent": "PII",
+      "tm.was": "F2"
+     },
+     "role": "Data flow",
+     "source": "C1",
+     "tags": [],
+     "technology": "HTTPS, JSON"
+    },
+    "R3": {
+     "crossings": {
+      "ENV1": []
+     },
+     "description": "R3 Reads and writes",
+     "destination": "C3",
+     "properties": {
+      "tm.auth": "Database user",
+      "tm.data.returned": "PII",
+      "tm.data.sent": "PII",
+      "tm.was": "F3"
+     },
+     "role": "Data flow",
+     "source": "C2",
+     "tags": [],
+     "technology": "SQL over TLS"
+    }
+   },
+   "version": "1.0",
+   "views": {
+    "containers": {
+     "env": null,
+     "kind": "container",
+     "scope": "S1",
+     "steps": [],
+     "title": "Container diagram for S1 Demo"
+    },
+    "context": {
+     "env": null,
+     "kind": "systemContext",
+     "scope": "S1",
+     "steps": [],
+     "title": "System context diagram for S1 Demo"
+    },
+    "deployment-ENV1": {
+     "env": "ENV1",
+     "kind": "deployment",
+     "scope": "*",
+     "steps": [],
+     "title": "Deployment diagram for S1 Demo in ENV1 Production"
+    }
+   }
+  },
+  "structurizr": {
+   "state": "not-checked",
+   "message": null,
+   "base": null,
+   "views": []
+  }
+ },
+ "nofile": {
+  "status": {
+   "state": "none",
+   "latest": null,
+   "current_sha256": null
+  },
+  "approvals": [],
+  "preview": null,
+  "error": "no workspace.dsl for demo: write systems/demo/workspace.dsl first",
+  "text": "",
+  "counts": {},
+  "latest_record": null,
+  "structurizr": {
+   "state": "not-checked",
+   "message": null,
+   "base": null,
+   "views": []
+  }
+ },
+ "first": {
+  "status": {
+   "state": "none",
+   "latest": null,
+   "current_sha256": "da430831f35a9ef316dd3a077b186fdefe2c893fc3f30d0cba5d9ba42219f3f1"
+  },
+  "approvals": [],
+  "preview": {
+   "sha256": "da430831f35a9ef316dd3a077b186fdefe2c893fc3f30d0cba5d9ba42219f3f1",
+   "version": "1.0",
+   "ids": {
+    "A": [
+     "A1"
+    ],
+    "S": [
+     "S1"
+    ],
+    "C": [
+     "C1",
+     "C2",
+     "C3"
+    ],
+    "K": [],
+    "R": [
+     "R1",
+     "R2",
+     "R3"
+    ],
+    "TB": [
+     "TB1",
+     "TB2"
+    ],
+    "N": [
+     "N1"
+    ],
+    "I": [],
+    "ENV": [
+     "ENV1"
+    ],
+    "SEQ": []
+   },
+   "record": {
+    "version": "1.0",
+    "name": "Demo",
+    "description": "Made-up example system for tests. Not a real system.",
+    "dataclasses": {
+     "PII": "Examples: name. Regulatory: none."
+    },
+    "items": {
+     "A1": {
+      "kind": "person",
+      "name": "A1 User",
+      "description": "Uses the demo.",
+      "technology": "",
+      "tags": [],
+      "properties": {
+       "tm.zone.ENV1": "TB1",
+       "tm.was": "E1"
+      },
+      "parent": null,
+      "group": null,
+      "role": "External entity",
+      "where": [
+       "A1"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB1"
+       ]
+      }
+     },
+     "S1": {
+      "kind": "softwareSystem",
+      "name": "S1 Demo",
+      "description": "The demo system.",
+      "technology": "",
+      "tags": [],
+      "properties": {},
+      "parent": null,
+      "group": null,
+      "role": null,
+      "where": [
+       "S1"
+      ],
+      "zones": {
+       "ENV1": []
+      }
+     },
+     "C1": {
+      "kind": "container",
+      "name": "C1 Web app",
+      "description": "Serves the pages.",
+      "technology": "Web app",
+      "tags": [],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "P1"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Process",
+      "where": [
+       "S1",
+       "C1"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB1"
+       ]
+      }
+     },
+     "C2": {
+      "kind": "container",
+      "name": "C2 API",
+      "description": "Answers the web app.",
+      "technology": "Python",
+      "tags": [],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "P2"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Process",
+      "where": [
+       "S1",
+       "C2"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB2"
+       ]
+      }
+     },
+     "C3": {
+      "kind": "container",
+      "name": "C3 Database",
+      "description": "Holds the data.",
+      "technology": "PostgreSQL",
+      "tags": [
+       "Data store"
+      ],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "D1",
+       "tm.data.stored": "PII"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Data store",
+      "where": [
+       "S1",
+       "C3"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB2"
+       ]
+      }
+     },
+     "TB1": {
+      "kind": "deploymentNode",
+      "name": "TB1 Internet",
+      "description": "Untrusted public network.",
+      "technology": "Public internet",
+      "tags": [
+       "Trust boundary"
+      ],
+      "properties": {
+       "tm.enforced_by": "Nothing: an untrusted zone",
+       "tm.was": "TB1"
+      },
+      "parent": "ENV1",
+      "group": null,
+      "role": "Trust boundary",
+      "where": [
+       "ENV1",
+       "TB1"
+      ],
+      "zones": {}
+     },
+     "TB2": {
+      "kind": "deploymentNode",
+      "name": "TB2 Cloud",
+      "description": "The demo's cloud network.",
+      "technology": "Cloud account",
+      "tags": [
+       "Trust boundary"
+      ],
+      "properties": {
+       "tm.enforced_by": "Security groups"
+      },
+      "parent": "ENV1",
+      "group": null,
+      "role": "Trust boundary",
+      "where": [
+       "ENV1",
+       "TB2"
+      ],
+      "zones": {}
+     },
+     "N1": {
+      "kind": "deploymentNode",
+      "name": "N1 User device",
+      "description": "The user's own device.",
+      "technology": "Web browser",
+      "tags": [],
+      "properties": {},
+      "parent": "TB1",
+      "group": null,
+      "role": null,
+      "where": [
+       "ENV1",
+       "TB1",
+       "N1"
+      ],
+      "zones": {}
+     },
+     "ENV1": {
+      "kind": "deploymentEnvironment",
+      "name": "ENV1 Production",
+      "description": "",
+      "technology": "",
+      "tags": [],
+      "properties": {},
+      "parent": null,
+      "group": null,
+      "role": null,
+      "where": [
+       "ENV1"
+      ],
+      "zones": {}
+     }
+    },
+    "rels": {
+     "R1": {
+      "source": "A1",
+      "destination": "C1",
+      "description": "R1 Browses using",
+      "technology": "HTTPS",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Session cookie",
+       "tm.was": "F1"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": []
+      }
+     },
+     "R2": {
+      "source": "C1",
+      "destination": "C2",
+      "description": "R2 Calls",
+      "technology": "HTTPS, JSON",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Service token",
+       "tm.was": "F2"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": [
+        "TB1",
+        "TB2"
+       ]
+      }
+     },
+     "R3": {
+      "source": "C2",
+      "destination": "C3",
+      "description": "R3 Reads and writes",
+      "technology": "SQL over TLS",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Database user",
+       "tm.was": "F3"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": []
+      }
+     }
+    },
+    "views": {
+     "context": {
+      "kind": "systemContext",
+      "scope": "S1",
+      "env": null,
+      "title": "System context diagram for S1 Demo",
+      "steps": []
+     },
+     "containers": {
+      "kind": "container",
+      "scope": "S1",
+      "env": null,
+      "title": "Container diagram for S1 Demo",
+      "steps": []
+     },
+     "deployment-ENV1": {
+      "kind": "deployment",
+      "scope": "*",
+      "env": "ENV1",
+      "title": "Deployment diagram for S1 Demo in ENV1 Production",
+      "steps": []
+     }
+    }
+   },
+   "added": [
+    "A1",
+    "C1",
+    "C2",
+    "C3",
+    "ENV1",
+    "N1",
+    "R1",
+    "R2",
+    "R3",
+    "S1",
+    "TB1",
+    "TB2"
+   ],
+   "removed": [],
+   "changed": {},
+   "warnings": [],
+   "next_ids": {
+    "A": "A2",
+    "S": "S2",
+    "C": "C4",
+    "K": "K1",
+    "R": "R4",
+    "TB": "TB3",
+    "N": "N2",
+    "I": "I1",
+    "ENV": "ENV2",
+    "SEQ": "SEQ1"
+   },
+   "reused": [],
+   "problems": [],
+   "diff": [
+    "--- approved",
+    "+++ current",
+    "@@ -0,0 +1,133 @@",
+    "+workspace \"Demo\" \"Made-up example system for tests. Not a real system.\" {",
+    "+",
+    "+    !identifiers flat",
+    "+",
+    "+    properties {",
+    "+        \"tm.version\" \"1.0\"",
+    "+        \"tm.dataclass.PII\" \"Examples: name. Regulatory: none.\"",
+    "+        \"structurizr.inspection.model.softwaresystem.documentation\" \"ignore\"",
+    "+        \"structurizr.inspection.model.softwaresystem.decisions\" \"ignore\"",
+    "+    }",
+    "+",
+    "+    configuration {",
+    "+        scope softwaresystem",
+    "+    }",
+    "+",
+    "+    model {",
+    "+        A1 = person \"A1 User\" \"Uses the demo.\" {",
+    "+            properties {",
+    "+                \"tm.zone.ENV1\" \"TB1\"",
+    "+                \"tm.was\" \"E1\"",
+    "+            }",
+    "+        }",
+    "+",
+    "+        S1 = softwareSystem \"S1 Demo\" \"The demo system.\" {",
+    "+            C1 = container \"C1 Web app\" \"Serves the pages.\" \"Web app\" {",
+    "+                properties {",
+    "+                    \"tm.owner\" \"Demo team\"",
+    "+                    \"tm.was\" \"P1\"",
+    "+                }",
+    "+            }",
+    "+            C2 = container \"C2 API\" \"Answers the web app.\" \"Python\" {",
+    "+                properties {",
+    "+                    \"tm.owner\" \"Demo team\"",
+    "+                    \"tm.was\" \"P2\"",
+    "+                }",
+    "+            }",
+    "+            C3 = container \"C3 Database\" \"Holds the data.\" \"PostgreSQL\" \"Data store\" {",
+    "+                properties {",
+    "+                    \"tm.owner\" \"Demo team\"",
+    "+                    \"tm.was\" \"D1\"",
+    "+                    \"tm.data.stored\" \"PII\"",
+    "+                }",
+    "+            }",
+    "+        }",
+    "+",
+    "+        R1 = A1 -> C1 \"R1 Browses using\" \"HTTPS\" {",
+    "+            properties {",
+    "+                \"tm.data.sent\" \"PII\"",
+    "+                \"tm.data.returned\" \"PII\"",
+    "+                \"tm.auth\" \"Session cookie\"",
+    "+                \"tm.was\" \"F1\"",
+    "+            }",
+    "+        }",
+    "+        R2 = C1 -> C2 \"R2 Calls\" \"HTTPS, JSON\" {",
+    "+            properties {",
+    "+                \"tm.data.sent\" \"PII\"",
+    "+                \"tm.data.returned\" \"PII\"",
+    "+                \"tm.auth\" \"Service token\"",
+    "+                \"tm.was\" \"F2\"",
+    "+            }",
+    "+        }",
+    "+        R3 = C2 -> C3 \"R3 Reads and writes\" \"SQL over TLS\" {",
+    "+            properties {",
+    "+                \"tm.data.sent\" \"PII\"",
+    "+                \"tm.data.returned\" \"PII\"",
+    "+                \"tm.auth\" \"Database user\"",
+    "+                \"tm.was\" \"F3\"",
+    "+            }",
+    "+        }",
+    "+",
+    "+        ENV1 = deploymentEnvironment \"ENV1 Production\" {",
+    "+            TB1 = deploymentNode \"TB1 Internet\" \"Untrusted public network.\" \"Public internet\" \"Trust boundary\" {",
+    "+                properties {",
+    "+                    \"tm.enforced_by\" \"Nothing: an untrusted zone\"",
+    "+                    \"tm.was\" \"TB1\"",
+    "+                }",
+    "+                N1 = deploymentNode \"N1 User device\" \"The user's own device.\" \"Web browser\" {",
+    "+                    containerInstance C1",
+    "+                }",
+    "+            }",
+    "+            TB2 = deploymentNode \"TB2 Cloud\" \"The demo's cloud network.\" \"Cloud account\" \"Trust boundary\" {",
+    "+                properties {",
+    "+                    \"tm.enforced_by\" \"Security groups\"",
+    "+                }",
+    "+                containerInstance C2",
+    "+                containerInstance C3",
+    "+            }",
+    "+        }",
+    "+    }",
+    "+",
+    "+    views {",
+    "+        systemContext S1 \"context\" {",
+    "+            title \"System context diagram for S1 Demo\"",
+    "+            include *",
+    "+            autoLayout lr",
+    "+        }",
+    "+        container S1 \"containers\" {",
+    "+            title \"Container diagram for S1 Demo\"",
+    "+            include *",
+    "+            autoLayout lr",
+    "+        }",
+    "+        deployment * ENV1 \"deployment-ENV1\" {",
+    "+            title \"Deployment diagram for S1 Demo in ENV1 Production\"",
+    "+            include *",
+    "+            autoLayout lr",
+    "+        }",
+    "+        styles {",
+    "+            element \"Person\" {",
+    "+                shape Person",
+    "+            }",
+    "+            element \"Data store\" {",
+    "+                shape Cylinder",
+    "+            }",
+    "+            element \"External\" {",
+    "+                background #8c8c8c",
+    "+                color #ffffff",
+    "+            }",
+    "+            element \"Trust boundary\" {",
+    "+                border Dashed",
+    "+                stroke #c0392b",
+    "+                strokeWidth 5",
+    "+            }",
+    "+            element \"Group\" {",
+    "+                border Dashed",
+    "+                stroke #c0392b",
+    "+                strokeWidth 5",
+    "+            }",
+    "+            relationship \"Async\" {",
+    "+                style Dashed",
+    "+            }",
+    "+        }",
+    "+    }",
+    "+}"
+   ],
+   "adoption": null
+  },
+  "error": null,
+  "text": "workspace \"Demo\" \"Made-up example system for tests. Not a real system.\" {\n\n    !identifiers flat\n\n    properties {\n        \"tm.version\" \"1.0\"\n        \"tm.dataclass.PII\" \"Examples: name. Regulatory: none.\"\n        \"structurizr.inspection.model.softwaresystem.documentation\" \"ignore\"\n        \"structurizr.inspection.model.softwaresystem.decisions\" \"ignore\"\n    }\n\n    configuration {\n        scope softwaresystem\n    }\n\n    model {\n        A1 = person \"A1 User\" \"Uses the demo.\" {\n            properties {\n                \"tm.zone.ENV1\" \"TB1\"\n                \"tm.was\" \"E1\"\n            }\n        }\n\n        S1 = softwareSystem \"S1 Demo\" \"The demo system.\" {\n            C1 = container \"C1 Web app\" \"Serves the pages.\" \"Web app\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"P1\"\n                }\n            }\n            C2 = container \"C2 API\" \"Answers the web app.\" \"Python\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"P2\"\n                }\n            }\n            C3 = container \"C3 Database\" \"Holds the data.\" \"PostgreSQL\" \"Data store\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"D1\"\n                    \"tm.data.stored\" \"PII\"\n                }\n            }\n        }\n\n        R1 = A1 -> C1 \"R1 Browses using\" \"HTTPS\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Session cookie\"\n                \"tm.was\" \"F1\"\n            }\n        }\n        R2 = C1 -> C2 \"R2 Calls\" \"HTTPS, JSON\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Service token\"\n                \"tm.was\" \"F2\"\n            }\n        }\n        R3 = C2 -> C3 \"R3 Reads and writes\" \"SQL over TLS\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Database user\"\n                \"tm.was\" \"F3\"\n            }\n        }\n\n        ENV1 = deploymentEnvironment \"ENV1 Production\" {\n            TB1 = deploymentNode \"TB1 Internet\" \"Untrusted public network.\" \"Public internet\" \"Trust boundary\" {\n                properties {\n                    \"tm.enforced_by\" \"Nothing: an untrusted zone\"\n                    \"tm.was\" \"TB1\"\n                }\n                N1 = deploymentNode \"N1 User device\" \"The user's own device.\" \"Web browser\" {\n                    containerInstance C1\n                }\n            }\n            TB2 = deploymentNode \"TB2 Cloud\" \"The demo's cloud network.\" \"Cloud account\" \"Trust boundary\" {\n                properties {\n                    \"tm.enforced_by\" \"Security groups\"\n                }\n                containerInstance C2\n                containerInstance C3\n            }\n        }\n    }\n\n    views {\n        systemContext S1 \"context\" {\n            title \"System context diagram for S1 Demo\"\n            include *\n            autoLayout lr\n        }\n        container S1 \"containers\" {\n            title \"Container diagram for S1 Demo\"\n            include *\n            autoLayout lr\n        }\n        deployment * ENV1 \"deployment-ENV1\" {\n            title \"Deployment diagram for S1 Demo in ENV1 Production\"\n            include *\n            autoLayout lr\n        }\n        styles {\n            element \"Person\" {\n                shape Person\n            }\n            element \"Data store\" {\n                shape Cylinder\n            }\n            element \"External\" {\n                background #8c8c8c\n                color #ffffff\n            }\n            element \"Trust boundary\" {\n                border Dashed\n                stroke #c0392b\n                strokeWidth 5\n            }\n            element \"Group\" {\n                border Dashed\n                stroke #c0392b\n                strokeWidth 5\n            }\n            relationship \"Async\" {\n                style Dashed\n            }\n        }\n    }\n}\n",
+  "counts": {},
+  "latest_record": null,
+  "structurizr": {
+   "state": "not-checked",
+   "message": null,
+   "base": null,
+   "views": []
+  }
+ },
+ "adoption": {
+  "status": {
+   "state": "none",
+   "latest": null,
+   "current_sha256": "da430831f35a9ef316dd3a077b186fdefe2c893fc3f30d0cba5d9ba42219f3f1"
+  },
+  "approvals": [],
+  "preview": {
+   "sha256": "da430831f35a9ef316dd3a077b186fdefe2c893fc3f30d0cba5d9ba42219f3f1",
+   "version": "1.0",
+   "ids": {
+    "A": [
+     "A1"
+    ],
+    "S": [
+     "S1"
+    ],
+    "C": [
+     "C1",
+     "C2",
+     "C3"
+    ],
+    "K": [],
+    "R": [
+     "R1",
+     "R2",
+     "R3"
+    ],
+    "TB": [
+     "TB1",
+     "TB2"
+    ],
+    "N": [
+     "N1"
+    ],
+    "I": [],
+    "ENV": [
+     "ENV1"
+    ],
+    "SEQ": []
+   },
+   "record": {
+    "version": "1.0",
+    "name": "Demo",
+    "description": "Made-up example system for tests. Not a real system.",
+    "dataclasses": {
+     "PII": "Examples: name. Regulatory: none."
+    },
+    "items": {
+     "A1": {
+      "kind": "person",
+      "name": "A1 User",
+      "description": "Uses the demo.",
+      "technology": "",
+      "tags": [],
+      "properties": {
+       "tm.zone.ENV1": "TB1",
+       "tm.was": "E1"
+      },
+      "parent": null,
+      "group": null,
+      "role": "External entity",
+      "where": [
+       "A1"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB1"
+       ]
+      }
+     },
+     "S1": {
+      "kind": "softwareSystem",
+      "name": "S1 Demo",
+      "description": "The demo system.",
+      "technology": "",
+      "tags": [],
+      "properties": {},
+      "parent": null,
+      "group": null,
+      "role": null,
+      "where": [
+       "S1"
+      ],
+      "zones": {
+       "ENV1": []
+      }
+     },
+     "C1": {
+      "kind": "container",
+      "name": "C1 Web app",
+      "description": "Serves the pages.",
+      "technology": "Web app",
+      "tags": [],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "P1"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Process",
+      "where": [
+       "S1",
+       "C1"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB1"
+       ]
+      }
+     },
+     "C2": {
+      "kind": "container",
+      "name": "C2 API",
+      "description": "Answers the web app.",
+      "technology": "Python",
+      "tags": [],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "P2"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Process",
+      "where": [
+       "S1",
+       "C2"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB2"
+       ]
+      }
+     },
+     "C3": {
+      "kind": "container",
+      "name": "C3 Database",
+      "description": "Holds the data.",
+      "technology": "PostgreSQL",
+      "tags": [
+       "Data store"
+      ],
+      "properties": {
+       "tm.owner": "Demo team",
+       "tm.was": "D1",
+       "tm.data.stored": "PII"
+      },
+      "parent": "S1",
+      "group": null,
+      "role": "Data store",
+      "where": [
+       "S1",
+       "C3"
+      ],
+      "zones": {
+       "ENV1": [
+        "TB2"
+       ]
+      }
+     },
+     "TB1": {
+      "kind": "deploymentNode",
+      "name": "TB1 Internet",
+      "description": "Untrusted public network.",
+      "technology": "Public internet",
+      "tags": [
+       "Trust boundary"
+      ],
+      "properties": {
+       "tm.enforced_by": "Nothing: an untrusted zone",
+       "tm.was": "TB1"
+      },
+      "parent": "ENV1",
+      "group": null,
+      "role": "Trust boundary",
+      "where": [
+       "ENV1",
+       "TB1"
+      ],
+      "zones": {}
+     },
+     "TB2": {
+      "kind": "deploymentNode",
+      "name": "TB2 Cloud",
+      "description": "The demo's cloud network.",
+      "technology": "Cloud account",
+      "tags": [
+       "Trust boundary"
+      ],
+      "properties": {
+       "tm.enforced_by": "Security groups"
+      },
+      "parent": "ENV1",
+      "group": null,
+      "role": "Trust boundary",
+      "where": [
+       "ENV1",
+       "TB2"
+      ],
+      "zones": {}
+     },
+     "N1": {
+      "kind": "deploymentNode",
+      "name": "N1 User device",
+      "description": "The user's own device.",
+      "technology": "Web browser",
+      "tags": [],
+      "properties": {},
+      "parent": "TB1",
+      "group": null,
+      "role": null,
+      "where": [
+       "ENV1",
+       "TB1",
+       "N1"
+      ],
+      "zones": {}
+     },
+     "ENV1": {
+      "kind": "deploymentEnvironment",
+      "name": "ENV1 Production",
+      "description": "",
+      "technology": "",
+      "tags": [],
+      "properties": {},
+      "parent": null,
+      "group": null,
+      "role": null,
+      "where": [
+       "ENV1"
+      ],
+      "zones": {}
+     }
+    },
+    "rels": {
+     "R1": {
+      "source": "A1",
+      "destination": "C1",
+      "description": "R1 Browses using",
+      "technology": "HTTPS",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Session cookie",
+       "tm.was": "F1"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": []
+      }
+     },
+     "R2": {
+      "source": "C1",
+      "destination": "C2",
+      "description": "R2 Calls",
+      "technology": "HTTPS, JSON",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Service token",
+       "tm.was": "F2"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": [
+        "TB1",
+        "TB2"
+       ]
+      }
+     },
+     "R3": {
+      "source": "C2",
+      "destination": "C3",
+      "description": "R3 Reads and writes",
+      "technology": "SQL over TLS",
+      "tags": [],
+      "properties": {
+       "tm.data.sent": "PII",
+       "tm.data.returned": "PII",
+       "tm.auth": "Database user",
+       "tm.was": "F3"
+      },
+      "role": "Data flow",
+      "crossings": {
+       "ENV1": []
+      }
+     }
+    },
+    "views": {
+     "context": {
+      "kind": "systemContext",
+      "scope": "S1",
+      "env": null,
+      "title": "System context diagram for S1 Demo",
+      "steps": []
+     },
+     "containers": {
+      "kind": "container",
+      "scope": "S1",
+      "env": null,
+      "title": "Container diagram for S1 Demo",
+      "steps": []
+     },
+     "deployment-ENV1": {
+      "kind": "deployment",
+      "scope": "*",
+      "env": "ENV1",
+      "title": "Deployment diagram for S1 Demo in ENV1 Production",
+      "steps": []
+     }
+    }
+   },
+   "added": [
+    "A1",
+    "C1",
+    "C2",
+    "C3",
+    "ENV1",
+    "N1",
+    "R1",
+    "R2",
+    "R3",
+    "S1",
+    "TB1",
+    "TB2"
+   ],
+   "removed": [],
+   "changed": {},
+   "warnings": [],
+   "next_ids": {
+    "A": "A2",
+    "S": "S2",
+    "C": "C4",
+    "K": "K1",
+    "R": "R4",
+    "TB": "TB3",
+    "N": "N2",
+    "I": "I1",
+    "ENV": "ENV2",
+    "SEQ": "SEQ1"
+   },
+   "reused": [],
+   "problems": [],
+   "diff": [
+    "--- approved",
+    "+++ current",
+    "@@ -0,0 +1,133 @@",
+    "+workspace \"Demo\" \"Made-up example system for tests. Not a real system.\" {",
+    "+",
+    "+    !identifiers flat",
+    "+",
+    "+    properties {",
+    "+        \"tm.version\" \"1.0\"",
+    "+        \"tm.dataclass.PII\" \"Examples: name. Regulatory: none.\"",
+    "+        \"structurizr.inspection.model.softwaresystem.documentation\" \"ignore\"",
+    "+        \"structurizr.inspection.model.softwaresystem.decisions\" \"ignore\"",
+    "+    }",
+    "+",
+    "+    configuration {",
+    "+        scope softwaresystem",
+    "+    }",
+    "+",
+    "+    model {",
+    "+        A1 = person \"A1 User\" \"Uses the demo.\" {",
+    "+            properties {",
+    "+                \"tm.zone.ENV1\" \"TB1\"",
+    "+                \"tm.was\" \"E1\"",
+    "+            }",
+    "+        }",
+    "+",
+    "+        S1 = softwareSystem \"S1 Demo\" \"The demo system.\" {",
+    "+            C1 = container \"C1 Web app\" \"Serves the pages.\" \"Web app\" {",
+    "+                properties {",
+    "+                    \"tm.owner\" \"Demo team\"",
+    "+                    \"tm.was\" \"P1\"",
+    "+                }",
+    "+            }",
+    "+            C2 = container \"C2 API\" \"Answers the web app.\" \"Python\" {",
+    "+                properties {",
+    "+                    \"tm.owner\" \"Demo team\"",
+    "+                    \"tm.was\" \"P2\"",
+    "+                }",
+    "+            }",
+    "+            C3 = container \"C3 Database\" \"Holds the data.\" \"PostgreSQL\" \"Data store\" {",
+    "+                properties {",
+    "+                    \"tm.owner\" \"Demo team\"",
+    "+                    \"tm.was\" \"D1\"",
+    "+                    \"tm.data.stored\" \"PII\"",
+    "+                }",
+    "+            }",
+    "+        }",
+    "+",
+    "+        R1 = A1 -> C1 \"R1 Browses using\" \"HTTPS\" {",
+    "+            properties {",
+    "+                \"tm.data.sent\" \"PII\"",
+    "+                \"tm.data.returned\" \"PII\"",
+    "+                \"tm.auth\" \"Session cookie\"",
+    "+                \"tm.was\" \"F1\"",
+    "+            }",
+    "+        }",
+    "+        R2 = C1 -> C2 \"R2 Calls\" \"HTTPS, JSON\" {",
+    "+            properties {",
+    "+                \"tm.data.sent\" \"PII\"",
+    "+                \"tm.data.returned\" \"PII\"",
+    "+                \"tm.auth\" \"Service token\"",
+    "+                \"tm.was\" \"F2\"",
+    "+            }",
+    "+        }",
+    "+        R3 = C2 -> C3 \"R3 Reads and writes\" \"SQL over TLS\" {",
+    "+            properties {",
+    "+                \"tm.data.sent\" \"PII\"",
+    "+                \"tm.data.returned\" \"PII\"",
+    "+                \"tm.auth\" \"Database user\"",
+    "+                \"tm.was\" \"F3\"",
+    "+            }",
+    "+        }",
+    "+",
+    "+        ENV1 = deploymentEnvironment \"ENV1 Production\" {",
+    "+            TB1 = deploymentNode \"TB1 Internet\" \"Untrusted public network.\" \"Public internet\" \"Trust boundary\" {",
+    "+                properties {",
+    "+                    \"tm.enforced_by\" \"Nothing: an untrusted zone\"",
+    "+                    \"tm.was\" \"TB1\"",
+    "+                }",
+    "+                N1 = deploymentNode \"N1 User device\" \"The user's own device.\" \"Web browser\" {",
+    "+                    containerInstance C1",
+    "+                }",
+    "+            }",
+    "+            TB2 = deploymentNode \"TB2 Cloud\" \"The demo's cloud network.\" \"Cloud account\" \"Trust boundary\" {",
+    "+                properties {",
+    "+                    \"tm.enforced_by\" \"Security groups\"",
+    "+                }",
+    "+                containerInstance C2",
+    "+                containerInstance C3",
+    "+            }",
+    "+        }",
+    "+    }",
+    "+",
+    "+    views {",
+    "+        systemContext S1 \"context\" {",
+    "+            title \"System context diagram for S1 Demo\"",
+    "+            include *",
+    "+            autoLayout lr",
+    "+        }",
+    "+        container S1 \"containers\" {",
+    "+            title \"Container diagram for S1 Demo\"",
+    "+            include *",
+    "+            autoLayout lr",
+    "+        }",
+    "+        deployment * ENV1 \"deployment-ENV1\" {",
+    "+            title \"Deployment diagram for S1 Demo in ENV1 Production\"",
+    "+            include *",
+    "+            autoLayout lr",
+    "+        }",
+    "+        styles {",
+    "+            element \"Person\" {",
+    "+                shape Person",
+    "+            }",
+    "+            element \"Data store\" {",
+    "+                shape Cylinder",
+    "+            }",
+    "+            element \"External\" {",
+    "+                background #8c8c8c",
+    "+                color #ffffff",
+    "+            }",
+    "+            element \"Trust boundary\" {",
+    "+                border Dashed",
+    "+                stroke #c0392b",
+    "+                strokeWidth 5",
+    "+            }",
+    "+            element \"Group\" {",
+    "+                border Dashed",
+    "+                stroke #c0392b",
+    "+                strokeWidth 5",
+    "+            }",
+    "+            relationship \"Async\" {",
+    "+                style Dashed",
+    "+            }",
+    "+        }",
+    "+    }",
+    "+}"
+   ],
+   "adoption": {
+    "gaps": [],
+    "pending_rereviews": [],
+    "rewrites": {
+     "T-01": {
+      "from": [
+       "E1",
+       "P2"
+      ],
+      "to": [
+       "A1",
+       "C2"
+      ]
+     }
+    }
+   }
+  },
+  "error": null,
+  "text": "workspace \"Demo\" \"Made-up example system for tests. Not a real system.\" {\n\n    !identifiers flat\n\n    properties {\n        \"tm.version\" \"1.0\"\n        \"tm.dataclass.PII\" \"Examples: name. Regulatory: none.\"\n        \"structurizr.inspection.model.softwaresystem.documentation\" \"ignore\"\n        \"structurizr.inspection.model.softwaresystem.decisions\" \"ignore\"\n    }\n\n    configuration {\n        scope softwaresystem\n    }\n\n    model {\n        A1 = person \"A1 User\" \"Uses the demo.\" {\n            properties {\n                \"tm.zone.ENV1\" \"TB1\"\n                \"tm.was\" \"E1\"\n            }\n        }\n\n        S1 = softwareSystem \"S1 Demo\" \"The demo system.\" {\n            C1 = container \"C1 Web app\" \"Serves the pages.\" \"Web app\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"P1\"\n                }\n            }\n            C2 = container \"C2 API\" \"Answers the web app.\" \"Python\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"P2\"\n                }\n            }\n            C3 = container \"C3 Database\" \"Holds the data.\" \"PostgreSQL\" \"Data store\" {\n                properties {\n                    \"tm.owner\" \"Demo team\"\n                    \"tm.was\" \"D1\"\n                    \"tm.data.stored\" \"PII\"\n                }\n            }\n        }\n\n        R1 = A1 -> C1 \"R1 Browses using\" \"HTTPS\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Session cookie\"\n                \"tm.was\" \"F1\"\n            }\n        }\n        R2 = C1 -> C2 \"R2 Calls\" \"HTTPS, JSON\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Service token\"\n                \"tm.was\" \"F2\"\n            }\n        }\n        R3 = C2 -> C3 \"R3 Reads and writes\" \"SQL over TLS\" {\n            properties {\n                \"tm.data.sent\" \"PII\"\n                \"tm.data.returned\" \"PII\"\n                \"tm.auth\" \"Database user\"\n                \"tm.was\" \"F3\"\n            }\n        }\n\n        ENV1 = deploymentEnvironment \"ENV1 Production\" {\n            TB1 = deploymentNode \"TB1 Internet\" \"Untrusted public network.\" \"Public internet\" \"Trust boundary\" {\n                properties {\n                    \"tm.enforced_by\" \"Nothing: an untrusted zone\"\n                    \"tm.was\" \"TB1\"\n                }\n                N1 = deploymentNode \"N1 User device\" \"The user's own device.\" \"Web browser\" {\n                    containerInstance C1\n                }\n            }\n            TB2 = deploymentNode \"TB2 Cloud\" \"The demo's cloud network.\" \"Cloud account\" \"Trust boundary\" {\n                properties {\n                    \"tm.enforced_by\" \"Security groups\"\n                }\n                containerInstance C2\n                containerInstance C3\n            }\n        }\n    }\n\n    views {\n        systemContext S1 \"context\" {\n            title \"System context diagram for S1 Demo\"\n            include *\n            autoLayout lr\n        }\n        container S1 \"containers\" {\n            title \"Container diagram for S1 Demo\"\n            include *\n            autoLayout lr\n        }\n        deployment * ENV1 \"deployment-ENV1\" {\n            title \"Deployment diagram for S1 Demo in ENV1 Production\"\n            include *\n            autoLayout lr\n        }\n        styles {\n            element \"Person\" {\n                shape Person\n            }\n            element \"Data store\" {\n                shape Cylinder\n            }\n            element \"External\" {\n                background #8c8c8c\n                color #ffffff\n            }\n            element \"Trust boundary\" {\n                border Dashed\n                stroke #c0392b\n                strokeWidth 5\n            }\n            element \"Group\" {\n                border Dashed\n                stroke #c0392b\n                strokeWidth 5\n            }\n            relationship \"Async\" {\n                style Dashed\n            }\n        }\n    }\n}\n",
+  "counts": {
+   "E1": {
+    "open": 1,
+    "pending": 0
+   },
+   "P2": {
+    "open": 1,
+    "pending": 0
+   }
+  },
+  "latest_record": null,
+  "structurizr": {
+   "state": "not-checked",
+   "message": null,
+   "base": null,
+   "views": []
+  }
+ }
+}

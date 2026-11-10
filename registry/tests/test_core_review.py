@@ -1,13 +1,14 @@
+import json
 import subprocess
 import unittest
 from unittest import mock
 
-from helpers import (SAMPLE_CATALOG, SAMPLE_DFD, TmpTestCase, ai_fields, human_terminal, make_registry,
-                     session, start)
+from helpers import (SAMPLE_CATALOG, SAMPLE_WORKSPACE, TmpTestCase, ai_fields, approve_model,
+                     human_terminal, make_registry, session, start, write_model)
 from tmreg import core, model
 from tmreg.core import RegistryError, StaleRecord
 
-NOTE = "Confirmed on F2 against the design doc."
+NOTE = "Confirmed on R2 against the design doc."
 
 
 class _Stream:
@@ -125,6 +126,30 @@ class ReviewTest(TmpTestCase):
         r = self.reg.reject(session(), "demo", "T-01", NOTE)
         self.assertEqual((r["review_state"], r["review_note"]), ("rejected", NOTE))
         self.assertEqual(self.reg.history("demo", "T-01")[-1]["op"], "reject")
+
+    def test_reject_restores_a_snapshot_without_model_field(self):
+        self.add_approved()
+        self.edit("A. Okafor")
+        cur = self.reg._risk("demo", "T-01")
+        snap = {k: v for k, v in cur["last_approved"].items() if k != "model_approval_id"}
+        self.reg.conn.execute("UPDATE demo__risks SET last_approved = ?, model_approval_id = 'MODEL-9' "
+                              "WHERE id = 'T-01'", (json.dumps(snap),))
+        self.reg.conn.commit()
+        r = self.reg.reject(session(), "demo", "T-01", NOTE)
+        self.assertEqual(r["review_state"], "approved")
+        self.assertIsNone(r["model_approval_id"])
+
+    def test_report_and_register_handle_a_snapshot_without_model_field(self):
+        self.add_approved()
+        self.edit("A. Okafor")
+        cur = self.reg._risk("demo", "T-01")
+        snap = {k: v for k, v in cur["last_approved"].items() if k != "model_approval_id"}
+        self.reg.conn.execute("UPDATE demo__risks SET last_approved = ? WHERE id = 'T-01'",
+                              (json.dumps(snap),))
+        self.reg.conn.commit()
+        for fmt in ("md", "csv", "html"):
+            self.assertIn("T-01", self.reg.report("demo", fmt))
+        self.reg._write_register("demo", "T-01")
 
     def test_edit_approved_returns_to_review(self):
         self.add_approved()
@@ -282,16 +307,17 @@ class ReviewTest(TmpTestCase):
         with self.assertRaisesRegex(RegistryError, "already retired"):
             self.reg.retire(session(), "demo", "T-01", reason)
 
-    def test_dfd_reapproval_warns_for_cited_ids(self):
-        self.add(elements=["P2", "F3"])
+    def test_model_reapproval_warns_for_cited_ids(self):
+        self.add(elements=["C2", "R3"])
         self.reg.approve(session(), "demo", "T-01", NOTE)
-        (self.reg.root / "systems/demo/dfd.md").write_bytes(
-            SAMPLE_DFD.replace(b"| F3 | P2 | D1 | SQL |\n", b""))
-        prev = self.reg.dfd_preview("demo")
-        self.assertEqual(prev["removed"], ["F3"])
-        self.assertIn("T-01 cites F3", prev["warnings"][0])
-        self.reg.dfd_approve(session(), "demo", "Removed the direct SQL flow per ADR-11.")
-        with self.assertRaisesRegex(RegistryError, "F3"):
+        text = SAMPLE_WORKSPACE.decode()
+        r3 = text[text.index("        R3 = C2 -> C3"):text.index("        ENV1 =")]
+        write_model(self.reg, "demo", text.replace(r3, "").encode())
+        prev = self.reg.c4_preview("demo")
+        self.assertEqual(prev["removed"], ["R3"])
+        self.assertIn("T-01 cites R3", prev["warnings"][0])
+        approve_model(self.reg, "demo", "Removed the direct SQL path per ADR-11.")
+        with self.assertRaisesRegex(RegistryError, "R3"):
             self.reg.edit_risk("demo", "T-01", {"owner": "x"}, run_id=self.run)
 
 
@@ -311,13 +337,14 @@ class ImportLegacyTest(TmpTestCase):
         self.assertEqual((t1["review_state"], t1["drafted_by"], t1["detail_complete"]),
                          ("approved", "human:catalog-import", 0))
         self.assertRegex(t1["review_note"], r"commit [0-9a-f]{40}")
-        self.assertEqual((t1["method"], t1["elements"], t1["status"], t1["dfd_approval_id"]),
-                         ("stride-per-element", ["E1", "F1"], "open", "DFD-1"))  # M3: method names
+        self.assertEqual((t1["method"], t1["elements"], t1["status"], t1["model_approval_id"]),
+                         ("stride-per-element", ["A1", "R1"], "open", "MODEL-1"))  # M3: method names
+        self.assertIsNone(t1["dfd_approval_id"])
         self.assertEqual(reg.get_risk("demo", "PT-01")["method"], "linddun")
         self.assertEqual(reg.history("demo", "T-01")[-1]["op"], "import")
         with human_terminal():  # a catalog mirror takes no AI runs (I4); the owner adds by hand
             self.assertEqual(reg.add_risk("demo", ai_fields(), run_id=None)["id"], "T-03")
-            self.assertEqual(reg.add_risk("demo", ai_fields(category="Linking", elements=["D1"]),
+            self.assertEqual(reg.add_risk("demo", ai_fields(category="Linking", elements=["C3"]),
                                           run_id=None)["id"], "PT-02")
         with self.assertRaisesRegex(RegistryError, "once"):
             reg.import_legacy(session(), "demo")
@@ -413,14 +440,14 @@ class ImportLegacyTest(TmpTestCase):
             reg.import_legacy(session(), "demo")
         self.assertEqual([r["id"] for r in reg.list_risks("demo")], ["T-01"])
 
-    def test_import_needs_config_and_dfd(self):
+    def test_import_needs_config(self):
         reg = make_registry(self.tmp)
         with self.assertRaisesRegex(RegistryError, "no legacy_catalog in system.toml"):
             reg.import_legacy(session(), "demo")
 
-    def test_import_needs_approved_dfd(self):
+    def test_import_needs_approved_model(self):
         reg = make_registry(self.tmp, legacy=True, approve=False)
-        with self.assertRaisesRegex(RegistryError, "DFD"):
+        with self.assertRaisesRegex(RegistryError, "no approved C4 model for demo"):
             reg.import_legacy(session(), "demo")
 
     def test_import_refuses_unknown_elements_and_writes_nothing(self):

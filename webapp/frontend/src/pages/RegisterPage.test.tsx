@@ -4,7 +4,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeQueryClient } from '../api/queries'
-import type { Risk } from '../api/types'
+import type { C4Response, Risk } from '../api/types'
+import { c4, item } from '../test-c4'
 import { RegisterPage } from './RegisterPage'
 
 const meta = { stride: { S: 'Spoofing' }, linddun: [], statuses: ['open', 'retired'], origins: ['ai', 'human'] }
@@ -26,6 +27,7 @@ function mk(id: string, over: Partial<Risk> = {}): Risk {
 }
 
 let risks: Risk[]
+let model: C4Response | null = null
 
 function Where() {
   const loc = useLocation()
@@ -38,7 +40,9 @@ function renderPage(metaFails = false, metaDetail = 'meta is down') {
     vi.fn(async (url: string) =>
       url === '/api/meta' && metaFails
         ? new Response(JSON.stringify({ detail: metaDetail }), { status: 422, headers: { 'Content-Type': 'application/json' } })
-        : new Response(JSON.stringify(url === '/api/meta' ? meta : url.endsWith('/risks') ? risks : {}), {
+        : url.endsWith('/c4') && !model
+          ? new Response(JSON.stringify({ detail: 'no model' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+          : new Response(JSON.stringify(url === '/api/meta' ? meta : url.endsWith('/risks') ? risks : url.endsWith('/c4') ? model : {}), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
@@ -59,6 +63,7 @@ function renderPage(metaFails = false, metaDetail = 'meta is down') {
 }
 
 beforeEach(() => {
+  model = null
   risks = [
     mk('A-1'),
     mk('A-2', { title: 'Needle in a haystack', elements: ['E2'], status: 'planned' }),
@@ -126,6 +131,63 @@ describe('RegisterPage', () => {
     fireEvent.change(screen.getByLabelText('Element'), { target: { value: '' } })
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'open' } })
     expect(screen.queryByText('Needle in a haystack')).not.toBeInTheDocument()
+  })
+
+  describe('Include what is inside', () => {
+    const tree = () =>
+      c4({
+        latest_record: {
+          items: {
+            S1: item({ kind: 'softwareSystem', name: 'Shop', where: ['S1'] }),
+            C2: item({ name: 'Orders API', parent: 'S1', where: ['S1', 'C2'] }),
+            K1: item({ kind: 'component', name: 'Cart', parent: 'C2', where: ['S1', 'C2', 'K1'] }),
+            C3: item({ name: 'Other', parent: 'S1', where: ['S1', 'C3'] }),
+          },
+          rels: {},
+          views: {},
+        },
+      })
+
+    beforeEach(() => {
+      model = tree()
+      risks = [
+        mk('A-1', { elements: ['C2'] }),
+        mk('A-2', { title: 'Inside', elements: ['K1'] }),
+        mk('A-3', { title: 'Sibling', elements: ['C3'] }),
+      ]
+    })
+
+    it('the element filter alone matches the chosen ID only', async () => {
+      renderPage()
+      await screen.findByLabelText("Include what's inside")
+      fireEvent.change(screen.getByLabelText('Element'), { target: { value: 'C2' } })
+      expect(screen.getByText('Title of A-1')).toBeInTheDocument()
+      expect(screen.queryByText('Inside')).not.toBeInTheDocument()
+    })
+
+    it('the checkbox adds the items inside the chosen one', async () => {
+      renderPage()
+      fireEvent.change(await screen.findByLabelText('Element'), { target: { value: 'C2' } })
+      fireEvent.click(await screen.findByLabelText("Include what's inside"))
+      expect(screen.getByText('Title of A-1')).toBeInTheDocument()
+      expect(screen.getByText('Inside')).toBeInTheDocument()
+      expect(screen.queryByText('Sibling')).not.toBeInTheDocument()
+    })
+
+    it('without an approved model the checkbox is hidden and the filter still works', async () => {
+      model = null
+      renderPage()
+      fireEvent.change(await screen.findByLabelText('Element'), { target: { value: 'C2' } })
+      expect(screen.getByText('Title of A-1')).toBeInTheDocument()
+      expect(screen.queryByLabelText("Include what's inside")).not.toBeInTheDocument()
+    })
+
+    it('a model with no approval hides the checkbox too', async () => {
+      model = c4({ latest_record: null })
+      renderPage()
+      await screen.findByLabelText('Element')
+      expect(screen.queryByLabelText("Include what's inside")).not.toBeInTheDocument()
+    })
   })
 
   it('shows the AI-changed banner, singular and plural', async () => {

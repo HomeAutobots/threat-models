@@ -49,9 +49,9 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(ledger.verify_chain(self.conn, "alpha"), [])
 
     def test_json_fields_round_trip(self):
-        ledger.write_row(self.conn, "alpha", "risks", "T-01", {"elements": ["P2", "F2"]},
+        ledger.write_row(self.conn, "alpha", "risks", "T-01", {"elements": ["C2", "R2"]},
                          op="add", actor="ai:r1")
-        self.assertEqual(ledger.read_rows(self.conn, "alpha", "risks")["T-01"]["elements"], ["P2", "F2"])
+        self.assertEqual(ledger.read_rows(self.conn, "alpha", "risks")["T-01"]["elements"], ["C2", "R2"])
 
     def test_dfd_approval_ids_dict_round_trip(self):
         ids = {"P": ["P1"], "F": ["F1"]}

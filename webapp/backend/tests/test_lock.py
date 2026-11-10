@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 import tmreg.core
 from tmreg import config
-from conftest import SPA_CATCH_ALL, all_routes, api_routes
+from conftest import DIAGRAMS_ROUTE, SPA_CATCH_ALL, all_routes, api_routes
 from tmweb.__main__ import main
 from tmweb.app import create_app
 
@@ -153,12 +153,20 @@ def test_spa_fallback(project, tmp_path):
     # Registered last, so no real route (including every /api one) is shadowed by it.
     assert all_routes(app)[-1].path == SPA_CATCH_ALL
     assert [r.path for r in all_routes(app)].count(SPA_CATCH_ALL) == 1
+    paths = [r.path for r in all_routes(app)]
+    assert paths.count(DIAGRAMS_ROUTE) == 1
+    assert paths.index(DIAGRAMS_ROUTE) < paths.index(SPA_CATCH_ALL)
     with TestClient(app, base_url="http://127.0.0.1:8765") as c:
         assert c.get("/main/demo/register").text == "<html>SPA</html>"
         r = c.get("/signin", params={"token": "T0KEN"}, follow_redirects=False)
         csrf = r.headers["location"].split("#k=", 1)[1]
         assert c.get("/api/nope", headers={"X-CSRF-Token": csrf}).status_code == 404
         assert c.get("/api/session", headers={"X-CSRF-Token": csrf}).status_code == 200
+        # Nothing under /diagrams falls through to the page, even a path the route doesn't match.
+        for path in ("/diagrams", "/diagrams/main/demo/" + "0" * 64, "/diagrams/x"):
+            r = c.get(path)
+            assert r.status_code == 404, path
+            assert "SPA" not in r.text, path
 
 
 def test_main_refuses_without_terminal(tmp_path, capsys):

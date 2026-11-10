@@ -1,5 +1,6 @@
 """Risk data never enters git: databases, generated registers, run records, threat model
-documents, inputs, and every DFD except the reference system's.
+documents, inputs, every DFD, every C4 model except the reference system's, its Structurizr
+JSON, and the exported diagrams.
 
 Three layers keep it out: .gitignore, the pre-commit and pre-push hooks in .githooks/ (installed
 by `make hooks`, which `make test` runs), and the tracked-files check below.
@@ -24,12 +25,16 @@ FORBIDDEN = [
     "systems/ordering-platform/register.md", "systems/ordering-platform/register.trial.md",
     "systems/acme/runs/20261108-01/candidates/01.json", "systems/acme/runs/r/worksheet.md",
     "systems/ordering-platform/threat-model.md", "systems/acme/threat-model.md",
-    "systems/acme/inputs/design.md", "systems/acme/dfd.md",
+    "systems/acme/inputs/design.md", "systems/acme/dfd.md", "systems/ordering-platform/dfd.md",
+    "systems/acme/workspace.dsl", "systems/acme/workspace.json",
+    "systems/ordering-platform/workspace.json", "diagrams/a", "diagrams/main/acme/abc/index.html",
+    "diagrams",  # a link named diagrams is a file to git, so the bare path counts too
 ]
 ALLOWED = [
-    "systems/ordering-platform/dfd.md", "systems/ordering-platform/system.toml",
+    "systems/ordering-platform/workspace.dsl", "systems/ordering-platform/system.toml",
     "systems/acme/system.toml", "registry/tmreg/core.py", "registry/tmreg/schema.sql",
-    "README.md", "project.example.toml", ".githooks/pre-commit",
+    "README.md", "project.example.toml", ".githooks/pre-commit", "sub/diagrams/x",
+    "docs/diagrams/flow.svg",
 ]
 
 
@@ -52,6 +57,18 @@ class PolicyTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIsNone(check.forbidden(path))
 
+    def test_model_paths(self):
+        """Only the reference system's C4 model is tracked. Every other workspace.dsl, every
+        workspace.json, the exported diagrams, and every dfd.md (the reference one included,
+        now that its workspace.dsl replaces it) stay local."""
+        self.assertIsNone(check.forbidden("systems/ordering-platform/workspace.dsl"))
+        for path in ("systems/x/workspace.dsl", "systems/x/workspace.json",
+                     "systems/ordering-platform/workspace.json", "diagrams/a",
+                     "diagrams/main/x/0123/index.html", "systems/ordering-platform/dfd.md",
+                     "systems/x/dfd.md"):
+            with self.subTest(path=path):
+                self.assertIsNotNone(check.forbidden(path))
+
     @unittest.skipUnless(_is_git_checkout(), "not a git checkout")
     def test_nothing_risky_is_tracked(self):
         tracked = git("ls-files", cwd=ROOT).stdout.split("\n")
@@ -63,7 +80,9 @@ class PolicyTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(git("check-ignore", "--no-index", "-q", path, cwd=ROOT,
                                      check_=False).returncode, 0, f"{path} is not git-ignored")
-        for path in ("systems/ordering-platform/dfd.md", "systems/acme/system.toml"):
+        # Only the root diagrams/ holds exports; a folder of that name elsewhere is source.
+        for path in ("systems/ordering-platform/workspace.dsl", "systems/acme/system.toml",
+                     "sub/diagrams/x", "docs/diagrams/flow.svg"):
             with self.subTest(path=path):
                 self.assertEqual(git("check-ignore", "--no-index", "-q", path, cwd=ROOT,
                                      check_=False).returncode, 1, f"{path} is git-ignored")
@@ -102,8 +121,33 @@ class HookTest(unittest.TestCase):
         self.assertIn("systems/acme/runs/r1/candidates/01.json", result.stderr)
         self.assertEqual(git("rev-list", "--count", "HEAD", cwd=self.repo).stdout.strip(), "1")
 
+    def test_pre_commit_refuses_forced_models_and_diagrams(self):
+        paths = ["systems/acme/workspace.dsl", "systems/acme/workspace.json",
+                 "diagrams/main/acme/0123/index.html", "systems/ordering-platform/dfd.md"]
+        for path in paths:
+            self.write(path)
+        git("add", "-f", *paths, cwd=self.repo)
+        result = git("commit", "-m", "oops", cwd=self.repo, check_=False)
+        self.assertNotEqual(result.returncode, 0)
+        for path in paths:
+            self.assertIn(path, result.stderr)
+        self.assertEqual(git("rev-list", "--count", "HEAD", cwd=self.repo).stdout.strip(), "1")
+
+    def test_pre_commit_refuses_a_diagrams_link(self):
+        # A link named diagrams would commit only its target path, but it is still refused.
+        outside = Path(self._tmp.name) / "exports"
+        outside.mkdir()
+        (self.repo / "diagrams").symlink_to(outside, target_is_directory=True)
+        self.assertEqual(git("check-ignore", "-q", "diagrams", cwd=self.repo,
+                             check_=False).returncode, 0, "a diagrams link is not git-ignored")
+        git("add", "-f", "diagrams", cwd=self.repo)
+        result = git("commit", "-m", "oops", cwd=self.repo, check_=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("diagrams:", result.stderr)
+        self.assertEqual(git("rev-list", "--count", "HEAD", cwd=self.repo).stdout.strip(), "1")
+
     def test_pre_commit_allows_tool_and_reference_files(self):
-        self.write("systems/ordering-platform/dfd.md")
+        self.write("systems/ordering-platform/workspace.dsl")
         self.write("systems/acme/system.toml")
         git("add", ".", cwd=self.repo)
         self.assertEqual(git("commit", "-q", "-m", "ok", cwd=self.repo, check_=False).returncode, 0)

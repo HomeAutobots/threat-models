@@ -1,7 +1,8 @@
 import { MantineProvider } from '@mantine/core'
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import type { Change, DfdInfo, Meta, Risk, RiskDetail } from '../../api/types'
+import type { Change, Meta, Risk, RiskDetail } from '../../api/types'
+import { cited, item, modelInfo, RECORD } from '../../test-c4'
 import { RiskRecord } from './RiskRecord'
 
 const meta = {
@@ -16,7 +17,7 @@ const meta = {
 const risk: Risk = {
   id: 'T-37',
   title: 'Retrieval cache serves one order summary to another customer',
-  elements: ['P7', 'F19'],
+  elements: ['C2', 'R1'],
   category: 'I',
   method: 'STRIDE per element',
   origin: 'threat-model',
@@ -60,16 +61,15 @@ const risk: Risk = {
   updated_at: '2026-11-07T10:12:00',
 }
 
-const dfd: DfdInfo = { state: 'current', latest_id: 'DFD-1', written_against: 'DFD-1', error: null }
 
 function detail(over: Partial<RiskDetail> = {}, riskOver: Partial<Risk> = {}): RiskDetail {
   return {
     risk: { ...risk, ...riskOver },
     elements: {
-      P7: { name: 'Support assistant', type: 'Process', description: 'LLM chat' },
-      F19: { name: 'Order lookups', type: 'Data flow', description: '', from: 'P1', to: 'P2' },
+      C2: cited('same', RECORD.items.C2),
+      R1: cited('same', RECORD.rels.R1),
     },
-    dfd,
+    model: modelInfo(),
     editors_since_approval: [],
     duplicate: null,
     ...over,
@@ -117,59 +117,50 @@ describe('RiskRecord', () => {
     expect(text).not.toContain('‮')
   })
 
-  it('element source label: current', () => {
+  it('shows the cited items under the caption', () => {
     renderRecord(detail())
     const w = within(card('where'))
     // The caption shows once, in the heading.
-    expect(w.getAllByText(/From DFD-1 \(current\)/)).toHaveLength(1)
-    expect(w.getByText('P1 \u2192 P2')).toBeInTheDocument()
-    expect(w.getByText('Order lookups')).toBeInTheDocument()
-    expect(w.getByText('Data flow')).toBeInTheDocument()
-    expect(w.getByText('Process')).toBeInTheDocument()
+    expect(w.getAllByText(/From MODEL-1 \(current\)/)).toHaveLength(1)
+    expect(w.getByText('C1 \u2192 C2')).toBeInTheDocument()
+    expect(w.getByText('Orders API')).toBeInTheDocument()
+    expect(w.getByText('S1 \u203a C2')).toBeInTheDocument()
   })
 
-  it('element source label: changed, with an element missing', () => {
+  it('a changed item shows As written and Now, and the caption says the model moved on', () => {
     renderRecord(
       detail({
-        dfd: { state: 'changed', latest_id: 'DFD-2', written_against: 'DFD-1', error: null },
-        elements: { P7: null, F19: null },
-      }),
-    )
-    const where = card('where')
-    expect(
-      within(where).getAllByText(/From the current dfd\.md, which has changed since this risk was written against DFD-1/),
-    ).toHaveLength(1)
-    expect(within(where).getAllByText('Not in the current DFD')).toHaveLength(2)
-  })
-
-  it('element source label: error', () => {
-    renderRecord(
-      detail({ dfd: { state: 'none', latest_id: null, written_against: null, error: 'bad file' }, elements: {} }),
-    )
-    const where = within(card('where'))
-    expect(where.getAllByText(/DFD details unavailable: bad file/)).toHaveLength(1)
-    expect(where.queryByText('Not in the current DFD')).not.toBeInTheDocument()
-  })
-
-  it('on a DFD error each element row says DFD details unavailable', () => {
-    renderRecord(
-      detail({ dfd: { state: 'none', latest_id: null, written_against: null, error: 'bad file' }, elements: { P7: null, F19: null } }),
-    )
-    expect(within(card('where')).getAllByText('DFD details unavailable')).toHaveLength(2)
-    expect(within(card('where')).queryByText('Not in the current DFD')).not.toBeInTheDocument()
-  })
-
-  it('a flow with one end missing shows ? for it, with no leading space', () => {
-    renderRecord(
-      detail({
+        model: modelInfo({ latest_id: 'MODEL-2', moved_on: true, changed: ['C2'] }),
         elements: {
-          P7: { name: 'A', type: 'Process', description: '' },
-          F19: { name: 'Order lookups', type: 'Data flow', description: '', from: null, to: 'P2' },
+          C2: cited('changed', RECORD.items.C2, item({ ...RECORD.items.C2, name: 'Orders service' })),
+          R1: cited('same', RECORD.rels.R1),
         },
       }),
     )
-    const cell = within(card('where')).getByText('Order lookups').parentElement as HTMLElement
-    expect(cell.firstElementChild?.textContent).toBe('? \u2192 P2')
+    const w = within(card('where'))
+    expect(w.getAllByText(/Written against MODEL-1; the latest is MODEL-2/)).toHaveLength(1)
+    expect(w.getByText('Orders API')).toBeInTheDocument()
+    expect(w.getByText('Orders service')).toBeInTheDocument()
+    expect(w.getAllByText('As written')).toHaveLength(1)
+  })
+
+  it('a DFD-era risk says its IDs are as written', () => {
+    renderRecord(
+      detail({
+        model: modelInfo({ basis: 'dfd', written_against: null }),
+        elements: { C2: cited('dfd', null), R1: cited('dfd', null) },
+      }),
+    )
+    expect(within(card('where')).getAllByText(/Written before the C4 model; IDs as written\./)).toHaveLength(1)
+  })
+
+  it('the cited items are hidden while the record reloads', () => {
+    render(
+      <MantineProvider>
+        <RiskRecord detail={detail()} meta={meta} history={history} reloading />
+      </MantineProvider>,
+    )
+    expect(within(card('where')).queryByText('Orders API')).toBeNull()
   })
 
   it.each([
@@ -195,11 +186,11 @@ describe('RiskRecord', () => {
     const { unmount } = renderRecord(detail())
     expect(document.getElementById('dup')).toBeNull()
     unmount()
-    const dup = { ...risk, id: 'T-33', title: 'Other title', elements: ['P7', 'F19', 'F18'] }
+    const dup = { ...risk, id: 'T-33', title: 'Other title', elements: ['C2', 'R1', 'K1'] }
     renderRecord(detail({ duplicate: dup }, { possible_duplicate_of: 'T-33' }))
     const d = card('dup')
     expect(within(d).getByText('Other title')).toBeInTheDocument()
-    expect(within(d).getByText('P7; F19; F18')).toBeInTheDocument()
+    expect(within(d).getByText('C2; R1; K1')).toBeInTheDocument()
   })
 
   it('header badges and history table', () => {

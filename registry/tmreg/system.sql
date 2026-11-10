@@ -40,6 +40,7 @@ CREATE TABLE {p}__risks (
     possible_duplicate_of TEXT,
     merged_into TEXT,
     dfd_approval_id TEXT,
+    model_approval_id TEXT,
     detail_complete INTEGER,
     created_at TEXT,
     updated_at TEXT
@@ -68,11 +69,24 @@ CREATE TABLE {p}__dfd_approvals (
     note        TEXT
 );
 
+CREATE TABLE {p}__model_approvals (
+    id          TEXT PRIMARY KEY,
+    version     TEXT,
+    sha256      TEXT,
+    ids         TEXT,
+    model       TEXT,
+    source      TEXT,
+    approved_by TEXT,
+    approved_at TEXT,
+    note        TEXT
+);
+
 CREATE TABLE {p}__runs (
     run_id           TEXT PRIMARY KEY,
     started_at       TEXT,
     framework_commit TEXT,
     dfd_approval_id  TEXT,
+    model_approval_id TEXT,
     methods          TEXT,
     actor            TEXT
 );
@@ -96,3 +110,9 @@ BEGIN SELECT RAISE(ABORT, 'DFD approvals are append-only'); END;
 
 CREATE TRIGGER {p}__dfd_approvals_no_delete BEFORE DELETE ON {p}__dfd_approvals
 BEGIN SELECT RAISE(ABORT, 'DFD approvals are append-only'); END;
+
+CREATE TRIGGER {p}__model_approvals_no_update BEFORE UPDATE ON {p}__model_approvals
+BEGIN SELECT RAISE(ABORT, 'model approvals are append-only'); END;
+
+CREATE TRIGGER {p}__model_approvals_no_delete BEFORE DELETE ON {p}__model_approvals
+BEGIN SELECT RAISE(ABORT, 'model approvals are append-only'); END;

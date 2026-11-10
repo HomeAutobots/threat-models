@@ -1,7 +1,8 @@
 # Threat models
 
 A local risk registry for threat models, built on the standard library only. No AI is needed to use
-it. Every system has a DFD, a register of risks, and a threat model document under `systems/<slug>/`.
+it. Every system has a C4 model (`workspace.dsl`, in Structurizr's DSL), a register of risks, and a
+threat model document under `systems/<slug>/`.
 Methods come from the threat-model-framework guide, cloned beside this repo as
 `../threat-model-framework`.
 
@@ -9,19 +10,20 @@ The guide ([HomeAutobots/threat-model-framework](https://github.com/HomeAutobots
 is private for now. `./tmreg` refuses to start until `framework_path` in `project.toml` points at a
 checkout of it, because `import-legacy`, the `threat-model.md` skeleton, and `/tm-model` read the
 guide's pages. Without the guide you can still read the code and run `make test`; the one test
-that reads the guide's catalog is skipped. `systems/ordering-platform/dfd.md` is built from the
+that reads the guide's catalog is skipped. `systems/ordering-platform/workspace.dsl` is built from the
 guide's reference system.
 
 ## Risk data stays out of git
 
-The repository holds the tool and the reference system's DFD, never the risks. These are
+The repository holds the tool and the reference system's C4 model, never the risks. These are
 created locally by tmreg and never committed:
 
 - the databases (`registry/registry.db`, `registry/trial.db`, and any `*.db` or `*.sqlite`);
 - generated registers (`systems/*/register.md`, `register.trial.md`) and anything you export;
 - run records (`systems/*/runs/`), threat model documents (`systems/*/threat-model.md`), and
   inputs (`systems/*/inputs/`);
-- every system's `dfd.md` except `systems/ordering-platform/dfd.md`.
+- every system's `workspace.dsl` except `systems/ordering-platform/workspace.dsl`, any `dfd.md`
+  left from before the C4 model, `workspace.json`, and the exported `diagrams/` folder.
 
 Three layers keep them out:
 - `.gitignore` covers them.
@@ -43,6 +45,7 @@ Requires Python 3.11 or newer (`python3 --version`), and the guide checked out b
 ```bash
 cp project.example.toml project.toml   # then set reviewer_name and reviewer_email
 make test                              # installs the git hooks, runs the unit tests
+# make test-c4                         # optional; needs Docker (see Web app)
 ./tmreg init-system ordering-platform --name "Ordering platform"   # creates registry/registry.db
 ./tmreg verify ordering-platform
 ```
@@ -59,7 +62,7 @@ says otherwise.
 2. Create the local register: `./tmreg init-system ordering-platform --name "Ordering platform"`.
    This writes `registry/registry.db`, `register.md`, and the `threat-model.md` skeleton, all
    git-ignored. Skip this step if `./tmreg verify ordering-platform` already prints `ok`.
-3. Read `systems/ordering-platform/dfd.md`, then run `./tmreg dfd approve ordering-platform`.
+3. Read `systems/ordering-platform/workspace.dsl`, then run `./tmreg c4 approve ordering-platform`.
 4. Run `./tmreg import-legacy ordering-platform`. Do this only after the guide's branch is merged
    to `main` with a merge commit, so the guide commit cited in the import note stays reachable.
 5. Run `./tmreg verify ordering-platform`.
@@ -67,7 +70,7 @@ says otherwise.
 
    ```bash
    ./tmreg init-system ordering-platform --name "Ordering platform" --trial
-   ./tmreg dfd approve ordering-platform --trial
+   ./tmreg c4 approve ordering-platform --trial
    ./tmreg import-legacy ordering-platform --trial   # skip this step for an evaluation run
    ```
 
@@ -89,9 +92,9 @@ instead of the real database.
 | `history` | `./tmreg history ordering-platform T-01` |
 | `runs` | `./tmreg runs ordering-platform` |
 | `run start` | `./tmreg run start ordering-platform` |
-| `dfd status` | `./tmreg dfd status ordering-platform` |
-| `dfd check` | `./tmreg dfd check ordering-platform` (parses `dfd.md` and previews an approval; read-only) |
-| `dfd approve` (human-only) | `./tmreg dfd approve ordering-platform` |
+| `c4 status` | `./tmreg c4 status ordering-platform` |
+| `c4 check` | `./tmreg c4 check ordering-platform` (parses `workspace.dsl` and previews an approval; read-only) |
+| `c4 approve` (human-only) | `./tmreg c4 approve ordering-platform` |
 | `add` | `./tmreg add ordering-platform --template` |
 | `edit` | `./tmreg edit ordering-platform T-01 --set status=accepted` (your own edit keeps the approval; an AI edit with `--run` sends an approved risk back to review) |
 | `review` (human-only) | `./tmreg review ordering-platform` |
@@ -109,7 +112,10 @@ Human-only commands need an interactive terminal and refuse to run anywhere else
 
 Run these in your own terminal.
 
-1. Review `systems/<slug>/dfd.md`, then `./tmreg dfd approve <slug>`. Risks cite elements from the approved DFD.
+1. Review `systems/<slug>/workspace.dsl`, then `./tmreg c4 approve <slug>`. Risks cite items
+   (elements, paths, and trust boundaries) from the approved model. A system with an approved DFD
+   from before the C4 model is adopted by its first `c4 approve`, which maps the old IDs through
+   `tm.was`.
 2. Add risks yourself or let a modeling run draft them. Every new risk is `pending`. To add one
    yourself, run `./tmreg add <slug> --template > c.json`, edit the file, then run
    `./tmreg add <slug> --json c.json`.
@@ -147,20 +153,27 @@ reference mockups: `webapp/mockups/`. It needs `uv` and Node.
 - **Sign out** by closing the Terminal window. That stops the server and ends the session.
 - **Main or Trial.** When `registry/trial.db` exists, the header switches between the two
   registers. A banner shows while Trial is selected.
-- **Tests:** `make test-web` runs the back end and front end tests.
+- **Architecture.** The page shows the model's elements, paths, and trust boundaries with their
+  details and open risks, what changed since the last approval, and routes across several paths.
+  It approves the model too.
+- **Open diagrams.** The Architecture page's button runs Structurizr's static export in Docker
+  (once per file content) and shows its viewer at `/diagrams/...`, behind the same lock as the
+  API. It needs Docker running. Nothing else in the app uses Docker.
+- **Tests:** `make test-web` runs the back end and front end tests. `make test-c4` runs the C4
+  dialect through the pinned Structurizr image in Docker; it is not part of `make test`.
 
 ## What the guard blocks
 
-Claude Code may draft risks and DFD changes in this project, but it may not approve anything or
-change the registry. Four layers enforce this. The first three block, and the fourth detects what
-gets past them. The web app has its own lock, described after the four layers.
+Claude Code may draft risks and changes to a system's C4 model in this project, but it may not
+approve anything or change the registry. Four layers enforce this. The first three block, and the
+fourth detects what gets past them. The web app has its own lock, described after the four layers.
 
 The hook and the permission rules load only when Claude Code starts in this folder
 (`~/Developer/threat-models`). A Claude session started anywhere else, such as the sibling guide
 repo, is not guarded by them, even when it works on files here.
 
 1. **Human-only commands need a terminal.** `review`, `approve`, `reject`, `merge`, `retire`,
-   `import-legacy`, and `dfd approve` refuse to run without an interactive terminal. Claude Code's
+   `import-legacy`, and `c4 approve` refuse to run without an interactive terminal. Claude Code's
    shell has none, and no flag or environment variable bypasses the check. They also refuse when
    `CLAUDECODE` is set and non-empty, even with a terminal. Claude Code exports that variable to
    every shell it starts, so a terminal wrapper run from a Claude session is refused too, in any
@@ -168,14 +181,26 @@ repo, is not guarded by them, even when it works on files here.
    the same way. This check only adds a refusal. `env -u CLAUDECODE` evades it, which falls under
    the "actively looking for a new way around" limit below, and the terminal check still applies.
 2. **The hook** (`.claude/hooks/guard.py`, a `PreToolUse` hook) is an allow-list. It runs before
-   every Bash, Monitor, Edit, Write, MultiEdit, and NotebookEdit call, and it blocks everything it
-   does not name.
+   every tool call (its matcher is `"*"`), and it blocks everything it does not name.
+   - **Tools.** Claude may use Read, Grep, Glob, Write, Edit, MultiEdit, Bash, Monitor,
+     AskUserQuestion, ToolSearch, and the task checklist (TaskCreate, TaskGet, TaskList,
+     TaskUpdate, or the older TodoWrite). Every other tool is blocked, including Skill, Agent,
+     WebFetch, WebSearch, EnterWorktree, NotebookEdit, and every MCP tool. A skill's frontmatter
+     hooks run shell commands outside the guard, and an MCP connector such as mail or drive could
+     send risk data off the machine. ToolSearch only loads a deferred tool's schema, such as
+     Monitor's or the task tools'; each tool it loads still goes through the hook, so an MCP tool
+     stays blocked. Monitor may pass only `command`, `description`, `timeout_ms`, and
+     `persistent`: its `ws` source would open a WebSocket. The allowed tools other than Bash,
+     Monitor, and the three that write pass unchecked. Some Claude Code versions have no Grep or
+     Glob tool; the read-only commands stand in for them.
    - **Commands.** A call must be one of these:
      - `./tmreg` with `list`, `show`, `history`, `report`, `verify`, `runs`, `add`, `edit`,
-       `dfd status`, `dfd check`, or `run start`. Only that subcommand's own options are allowed,
-       spelled in full. `--db` and `--out` are refused, as are their abbreviations, because they
-       would point tmreg at another database or write a file anywhere. For `add` and `edit`,
-       `--json` must name a `.json` file under `systems/<slug>/runs/<run-id>/`, and `--set` is
+       `c4 status`, `c4 check`, or `run start`. Only that subcommand's own options are allowed,
+       spelled in full, and `c4 check` takes none, not even `--trial`. Any `dfd` subcommand is
+       refused, since `c4` replaced it. `--db` and `--out` are refused, as are their
+       abbreviations, because they would point tmreg at another database or write a file
+       anywhere. For `add` and `edit`, `--json` must name `candidates/<nn>.json` or
+       `candidates/edit-<risk-id>.json` under `systems/<slug>/runs/<run-id>/`, and `--set` is
        refused, so every AI write leaves its file in the run record.
      - `git status`, `git diff`, or `git log`, without `--output`, `--ext-diff`, `--no-index`, or
        an order file (`-O`, `--order-file`), which can open files outside the repo.
@@ -202,16 +227,22 @@ repo, is not guarded by them, even when it works on files here.
      Everything else is blocked. That includes the human-only and other tmreg subcommands, other
      ways of starting tmreg (`tmreg`, `python3 -m tmreg`), interpreters and scripts, terminal
      wrappers that fake a TTY (`script`, `expect`, `unbuffer`), `sqlite3`, `sed`, `awk`, `xargs`,
-     and git commands that roll files back.
-   - **Files.** Edit, Write, and MultiEdit may write only `systems/<slug>/dfd.md` and `.md` or
-     `.json` files under `systems/<slug>/runs/<run-id>/`. Paths are checked after symlinks are
-     resolved. NotebookEdit is always blocked. Other tools, such as Read, Grep, and Glob, pass.
-     Some Claude Code versions have no Grep or Glob tool; the read-only commands stand in for
-     them.
-   - **Searching git-ignored files.** `inputs/`, `threat-model.md`, and every `dfd.md` except the
-     reference system's are git-ignored, and Claude Code's `grep` skips git-ignored files when a
-     search starts at or above the `.gitignore` that names them, as `rg` always does. Pass
-     `--no-ignore-files` to grep and `--no-ignore` to rg to search them.
+     Docker, and git commands that roll files back. Docker would run Structurizr, which can run
+     scripts in a model; tmreg checks a model without it.
+   - **Files.** Edit, Write, and MultiEdit write `file_path` only, and only to
+     `systems/<slug>/workspace.dsl` or to the run files `/tm-model` names, in a folder named like a
+     tmreg run ID (`systems/<slug>/runs/<run-id>/`): `worksheet.md`, `model-check.md`,
+     `summary.md`, `candidates/<nn>.json`, and `candidates/edit-<risk-id>.json`. No other name or
+     folder under `runs/` is allowed, because Claude Code loads a `CLAUDE.md`, or a skill under
+     `.claude/skills/`, that it finds in a subfolder. They never write a `CLAUDE.md`, a `dfd.md`, or
+     a `workspace.json`, in any folder, a file or folder whose name starts with `.`, or anything
+     under `diagrams/`, where the web app keeps the diagram sites it serves. Paths are checked
+     after symlinks are resolved, and a path with a `..` part is refused even when it stays inside
+     the project.
+   - **Searching git-ignored files.** `inputs/`, `threat-model.md`, and every `workspace.dsl`
+     except the reference system's are git-ignored, and Claude Code's `grep` skips git-ignored
+     files when a search starts at or above the `.gitignore` that names them, as `rg` always does.
+     Pass `--no-ignore-files` to grep and `--no-ignore` to rg to search them.
    - **Fails closed.** A malformed call, a missing project root, or an error inside the guard blocks
      the call. If the guard cannot run at all, `"onFailure": "block"` in the settings blocks the
      call instead.
@@ -221,13 +252,16 @@ repo, is not guarded by them, even when it works on files here.
      matches any `add` command, and `Bash(grep:*)` any grep, for example. The hook narrows them to
      exactly those forms.
    - The deny rules cover the human-only subcommands, the other ways of invoking tmreg, terminal
-     wrappers, inline interpreters, `sqlite3`, and git `checkout`, `restore`, `reset`, and `stash`.
-     They also deny edits to `registry/`, `.claude/`, `webapp/`, `systems/*/register.md`, `tmreg`,
-     `project.toml`, and `CLAUDE.md`, and every tool of the browser and desktop automation MCP
-     servers: Claude in Chrome (`mcp__claude-in-chrome`), the Claude app's built-in browser
-     (`mcp__Claude_Browser`), computer use (`mcp__computer-use`), and `mcp__remote-devices`, which
-     hosts the remote browser and computer tools of a linked session. `/tm-model` disallows the
-     same four for the turn that starts it; the deny rules in `.claude/settings.json` hold for the
+     wrappers, inline interpreters, `sqlite3`, `docker`, and git `checkout`, `restore`, `reset`, and
+     `stash`. They deny the Skill, Agent, WebFetch, WebSearch, and EnterWorktree tools. They also
+     deny edits to `registry/`, `.claude/`, `.githooks/`, `webapp/`, `diagrams/`,
+     `systems/*/register.md`, `systems/*/dfd.md`, `systems/*/workspace.json` and any
+     `workspace.json` in a run folder, `tmreg`, `project.toml`, `.gitignore`, and `CLAUDE.md`, and
+     every tool of the browser and desktop automation MCP servers: Claude in Chrome
+     (`mcp__claude-in-chrome`), the Claude app's built-in browser (`mcp__Claude_Browser`),
+     computer use (`mcp__computer-use`), and `mcp__remote-devices`, which hosts the remote browser
+     and computer tools of a linked session. `/tm-model` disallows the same four servers, and
+     Skill, for the turn that starts it; the deny rules in `.claude/settings.json` hold for the
      whole session. A deny rule beats any allow rule.
    - Deny rules apply right away. The allow rules, and the read access to the guide in
      `additionalDirectories`, apply only after you accept the workspace-trust dialog for this
@@ -275,11 +309,13 @@ Also:
   shell profile that points a read-only command at another program is not, and a zsh global
   alias (`alias -g`) expands anywhere in a command, so it could turn an allowed word into shell
   syntax. Keep global aliases out of the profile Claude Code's shell loads.
-- The hook checks only the tools named above. A tool it does not name is not checked. That
-  includes MCP tools that write local files or send data out, for example mail or drive
-  connectors, so keep such servers off for this project. Of the MCP servers, the deny rules cover
-  only the four browser and desktop automation servers in layer 3. `/tm-model` also disallows the
-  built-in web tools (WebFetch and WebSearch) for the turn that starts it.
+- The hook sees tool calls only. A slash command you type, and a file you mention with `@`, reach
+  Claude without one. Of the MCP servers, the deny rules name only the four browser and desktop
+  automation servers in layer 3; the hook blocks every MCP tool, so a connector that sends data
+  out is stopped by the hook alone. Keep such servers off for this project anyway.
+- If you set `CLAUDE_CODE_TASK_LIST_ID` or use agent teams, the tasks the guarded agent creates
+  are visible to other, unguarded sessions on that list. Don't share a task list with the
+  modeling session.
 - A browser-automation tool working in your signed-in browser, such as Claude in Chrome, can act
   as you in the web app. A guarded session is denied those four servers. A Claude session started
   elsewhere is not, nor is Claude in Chrome when you use it from Chrome itself. Never grant the

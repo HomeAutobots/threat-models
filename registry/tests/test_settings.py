@@ -11,10 +11,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SETTINGS = ROOT / ".claude" / "settings.json"
 
-MATCHER = "Bash|Monitor|Edit|Write|MultiEdit|NotebookEdit"
+# The hook runs before every tool call ("*" matches every tool name; Claude Code's hooks reference)
+# and is itself an allow-list of tools.
+MATCHER = "*"
 GUARD_ARG_SUFFIX = ".claude/hooks/guard.py"
-HUMAN_ONLY = ("review", "approve", "reject", "merge", "retire", "import-legacy", "dfd approve")
-ALLOWED = ("list", "show", "history", "report", "verify", "runs", "dfd status", "dfd check",
+HUMAN_ONLY = ("review", "approve", "reject", "merge", "retire", "import-legacy", "c4 approve")
+ALLOWED = ("list", "show", "history", "report", "verify", "runs", "c4 status", "c4 check",
            "run start", "add", "edit")
 READ_ONLY = ("grep", "rg", "ls", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "file", "find")
 INVOCATIONS = ("./tmreg", "tmreg", "python3 -m tmreg", "python3 ./tmreg", "python3 tmreg")
@@ -28,10 +30,15 @@ REQUIRED_DENY = [f"Bash(./tmreg {sub}:*)" for sub in HUMAN_ONLY] + [
     "Bash(script:*)", "Bash(expect:*)", "Bash(unbuffer:*)",
     "Bash(python3 -c:*)", "Bash(python3 -:*)", "Bash(python -c:*)", "Bash(sqlite3:*)",
     "Bash(git checkout:*)", "Bash(git restore:*)", "Bash(git reset:*)", "Bash(git stash:*)",
+    "Bash(docker:*)",
+    "Skill", "Agent", "WebFetch", "WebSearch", "EnterWorktree",
     "Edit(/registry/**)", "Edit(/.claude/**)", "Edit(/systems/*/register.md)", "Edit(/tmreg)",
     "Edit(/project.toml)", "Edit(/CLAUDE.md)", "Edit(/.githooks/**)", "Edit(/.gitignore)",
-    "Edit(/webapp/**)",
+    "Edit(/webapp/**)", "Edit(/diagrams/**)", "Edit(/systems/*/workspace.json)",
+    "Edit(/systems/*/runs/**/workspace.json)", "Edit(/systems/*/dfd.md)",
 ] + list(BROWSER_MCP)
+# The only paths the agent may edit: its model and its run records (spec section 9).
+EDIT_ALLOW = ["Edit(/systems/*/workspace.dsl)", "Edit(/systems/*/runs/**)"]
 
 
 def _denied(command: str, deny: list) -> bool:
@@ -68,6 +75,12 @@ def problems(settings: dict) -> list:
             if _denied(f"./tmreg {sub} ordering-platform", deny)]
     out += [f"{cmd} is denied, so Claude cannot search or read with it" for cmd in READ_ONLY
             if _denied(f"{cmd} -n x systems", deny)]
+    allow = perms.get("allow") or []
+    edits = [r for r in allow if r.startswith("Edit(")]
+    if sorted(edits) != sorted(EDIT_ALLOW):
+        out.append(f"the Edit allow rules are {edits}; want exactly {EDIT_ALLOW}")
+    out += [f"allow rule {r} names the DFD, which the C4 model replaced" for r in allow
+            if "dfd" in r.lower()]
     rules = [r for key in ("allow", "deny", "ask") for r in perms.get(key) or []]
     out += [f"Write rule with a path: {r}" for r in rules if r.startswith("Write(")]
     return out
@@ -75,7 +88,7 @@ def problems(settings: dict) -> list:
 
 # A minimal intact settings file, so the checker's own test does not depend on the live file.
 GOOD = {
-    "permissions": {"allow": ["Read"], "deny": list(REQUIRED_DENY)},
+    "permissions": {"allow": ["Read"] + EDIT_ALLOW, "deny": list(REQUIRED_DENY)},
     "hooks": {"PreToolUse": [{"matcher": MATCHER, "hooks": [{
         "type": "command", "command": "python3", "args": ["${CLAUDE_PROJECT_DIR}/" + GUARD_ARG_SUFFIX],
         "onFailure": "block"}]}]},
@@ -113,18 +126,37 @@ class SettingsTest(unittest.TestCase):
             weak["hooks"]["PreToolUse"][0]["hooks"][0][change[0]] = change[1]
             with self.subTest(change=change):
                 self.assertTrue(problems(weak))
-        weak = copy.deepcopy(GOOD)
-        weak["hooks"]["PreToolUse"][0]["matcher"] = "Bash|Edit|Write"
-        self.assertTrue(problems(weak))
+        for matcher in ("Bash|Edit|Write", "Bash|Monitor|Edit|Write|MultiEdit|NotebookEdit", "Bash", ""):
+            weak = copy.deepcopy(GOOD)
+            weak["hooks"]["PreToolUse"][0]["matcher"] = matcher
+            with self.subTest(matcher=matcher):
+                self.assertTrue(problems(weak))
         self.assertTrue(problems({**GOOD, "disableAllHooks": True}))
 
     def test_a_deny_rule_that_blocks_allowed_commands_is_caught(self):
         broad = copy.deepcopy(GOOD)
         broad["permissions"]["deny"].append("Bash(tmreg:*)")
         found = "\n".join(problems(broad))
-        for sub in ("verify", "dfd status", "add"):
+        for sub in ("verify", "c4 status", "c4 check", "add"):
             with self.subTest(sub=sub):
                 self.assertIn(f"./tmreg {sub} is denied", found)
+
+    def test_a_dfd_rule_or_another_edit_path_is_caught(self):
+        for extra in ("Edit(/systems/*/dfd.md)", "Edit(/diagrams/**)", "Edit(/systems/**)",
+                      "Bash(./tmreg dfd status:*)"):
+            loose = copy.deepcopy(GOOD)
+            loose["permissions"]["allow"].append(extra)
+            with self.subTest(extra=extra):
+                self.assertTrue(problems(loose))
+        narrow = copy.deepcopy(GOOD)
+        narrow["permissions"]["allow"].remove("Edit(/systems/*/workspace.dsl)")
+        self.assertTrue(problems(narrow))
+
+    def test_installed_settings_allow_every_allowed_subcommand(self):
+        allow = self.settings["permissions"]["allow"]
+        for sub in ALLOWED:
+            with self.subTest(sub=sub):
+                self.assertIn(f"Bash(./tmreg {sub}:*)", allow)
 
 
 class TmModelCommandTest(unittest.TestCase):
@@ -132,9 +164,19 @@ class TmModelCommandTest(unittest.TestCase):
         front = TM_MODEL.read_text().split("---")[1]
         line = next(l for l in front.splitlines() if l.startswith("disallowed-tools:"))
         tools = {t.strip() for t in line.split(":", 1)[1].split(",")}
-        for tool in ("WebFetch", "WebSearch", "NotebookEdit") + BROWSER_MCP:
+        for tool in ("WebFetch", "WebSearch", "NotebookEdit", "Skill") + BROWSER_MCP:
             with self.subTest(tool=tool):
                 self.assertIn(tool, tools)
+
+    def test_tm_model_allowed_tools_match_the_settings(self):
+        front = TM_MODEL.read_text().split("---")[1]
+        line = next(l for l in front.splitlines() if l.startswith("allowed-tools:"))
+        tools = {t.strip() for t in line.split(":", 1)[1].split(",")}
+        settings = json.loads(SETTINGS.read_text())["permissions"]["allow"]
+        tmreg = {t for t in tools if t.startswith("Bash(./tmreg")}
+        self.assertEqual(tmreg, {f"Bash(./tmreg {sub}:*)" for sub in ALLOWED})
+        self.assertLessEqual(tmreg, set(settings))
+        self.assertFalse([t for t in tools if "dfd" in t.lower() or "docker" in t.lower()])
 
 
 if __name__ == "__main__":

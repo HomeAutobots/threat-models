@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DecisionPanelProps } from '../components/review/DecisionPanel'
 import { makeQueryClient } from '../api/queries'
 import type { Risk, RiskDetail } from '../api/types'
+import { cited, item, modelInfo } from '../test-c4'
 import { ReviewPage } from './ReviewPage'
 
 // Every render of the panel and the record, in commit order, so a test can see a render that a
@@ -67,7 +68,7 @@ function mkDetail(risk: Risk, over: Partial<RiskDetail> = {}): RiskDetail {
   return {
     risk,
     elements: {},
-    dfd: { state: 'current', latest_id: 'DFD-1', written_against: 'DFD-1', error: null },
+    model: modelInfo(),
     editors_since_approval: [],
     duplicate: null,
     ...over,
@@ -206,7 +207,8 @@ describe('ReviewPage', () => {
     expect(posts[0].url).toBe('/api/main/systems/demo/risks/T-1/approve')
     expect(posts[0].body).toEqual({ note: NOTE, seen: details['T-1'].risk })
     expect(await screen.findByRole('button', { name: 'Approve T-2' })).toBeInTheDocument()
-    expect(screen.getByTestId('where').textContent).toContain('id=T-2')
+    // The refetched list shows T-2 a render before the effect pins it into the URL.
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toContain('id=T-2'))
     expect((screen.getByLabelText('Review note') as HTMLTextAreaElement).value).toBe('')
   })
 
@@ -348,17 +350,21 @@ describe('ReviewPage', () => {
     expect(posts[0].body.into).toBe('T-0')
   })
 
-  it('warns when the DFD has moved on, with a link to the DFD page', async () => {
+  it('warns when the model has moved on, naming what changed', async () => {
     details['T-1'] = mkDetail(queue[0], {
-      dfd: { state: 'changed', latest_id: 'DFD-2', written_against: 'DFD-1', error: null },
+      model: modelInfo({ latest_id: 'MODEL-2', moved_on: true, changed: ['C2'] }),
     })
     renderPage()
     expect(
-      await screen.findByText(
-        'DFD has moved on. This draft was written against DFD-1, and dfd.md has changed since. Element IDs may be out of date.',
-      ),
+      await screen.findByText('The model has moved on: written against MODEL-1, latest is MODEL-2. Changed: C2.'),
     ).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open the DFD page' })).toHaveAttribute('href', '/main/demo/dfd')
+    expect(screen.queryByText(/Open the DFD page/)).toBeNull()
+  })
+
+  it('no warning when the model has not moved on', async () => {
+    renderPage()
+    await screen.findByText('Review queue')
+    expect(screen.queryByText(/The model has moved on/)).toBeNull()
   })
 
   it('Edit before deciding goes to the edit page and returns to review', async () => {
@@ -368,20 +374,20 @@ describe('ReviewPage', () => {
   })
 
   it('after a 409 the duplicate comparison and elements follow current, and Merge waits for them', async () => {
-    const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['P7'] })
+    const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['C2'] })
     queue = [r]
     details = {
       'T-1': mkDetail(r, {
-        elements: { P7: { name: 'Seven', type: 'Process' } },
+        elements: { C2: cited('same', item({ name: 'Seven' })) },
         duplicate: mkRisk('T-0', { review_state: 'approved', title: 'Zero title' }),
       }),
     }
     let release: () => void = () => {}
     postReply = () => {
-      const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['P7', 'P9'] })
+      const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['C2', 'C9'] })
       details = {
         'T-1': mkDetail(current, {
-          elements: { P7: { name: 'Seven', type: 'Process' }, P9: { name: 'Nine', type: 'Process' } },
+          elements: { C2: cited('same', item({ name: 'Seven' })), C9: cited('same', item({ name: 'Nine' })) },
           duplicate: mkRisk('T-5', { review_state: 'approved', title: 'Five title' }),
         }),
       }
@@ -402,7 +408,7 @@ describe('ReviewPage', () => {
     expect(dup.textContent).toContain('Five title')
     expect(dup.textContent).not.toContain('Zero title')
     expect(screen.getByText('Nine')).toBeInTheDocument()
-    expect(document.getElementById('where')?.textContent).not.toContain('Not in the current DFD')
+    expect(document.getElementById('where')?.textContent).not.toContain('Removed in')
     expect(screen.getByText(STALE)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Merge into T-5' }))
     await waitFor(() => expect(posts).toHaveLength(2))
@@ -485,20 +491,20 @@ describe('ReviewPage', () => {
     })
 
     it('shows Reloading this risk… and hides the duplicate and element rows until the reload lands', async () => {
-      const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['P7'] })
+      const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['C2'] })
       queue = [r]
       details = {
         'T-1': mkDetail(r, {
-          elements: { P7: { name: 'Seven', type: 'Process' } },
+          elements: { C2: cited('same', item({ name: 'Seven' })) },
           duplicate: mkRisk('T-0', { review_state: 'approved', title: 'Zero title' }),
         }),
       }
       let release: () => void = () => {}
       postReply = () => {
-        const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['P7'] })
+        const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['C2'] })
         details = {
           'T-1': mkDetail(current, {
-            elements: { P7: { name: 'Seven', type: 'Process' } },
+            elements: { C2: cited('same', item({ name: 'Seven' })) },
             duplicate: mkRisk('T-5', { review_state: 'approved', title: 'Five title' }),
           }),
         }
@@ -608,43 +614,43 @@ describe('ReviewPage', () => {
 
     describe('reload gate (fix round 1)', () => {
       const setup = () => {
-        const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['P7'] })
+        const r = mkRisk('T-1', { possible_duplicate_of: 'T-0', elements: ['C2'] })
         queue = [r]
-        const dfdChanged = { state: 'changed', latest_id: 'DFD-2', written_against: 'DFD-1', error: null } as const
+        const moved = modelInfo({ latest_id: 'MODEL-2', moved_on: true, changed: ['C2'] })
         details = {
           'T-1': mkDetail(r, {
-            dfd: dfdChanged,
-            elements: { P7: { name: 'Seven', type: 'Process' } },
+            model: moved,
+            elements: { C2: cited('same', item({ name: 'Seven' })) },
             duplicate: mkRisk('T-0', { review_state: 'approved', title: 'Zero title' }),
           }),
         }
         postReply = () => {
-          const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['P7'] })
+          const current = mkRisk('T-1', { possible_duplicate_of: 'T-5', elements: ['C2'] })
           details = {
             'T-1': mkDetail(current, {
-              dfd: dfdChanged,
-              elements: { P7: { name: 'Seven', type: 'Process' } },
+              model: moved,
+              elements: { C2: cited('same', item({ name: 'Seven' })) },
               duplicate: mkRisk('T-5', { review_state: 'approved', title: 'Five title' }),
             }),
           }
           return json({ detail: 'stale', current }, 409)
         }
       }
-      const DFD_ALERT = /DFD has moved on/
+      const MOVED_ALERT = /The model has moved on/
       const dup = () => (document.getElementById('dup') as HTMLElement).textContent as string
       const noOldContext = () => {
         expect(dup()).not.toContain('Zero title')
         expect(dup()).not.toContain('Five title')
         expect(screen.queryByText('Seven')).not.toBeInTheDocument()
-        expect(screen.queryByText(DFD_ALERT)).not.toBeInTheDocument()
-        expect(document.getElementById('where')?.textContent ?? '').not.toContain('From the current dfd.md')
+        expect(screen.queryByText(MOVED_ALERT)).not.toBeInTheDocument()
+        expect(document.getElementById('where')?.textContent ?? '').not.toContain('Written against MODEL-1')
       }
 
       it('in the failed state the old context stays hidden and the buttons stay disabled', async () => {
         setup()
         const client = renderPage()
         await type()
-        expect(await screen.findByText(DFD_ALERT)).toBeInTheDocument()
+        expect(await screen.findByText(MOVED_ALERT)).toBeInTheDocument()
         failRisk = true
         fireEvent.click(await screen.findByRole('button', { name: 'Merge into T-0' }))
         expect(await screen.findByText(/Could not reload this risk/)).toBeInTheDocument()
@@ -656,7 +662,7 @@ describe('ReviewPage', () => {
         await invalidateRisk(client)
         await waitFor(() => expect(screen.getByRole('button', { name: 'Merge into T-5' })).toBeEnabled())
         expect(dup()).toContain('Five title')
-        expect(screen.getByText(DFD_ALERT)).toBeInTheDocument()
+        expect(screen.getByText(MOVED_ALERT)).toBeInTheDocument()
       })
 
       it('keeps Reloading this risk… and the buttons disabled while the history request is pending', async () => {

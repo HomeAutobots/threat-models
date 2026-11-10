@@ -4,11 +4,13 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SLUG_RE = re.compile(r"[a-z][a-z0-9-]{1,39}")
-_TABLES = ("risks", "changes", "dfd_approvals", "runs", "sequences")
+_TABLES = ("risks", "changes", "dfd_approvals", "model_approvals", "runs",
+           "sequences")
 _TRIGGERS = ("risks_no_delete", "changes_no_update", "changes_no_delete",
-             "dfd_approvals_no_update", "dfd_approvals_no_delete")
+             "dfd_approvals_no_update", "dfd_approvals_no_delete",
+             "model_approvals_no_update", "model_approvals_no_delete")
 _HERE = Path(__file__).parent
 
 
@@ -44,7 +46,69 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
                  (str(SCHEMA_VERSION),))
     conn.commit()
+    upgrade(conn)
     return conn
+
+
+def _columns(conn: sqlite3.Connection, tbl: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})")}
+
+
+# The v1 -> v2 step, frozen here so a later change to system.sql cannot change what "v2" means
+# for an old database. {p} is the slug's table prefix.
+_V2_DDL = (
+    """CREATE TABLE {p}__model_approvals (
+    id          TEXT PRIMARY KEY,
+    version     TEXT,
+    sha256      TEXT,
+    ids         TEXT,
+    model       TEXT,
+    source      TEXT,
+    approved_by TEXT,
+    approved_at TEXT,
+    note        TEXT
+)""",
+    """CREATE TRIGGER {p}__model_approvals_no_update BEFORE UPDATE ON {p}__model_approvals
+BEGIN SELECT RAISE(ABORT, 'model approvals are append-only'); END""",
+    """CREATE TRIGGER {p}__model_approvals_no_delete BEFORE DELETE ON {p}__model_approvals
+BEGIN SELECT RAISE(ABORT, 'model approvals are append-only'); END""",
+)
+
+
+def _upgrade_state(conn: sqlite3.Connection):
+    cur = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    version = cur[0] if cur else None
+    pending = [r[0] for r in conn.execute("SELECT slug FROM systems ORDER BY slug")
+               if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                               (f"{_prefix(r[0])}__model_approvals",)).fetchone() is None]
+    return version, pending
+
+
+def upgrade(conn: sqlite3.Connection) -> None:
+    """Bring a version 1 database to version 2. Additive and idempotent: it never touches
+    existing rows or the change log. executescript would commit, so it uses plain statements."""
+    version, pending = _upgrade_state(conn)
+    if (not pending and version == str(SCHEMA_VERSION)) or version not in (None, "1", str(SCHEMA_VERSION)):
+        return  # current, or an unknown version that verify reports
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # Read again under the lock: another process may have upgraded while this one waited.
+        version, pending = _upgrade_state(conn)
+        if version in (None, "1", str(SCHEMA_VERSION)):
+            for slug in pending:
+                p = _prefix(slug)
+                for tbl in ("risks", "runs"):
+                    if "model_approval_id" not in _columns(conn, f"{p}__{tbl}"):
+                        conn.execute(f"ALTER TABLE {p}__{tbl} ADD COLUMN model_approval_id TEXT")
+                for stmt in _V2_DDL:
+                    conn.execute(stmt.replace("{p}", p))
+                conn.execute(f"INSERT OR IGNORE INTO {table(slug, 'sequences')} (prefix, next) "
+                             "VALUES ('MODEL', 1)")
+            conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def system_exists(conn: sqlite3.Connection, slug: str) -> bool:
@@ -67,5 +131,5 @@ def create_system(conn: sqlite3.Connection, slug: str, name: str) -> None:
     conn.execute("INSERT INTO systems (slug, name, created_at) VALUES (?, ?, ?)",
                  (slug, name, now()))
     conn.executemany(f"INSERT INTO {table(slug, 'sequences')} (prefix, next) VALUES (?, 1)",
-                     [("T",), ("PT",), ("DFD",)])
+                     [("T",), ("PT",), ("DFD",), ("MODEL",)])
     conn.commit()

@@ -9,7 +9,7 @@ const RISK_FIELDS = [
   'recommended_controls', 'control_refs', 'exception_ref', 'treatment', 'decision_requested',
   'evidence', 'ai_confidence', 'owner', 'due', 'status', 'status_reason', 'test', 'ticket',
   'notes', 'review_state', 'last_approved', 'drafted_by', 'reviewed_by', 'reviewed_at',
-  'review_note', 'possible_duplicate_of', 'merged_into', 'dfd_approval_id', 'detail_complete',
+  'review_note', 'possible_duplicate_of', 'merged_into', 'dfd_approval_id', 'model_approval_id', 'detail_complete',
   'created_at', 'updated_at',
 ]
 

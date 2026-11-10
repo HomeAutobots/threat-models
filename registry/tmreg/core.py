@@ -1,6 +1,7 @@
 """Registry: every rule. Writes go through ledger.write_row, inside one transaction each."""
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -9,11 +10,12 @@ import sqlite3
 import subprocess
 import sys
 import tomllib
+import urllib.parse
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import catalog, config, db, dfd, ledger, report as report_mod
+from . import c4, catalog, config, db, ledger, report as report_mod
 from .model import (
     AI_REQUIRED, CONFIDENCE, EDITABLE_FIELDS, HUMAN_REQUIRED, JSON_COLUMNS, KEY_COLUMNS, LINDDUN,
     MIN_LENGTHS, NOTE_MIN, REVIEW_STATES, RISK_FIELDS, SNAPSHOT_FIELDS, STATUSES, STRIDE, SUPERSEDED_RE,
@@ -23,13 +25,25 @@ from .model import (
 HUMAN_ONLY_MSG = ("{command} is human-only and needs an interactive terminal. Run it yourself in a "
                   "terminal window, not through Claude Code or its ! prefix.")
 NO_RUN_MSG = "non-interactive writes must name a run: pass --run <run-id>"
+NO_MODEL_MSG = "no approved C4 model for {slug}; approve systems/{slug}/workspace.dsl first"
+AWAITING_ADOPTION_MSG = "{slug} is waiting for its C4 model to be approved; AI edits resume after that"
 TEMPLATE_PATH = Path("docs/templates/threat-model-document.md")
 LIST_FIELDS = ("elements", "control_refs")
 
 _RISK_ID_RE = re.compile(r"(P?T)-([0-9]+)")
 _DFD_APPROVAL_RE = re.compile(r"DFD-([0-9]+)")
-_DFD_ID_RE = re.compile(r"(E|P|D|F|TB)([0-9]+)")
+_MODEL_APPROVAL_RE = re.compile(r"MODEL-([0-9]+)")
+_C4_ID_RE = re.compile(r"(A|S|C|K|R|TB|N|I|ENV|SEQ)([1-9][0-9]*)", re.ASCII)
 _EXC_RE = re.compile(r"EXC-[0-9]{2,}")
+_ROUTE_END_RE = re.compile(r"[ASCK][0-9]+")
+_OPEN_STATUSES = ("open", "planned", "in-progress")
+_ROUTE_EXPANSION_LIMIT = 100_000  # node expansions in one route search (ruling R24)
+ROUTE_TOO_BROAD_MSG = "this route search is too broad: pick endpoints closer together or fewer hops"
+
+
+def _natural(item_id: str) -> tuple:
+    """R2 before R10: text and numbers compared as such."""
+    return tuple(int(p) if p.isdigit() else p for p in re.split(r"([0-9]+)", item_id) if p)
 _SUPERSEDED = re.compile(SUPERSEDED_RE, re.ASCII)
 _TEMPLATE_BLOCK_RE = re.compile(r"^````markdown[ \t]*\n(.*?)^````[ \t]*$", re.M | re.S)
 _PLAIN_STATUSES = tuple(s for s in STATUSES if s != "retired")
@@ -94,7 +108,7 @@ class ReviewerSession:
 
 
 @dataclass(frozen=True)
-class DfdStatus:
+class ModelStatus:
     state: str  # "none", "current", or "changed"
     latest: dict | None
     current_sha256: str | None
@@ -240,20 +254,24 @@ def _check_required(row: dict, *, ai: bool) -> None:
             raise RegistryError("; ".join(short))
 
 
-def _dfd_ids(approval: dict) -> set[str]:
-    return {i for ids in (approval.get("ids") or {}).values() for i in ids}
+def _ids(approval: dict, *, citable: bool = False) -> set[str]:
+    """Every ID an approval (a DFD-n or a MODEL-n row) records. citable drops the ENV kind: the
+    IDs a risk may cite (spec section 7.4)."""
+    return {i for kind, ids in (approval.get("ids") or {}).items()
+            if not (citable and kind == "ENV") for i in ids}
 
 
 def _check_elements(elements, latest: dict) -> None:
-    known = _dfd_ids(latest)
+    """Refuse elements that the approval (a DFD-n or a MODEL-n row) does not let a risk cite."""
+    known = _ids(latest, citable=True)
     unknown = [e for e in elements or [] if e not in known]
     if unknown:
         raise RegistryError(f"unknown element ID(s) for {latest['id']}: {', '.join(unknown)}")
 
 
-def _dfd_id_key(i: str):
-    m = _DFD_ID_RE.fullmatch(i)
-    return (dfd.KINDS.index(m.group(1)), int(m.group(2)), "") if m else (len(dfd.KINDS), 0, i)
+def _model_number(approval: dict) -> int:
+    m = _MODEL_APPROVAL_RE.fullmatch(approval.get("id") or "")
+    return int(m.group(1)) if m else -1
 
 
 def _approval_number(approval: dict) -> int:
@@ -345,7 +363,7 @@ class Registry:
                 if not self.conn.in_transaction:
                     self.conn.execute("BEGIN IMMEDIATE")
                 yield
-        except ValueError as e:  # ledger, db, dfd, and config raise ValueError subclasses
+        except ValueError as e:  # ledger, db, c4, and config raise ValueError subclasses
             raise RegistryError(str(e)) from e
 
     # ---- systems and runs -------------------------------------------------------------------
@@ -409,8 +427,9 @@ class Registry:
         lines = m.group(1).splitlines()
         s2 = _heading(lines, "## 2.", path)
         s3 = _heading(lines, "## 3.", path, s2 + 1)
-        lines[s2 + 1:s3] = ["", "See [dfd.md](dfd.md). Approvals are recorded by tmreg; check with "
-                            f"./tmreg dfd status {slug}.", ""]
+        lines[s2 + 1:s3] = ["", "See [workspace.dsl](workspace.dsl), the system's C4 model. Open its "
+                            "diagrams from the web app's Architecture page; check its approval with "
+                            f"./tmreg c4 status {slug}.", ""]
         s4 = _heading(lines, "## 4.", path)
         lines[s4 + 1:s4 + 1] = ["", "Approved risks: [register.md](register.md), generated by tmreg."]
         body = "\n".join(lines).replace("<system or feature name>", name)
@@ -437,10 +456,10 @@ class Registry:
             used = [int(k[len(prefix):]) for k in ledger.read_rows(self.conn, slug, "runs")
                     if k.startswith(prefix) and re.fullmatch(r"[0-9]+", k[len(prefix):])]
             run_id = f"{prefix}{max(used, default=0) + 1:02d}"
-            latest = self._latest_dfd(slug)
+            latest = self._latest_model(slug)
             ledger.write_row(self.conn, slug, "runs", run_id, {
                 "started_at": at, "framework_commit": commit,
-                "dfd_approval_id": latest["id"] if latest else None,
+                "model_approval_id": latest["id"] if latest else None,
                 "methods": methods, "actor": f"ai:{run_id}",
             }, op="run-start", actor="tmreg")
         return {**ledger.read_rows(self.conn, slug, "runs")[run_id], "evaluation": evaluation}
@@ -451,9 +470,6 @@ class Registry:
 
     # ---- DFD --------------------------------------------------------------------------------
 
-    def _dfd_path(self, slug: str) -> Path:
-        return self.root / "systems" / slug / "dfd.md"
-
     def _latest_dfd(self, slug: str) -> dict | None:
         rows = ledger.read_rows(self.conn, slug, "dfd_approvals")
         return max(rows.values(), key=_approval_number) if rows else None
@@ -461,38 +477,233 @@ class Registry:
     def list_systems(self) -> list[dict]:
         return db.list_systems(self.conn)
 
-    def dfd_details(self, slug: str) -> dict[str, dict[str, str]]:
-        """Element names and types from the current dfd.md, for display only."""
-        return self._parse_dfd(slug).details
-
     def dfd_approvals(self, slug: str) -> list[dict]:
         rows = ledger.read_rows(self.conn, slug, "dfd_approvals")
         return sorted(rows.values(), key=_approval_number)
 
-    def _require_dfd(self, slug: str) -> dict:
-        latest = self._latest_dfd(slug)
-        if latest is None:
-            raise RegistryError(f"no approved DFD for {slug}; run ./tmreg dfd approve {slug}")
-        return latest
+    # ---- C4 model ---------------------------------------------------------------------------
 
-    def _parse_dfd(self, slug: str) -> dfd.Dfd:
-        path = self._dfd_path(slug)
+    def _c4_path(self, slug: str) -> Path:
+        return self.root / "systems" / slug / "workspace.dsl"
+
+    def _c4_read(self, slug: str) -> bytes:
+        path = self._c4_path(slug)
         try:
-            data = path.read_bytes()
+            return path.read_bytes()
         except FileNotFoundError:
-            raise RegistryError(f"no dfd.md for {slug}: write systems/{slug}/dfd.md first") from None
+            raise RegistryError(f"no workspace.dsl for {slug}: write systems/{slug}/workspace.dsl "
+                                "first") from None
         except OSError as e:
             raise RegistryError(f"cannot read {path}: {e.strerror}") from None
-        try:
-            return dfd.parse(data)
-        except dfd.DfdError as e:
-            raise RegistryError(str(e)) from None
 
-    def dfd_status(self, slug) -> DfdStatus:
+    def model_approvals(self, slug) -> list[dict]:
         self._require(slug)
-        latest = self._latest_dfd(slug)
-        path = self._dfd_path(slug)
+        rows = ledger.read_rows(self.conn, slug, "model_approvals")
+        return sorted(rows.values(), key=_model_number)
+
+    def _latest_model(self, slug: str) -> dict | None:
+        rows = self.model_approvals(slug)
+        return rows[-1] if rows else None
+
+    def _require_model(self, slug: str) -> dict:
+        latest = self._latest_model(slug)
+        if latest is None:
+            raise RegistryError(NO_MODEL_MSG.format(slug=slug))
+        return latest
+
+    def _edit_basis(self, slug: str, actor: str) -> tuple[str, dict]:
+        """The approval an edit validates against, and the risk field that records it.
+
+        With a model approval, that is the latest one. A register with DFD approvals and no model
+        approval is awaiting adoption (P5): the owner's edits still use the latest DFD approval,
+        and AI edits wait."""
+        model = self._latest_model(slug)
+        if model is not None:
+            return "model_approval_id", model
+        old = self._latest_dfd(slug)
+        if old is None:
+            raise RegistryError(NO_MODEL_MSG.format(slug=slug))
+        if actor.startswith("ai:"):
+            raise RegistryError(AWAITING_ADOPTION_MSG.format(slug=slug))
+        return "dfd_approval_id", old
+
+    def moved_on(self, slug, risk: dict) -> dict:
+        """Whether the model has moved on for a risk: a later approval changed or removed one of
+        the items it cites (spec section 7.4). Information only; it never changes a risk.
+
+        Compares the record the risk was written against with the latest one, through
+        c4.changes. `changed` lists the cited IDs that changed or are gone, in the risk's order.
+        A risk from before the model (no model_approval_id) has no basis to compare."""
+        latest = self._latest_model(slug)
+        latest_id = latest["id"] if latest else None
+        basis = risk.get("model_approval_id")
+        if not basis or latest is None or basis == latest_id:
+            return {"moved_on": False, "written_against": basis or None, "latest": latest_id,
+                    "changed": []}
+        delta = c4.changes(self.model_record(slug, basis), latest["model"])
+        affected = set(delta["removed"]) | set(delta["changed"])
+        changed = [e for e in risk.get("elements") or () if e in affected]
+        return {"moved_on": bool(changed), "written_against": basis, "latest": latest_id,
+                "changed": changed}
+
+    def cited_items(self, slug, risk: dict) -> dict[str, dict]:
+        """What each ID a risk cites looked like when the risk was written and in the latest
+        approval: {id: {"written": entry | None, "latest": entry | None, "state": ...}}.
+
+        An entry is an item, a path or a sequence (dynamic view) of a model record. The state
+        comes from c4.changes, the same meaning of "changed" as moved_on: "same" (`latest` is
+        None), "changed" (`latest` is the new entry), "removed" (gone from the latest approval;
+        `latest` is None), or "dfd" for a risk from before the model, whose IDs are old DFD IDs
+        that no model entry answers to (both entries None)."""
+        elements = list(risk.get("elements") or ())
+        basis = risk.get("model_approval_id")
+        if not basis:
+            return {e: {"written": None, "latest": None, "state": "dfd"} for e in elements}
+        written = self.model_record(slug, basis)
+        latest_row = self._latest_model(slug)
+        latest = latest_row["model"] if latest_row else written
+        delta = c4.changes(written, latest)
+
+        def entry(record: dict, iid: str) -> dict | None:
+            view = record["views"].get(iid)
+            return (record["items"].get(iid) or record["rels"].get(iid)
+                    or (view if view and view["kind"] == "dynamic" else None))
+
+        out = {}
+        for e in elements:
+            w, l = entry(written, e), entry(latest, e)
+            state = ("removed" if e in delta["removed"] else
+                     "changed" if e in delta["changed"] else "same")
+            out[e] = {"written": w, "latest": l if state == "changed" else None, "state": state}
+        return out
+
+    def model_record(self, slug, approval_id: str) -> dict:
+        self._require(slug)
+        row = ledger.read_rows(self.conn, slug, "model_approvals").get(approval_id)
+        if row is None:
+            raise RegistryError(f"no model approval {approval_id} for {slug}")
+        return row["model"]
+
+    # ---- routes and open-risk counts (spec section 7.5) -------------------------------------
+
+    @staticmethod
+    def _risk_buckets(risk: dict) -> list[tuple[str, list[str]]]:
+        """How a risk counts on a route: [(bucket, the IDs it counts on)], spec section 7.5.
+
+        "open" is an approved risk whose status is open, planned or in-progress; "pending" is a
+        risk awaiting review with such a status. A pending re-review (last_approved set) counts
+        both ways (ruling R42): a re-review is not a draft, and the approved exposure still
+        stands. So its snapshot, which is only ever taken of an approved row, counts under "open"
+        on the snapshot's elements while the snapshot's status is live, and its current row counts
+        under "pending" on the current elements. Rejected, merged, retired, mitigated, accepted,
+        wont-fix and superseded risks never count."""
+        if risk.get("merged_into"):
+            return []
+        live = risk["status"] in _OPEN_STATUSES
+        if risk["review_state"] == "approved":
+            return [("open", list(risk.get("elements") or ()))] if live else []
+        if risk["review_state"] != "pending":
+            return []
+        out = []
+        snap = risk.get("last_approved")
+        if snap and snap.get("status") in _OPEN_STATUSES:
+            out.append(("open", list(snap.get("elements") or ())))
+        if live:
+            out.append(("pending", list(risk.get("elements") or ())))
+        return out
+
+    def _risks_by_cited(self, slug: str) -> dict[str, dict[str, list[str]]]:
+        """{cited ID: {"open": [risk IDs], "pending": [risk IDs]}}, risk IDs in id_sort_key order."""
+        out: dict[str, dict[str, list[str]]] = {}
+        for risk in self.list_risks(slug):  # sorted by id_sort_key
+            for bucket, cited_ids in self._risk_buckets(risk):
+                for cited in dict.fromkeys(cited_ids):
+                    out.setdefault(cited, {"open": [], "pending": []})[bucket].append(risk["id"])
+        return out
+
+    def open_risk_counts(self, slug) -> dict[str, dict[str, int]]:
+        """{cited ID: {"open": n, "pending": m}} for IDs with at least one counted risk."""
+        self._require(slug)
+        return {cid: {k: len(v) for k, v in b.items()}
+                for cid, b in self._risks_by_cited(slug).items()}
+
+    def c4_routes(self, slug, from_id: str, to_id: str, *, max_hops: int = 6,
+                  max_chains: int = 25) -> list[dict]:
+        """Chains of paths from one item to another, each with the risks along it.
+
+        Nodes are the path ends (A, S, C, K); every path is an edge taken in either direction
+        (`against_arrow` marks a hop taken from destination to source). A system or container
+        end also stands for everything inside it (ruling R22): a chain starts at the item or any
+        of its descendants and ends when it first reaches the target or any of its descendants.
+        Chains are simple (no node twice) and pass through neither end set; they are found one hop
+        count at a time and the search stops after the depth that reaches max_chains, so a dense
+        model stays cheap (ruling R24). Sorted by hop count then by the hop path IDs."""
+        self._require(slug)
+        if max_hops < 1 or max_chains < 1:
+            raise RegistryError("max_hops and max_chains must be at least 1")
+        record = self._require_model(slug)["model"]
+        items, rels = record["items"], record["rels"]
+        for iid in (from_id, to_id):
+            if not _ROUTE_END_RE.fullmatch(str(iid)) or iid not in items:
+                raise RegistryError(f"{iid} is not a person, system, container or component "
+                                    f"in the approved model of {slug}")
+
+        def inside(root):
+            return {i for i, it in items.items() if root in it["where"]}
+
+        targets = inside(to_id)
+        starts = inside(from_id) - targets
+        adj: dict[str, list[tuple[str, str, bool]]] = {}
+        for rid, r in rels.items():
+            adj.setdefault(r["source"], []).append((rid, r["destination"], False))
+            adj.setdefault(r["destination"], []).append((rid, r["source"], True))
+        expansions = 0
+
+        def walk(node, seen, hops, depth, found):
+            nonlocal expansions
+            expansions += 1
+            if expansions > _ROUTE_EXPANSION_LIMIT:
+                raise RegistryError(ROUTE_TOO_BROAD_MSG)
+            for rid, nxt, against in adj.get(node, ()):
+                if nxt in seen:
+                    continue
+                step = hops + [(rid, node, nxt, against)]
+                if nxt in targets:
+                    if len(step) == depth:
+                        found.append(step)
+                elif len(step) < depth and nxt not in starts:
+                    walk(nxt, seen | {nxt}, step, depth, found)
+
+        chains_found: list[list[tuple[str, str, str, bool]]] = []
+        for depth in range(1, max_hops + 1):  # each depth complete, so its tie-break is right
+            found: list[list[tuple[str, str, str, bool]]] = []
+            for start in sorted(starts):
+                walk(start, {start}, [], depth, found)
+            found.sort(key=lambda c: [_natural(h[0]) for h in c])
+            chains_found += found
+            if len(chains_found) >= max_chains:
+                break
+        found = chains_found
+        by_cited = self._risks_by_cited(slug)
+        none = {"open": [], "pending": []}
+        chains = []
+        for chain in found[:max_chains]:
+            nodes = [chain[0][1]] + [h[2] for h in chain]
+            chains.append({
+                "hops": [{"path": rid, "from": a, "to": b, "against_arrow": against,
+                          "crossings": rels[rid]["crossings"],
+                          "risks": {k: list(v) for k, v in by_cited.get(rid, none).items()}}
+                         for rid, a, b, against in chain],
+                "elements": {n: {k: list(v) for k, v in by_cited.get(n, none).items()}
+                             for n in nodes},
+            })
+        return chains
+
+    def c4_status(self, slug) -> ModelStatus:
+        self._require(slug)
+        latest = self._latest_model(slug)
         try:
+            path = self._c4_path(slug)
             current = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
         except OSError:
             current = None  # unreadable: reported like a missing file
@@ -502,47 +713,233 @@ class Registry:
             state = "current"
         else:
             state = "changed"
-        return DfdStatus(state=state, latest=latest, current_sha256=current)
+        return ModelStatus(state=state, latest=latest, current_sha256=current)
 
-    def dfd_preview(self, slug) -> dict:
+    def _sibling_path(self) -> Path | None:
+        """The other register of this project (registry.db <-> trial.db), or None."""
+        real = (self.root / "registry" / "registry.db").resolve()
+        trial = (self.root / "registry" / "trial.db").resolve()
+        mine = self.db_path.resolve()
+        return trial if mine == real else real if mine == trial else None
+
+    def _sibling_history(self, slug: str) -> tuple[list[dict], list[dict]]:
+        """(model approvals, DFD approvals) of the sibling register, read-only; empty when it has
+        none. It never runs the schema or the upgrade."""
+        path = self._sibling_path()
+        if path is None or not path.is_file():
+            return [], []
+        uri = "file:" + urllib.parse.quote(str(path)) + "?mode=ro"
+        conn = None
+        try:
+            conn = sqlite3.connect(uri, uri=True)
+            conn.row_factory = sqlite3.Row
+            if not db.system_exists(conn, slug):
+                return [], []
+            dfds = list(ledger.read_rows(conn, slug, "dfd_approvals").values())
+            has_table = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                                     (db.table(slug, "model_approvals"),)).fetchone()
+            # Only a missing table means a v1 database; every other error fails closed below.
+            models = list(ledger.read_rows(conn, slug, "model_approvals").values()) if has_table else []
+            return models, dfds
+        except (sqlite3.Error, ValueError) as e:
+            raise RegistryError(f"cannot read {path.name}, so the IDs it used are unknown: {e}") from None
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _c4_problems(self, slug: str, model) -> list[str]:
+        """c4.problems plus the system.toml check, which only core can make."""
+        found = c4.problems(model)
+        try:
+            declared = c4.to_record(model)["dataclasses"]
+            for name in self.system(slug).personal_data_classes:
+                if name not in declared:
+                    found.append(f"system.toml personal_data_classes names {name}, "
+                                 "which workspace.dsl does not declare")
+        except RegistryError as e:
+            found.append(f"system.toml cannot be loaded: {e}")
+        return found
+
+    def _c4_assess(self, slug: str, data: bytes) -> dict:
+        """Everything the preview shows, for these bytes. The caller read the file once."""
+        latest = self._latest_model(slug)
+        text = data.decode("utf-8-sig", errors="replace")
+        out = {"sha256": hashlib.sha256(data).hexdigest(), "text": text, "model": None,
+               "record": None, "error": None, "problems": [], "added": [], "removed": [],
+               "changed": {}, "warnings": [], "next_ids": {}, "reused": [], "reused_dfd": [], "adoption": None,
+               "diff": list(difflib.unified_diff(
+                   (latest["source"] if latest else "").splitlines(), text.splitlines(),
+                   "approved", "current", lineterm=""))}
+        try:
+            model = c4.parse(data)
+        except c4.C4Error as e:
+            out["error"] = f"workspace.dsl: {e}"
+            return out
+        record = c4.to_record(model)
+        out["model"], out["record"] = model, record
+        out["problems"] = self._c4_problems(slug, model)
+        delta = c4.changes(latest["model"] if latest else None, record)
+        out.update(added=delta["added"], removed=delta["removed"], changed=delta["changed"])
+        if latest is not None:
+            gone = set(delta["removed"])
+            for r in self.list_risks(slug):
+                if r["review_state"] == "rejected" or r["status"] == "retired" or r.get("merged_into"):
+                    continue
+                cited = [e for e in r["elements"] or () if e in gone]
+                if cited:
+                    out["warnings"].append(
+                        f"{r['id']} cites {', '.join(cited)}, which this model no longer has")
+        used, out["reused"], out["reused_dfd"] = self._c4_used(slug, model, latest)
+        out["next_ids"] = c4.next_free(model, used)
+        if latest is None and self._latest_dfd(slug) is not None:
+            out["adoption"] = self._adoption(slug, record)
+        return out
+
+    def _adoption(self, slug: str, record: dict) -> dict:
+        """What the first model approval of a DFD-era register does to its live risks (spec 7.6):
+        old IDs no item claims, pending re-reviews (both block it), and the edits it would make: one
+        per live risk (R21), including identity mappings, so every live risk gets a
+        model_approval_id. A risk citing a gap is left out of `rewrites`, because approval is
+        refused while any gap remains."""
+        was = c4.was_map(record)
+        live = [r for r in self.list_risks(slug)
+                if r["review_state"] != "rejected" and r["status"] != "retired"
+                and not r.get("merged_into")]
+        cited: dict[str, list[str]] = {}
+        rewrites: dict[str, dict] = {}
+        for r in live:
+            old = list(r["elements"] or ())
+            new: list[str] = []
+            for e in old:
+                if e not in was:
+                    cited.setdefault(e, []).append(r["id"])
+                for n in was.get(e, ()):
+                    if n not in new:
+                        new.append(n)
+            if all(e in was for e in old):  # a risk with a gap is left out: approval is refused
+                rewrites[r["id"]] = {"from": old, "to": new}
+        order = {k: i for i, k in enumerate(("E", "P", "D", "F", "TB"))}
+
+        def old_key(iid: str):
+            m = re.fullmatch(r"([A-Za-z]+)(\d+)", iid)
+            return (order.get(m.group(1), len(order)), int(m.group(2)), iid) if m else (len(order) + 1, 0, iid)
+
+        return {"gaps": [{"id": i, "cited_by": cited[i]} for i in sorted(cited, key=old_key)],
+                "pending_rereviews": [r["id"] for r in live
+                                      if r["review_state"] == "pending" and r.get("last_approved")],
+                "rewrites": rewrites}
+
+    def _c4_used(self, slug: str, model, latest: dict | None) -> tuple[dict[str, set[int]], list[str], list[str]]:
+        """P7: the numbers of every ID ever used, and the file's IDs that were used before but
+        are not in the latest approval of this register."""
+        sib_models, sib_dfds = self._sibling_history(slug)
+        own_models = self.model_approvals(slug)
+        dfds = [*self.dfd_approvals(slug), *sib_dfds]
+        prior: set[str] = set()
+        retired: set[str] = set()  # used by a register's earlier approvals, absent from its latest
+        for rows in (own_models, sib_models):
+            rows = sorted(rows, key=_model_number)
+            seen = set().union(*(_ids(r) for r in rows)) if rows else set()
+            prior |= seen
+            retired |= seen - (_ids(rows[-1]) if rows else set())
+        dfd_tbs = {i for row in dfds for i in (row.get("ids") or {}).get("TB", ())}
+        file_ids = model.all_ids()
+        reused = (file_ids & retired) - (_ids(latest) if latest else set())
+        from_dfd = set()  # old DFD boundaries stay used after a model approval (R18)
+        for tb in (file_ids & dfd_tbs) - (_ids(latest) if latest else set()):
+            item = model.items.get(tb)
+            claimed = [p.strip() for p in (item.properties.get("tm.was", "") if item else "").split(",")]
+            if tb not in claimed:
+                from_dfd.add(tb)
+        reused |= from_dfd
+        used: dict[str, set[int]] = {}
+        for iid in prior | dfd_tbs | file_ids:
+            m = _C4_ID_RE.fullmatch(iid)
+            if m:
+                used.setdefault(m.group(1), set()).add(int(m.group(2)))
+        key = c4._id_order
+        return used, sorted(reused, key=key), sorted(from_dfd, key=key)
+
+    def c4_preview(self, slug) -> dict:
+        """The current workspace.dsl, read once, with what an approval would record."""
         self._require(slug)
-        parsed = self._parse_dfd(slug)
-        latest = self._latest_dfd(slug)
-        old = _dfd_ids(latest) if latest else set()
-        new = parsed.all_ids()
-        removed = sorted(old - new, key=_dfd_id_key)
-        gone = set(removed)
-        warnings = []
-        for r in self.list_risks(slug):
-            if r["review_state"] == "rejected" or r["status"] == "retired":
-                continue
-            cited = [e for e in r["elements"] or () if e in gone]
-            if cited:
-                warnings.append(f"{r['id']} cites {', '.join(cited)}, which this DFD no longer has")
-        return {"dfd": parsed, "added": sorted(new - old, key=_dfd_id_key), "removed": removed,
-                "warnings": warnings}
+        try:
+            data = self._c4_read(slug)
+        except RegistryError as e:
+            return {"sha256": None, "text": "", "model": None, "record": None, "error": str(e),
+                    "problems": [], "added": [], "removed": [], "changed": {}, "warnings": [],
+                    "next_ids": {}, "reused": [], "reused_dfd": [], "diff": [], "adoption": None}
+        return self._c4_assess(slug, data)
 
-    def dfd_approve(self, session, slug, note, *, expected_sha256: str | None = None) -> dict:
-        """Record an approval of dfd.md. With expected_sha256 (the hash the reviewer was shown),
-        refuse when the file under the write lock is not that file."""
+    def c4_checked_bytes(self, slug) -> tuple[bytes, "c4.Model"]:
+        """The file's bytes and model, only if it parses and has no problems."""
+        self._require(slug)
+        data = self._c4_read(slug)
+        try:
+            model = c4.parse(data)
+        except c4.C4Error as e:
+            raise RegistryError(f"workspace.dsl: {e}") from None
+        found = self._c4_problems(slug, model)  # light: no sibling read, no diff, no risks
+        if found:
+            raise RegistryError("workspace.dsl has problems: " + "; ".join(found))
+        return data, model
+
+    def c4_approve(self, session, slug, note, *, expected_sha256: str) -> dict:
+        """Record an approval of workspace.dsl, bound to the sha256 the reviewer was shown."""
         _require_session(session)
         note = _require_note(note)
         self._require(slug)
         with self._write():
-            parsed = self._parse_dfd(slug)  # under the write lock: this is the file recorded
-            if expected_sha256 is not None and parsed.sha256 != expected_sha256:
-                raise StaleRecord("dfd.md changed since it was shown; review it again")
-            latest = self._latest_dfd(slug)
-            if latest is not None and latest["sha256"] == parsed.sha256:
+            data = self._c4_read(slug)  # under the write lock: this is the file recorded
+            info = self._c4_assess(slug, data)
+            if info["error"]:
+                raise RegistryError(info["error"])
+            if info["problems"]:
+                raise RegistryError("workspace.dsl has problems: " + "; ".join(info["problems"]))
+            if info["reused"]:
+                msg = ("workspace.dsl reuses retired IDs: " + ", ".join(info["reused"])
+                       + ". Next free: " + ", ".join(info["next_ids"].values()))
+                if info["reused_dfd"]:
+                    tb = info["reused_dfd"][0]
+                    nxt = info["next_ids"]["TB"]  # a group takes no properties (ruling R28)
+                    msg += (f'. For a boundary from the old DFD: if {tb} is now a deployment node, '
+                            f'add "tm.was" "{tb}" to it; if it became a group, give the group '
+                            f"{nxt} and add {tb} to its container's tm.was; otherwise take {nxt}")
+                raise RegistryError(msg)
+            adoption = info["adoption"]
+            if adoption is not None:
+                found = [f"adoption: {g['id']} is cited by {', '.join(g['cited_by'])} and claimed by nothing"
+                         for g in adoption["gaps"]]
+                found += [f"adoption: {rid} awaits re-review; approve or reject it first"
+                          for rid in adoption["pending_rereviews"]]
+                if found:
+                    raise RegistryError("; ".join(found))
+            if info["sha256"] != expected_sha256:
+                raise StaleRecord("workspace.dsl changed since it was shown; review it again")
+            latest = self._latest_model(slug)
+            if latest is not None and latest["sha256"] == info["sha256"]:
                 raise RegistryError(f"already approved as {latest['id']}")
-            approval_id = self._allocate(slug, "DFD", "dfd_approvals")
-            ledger.write_row(self.conn, slug, "dfd_approvals", approval_id, {
-                "version": parsed.version, "sha256": parsed.sha256,
-                "ids": {k: list(v) for k, v in parsed.ids.items()},
+            approval_id = self._allocate(slug, "MODEL", "model_approvals")
+            model = info["model"]
+            ledger.write_row(self.conn, slug, "model_approvals", approval_id, {
+                "version": model.version, "sha256": info["sha256"],
+                "ids": {k: list(v) for k, v in model.ids().items()},
+                "model": info["record"], "source": info["text"],
                 "approved_by": session.name, "approved_at": db.now(), "note": note,
-            }, op="dfd-approve", actor=f"human:{session.name}")
+            }, op="model-approve", actor=f"human:{session.name}")
+            if adoption is not None:
+                was = c4.was_map(info["record"])
+                for rid, change in adoption["rewrites"].items():
+                    note_ = (f"Adopted the C4 model {approval_id}: "
+                             + (", ".join(f"{o}→{'/'.join(was[o])}" for o in change["from"])
+                                or "no elements"))
+                    fields = {"model_approval_id": approval_id, "updated_at": db.now()}
+                    if change["to"] != change["from"]:
+                        fields["elements"] = change["to"]
+                    ledger.write_row(self.conn, slug, "risks", rid, fields, op="edit",
+                                     actor=f"human:{session.name}", note=note_)
         self._write_register(slug, approval_id)
-        return ledger.read_rows(self.conn, slug, "dfd_approvals")[approval_id]
+        return ledger.read_rows(self.conn, slug, "model_approvals")[approval_id]
 
     # ---- drafting ---------------------------------------------------------------------------
 
@@ -553,7 +950,7 @@ class Registry:
         if row is None:
             raise RegistryError(f"sequence {prefix} is missing for {slug}; run ./tmreg verify {slug}")
         n = row["next"]
-        new_id = f"DFD-{n}" if prefix == "DFD" else f"{prefix}-{n:02d}"
+        new_id = f"{prefix}-{n}" if prefix in ("DFD", "MODEL") else f"{prefix}-{n:02d}"
         t, keycol = db.table(slug, tbl), KEY_COLUMNS[tbl]
         if self.conn.execute(f"SELECT 1 FROM {t} WHERE {keycol} = ?", (new_id,)).fetchone():
             raise RegistryError(f"sequence {prefix} is behind: {new_id} already exists; "
@@ -595,7 +992,7 @@ class Registry:
             _check_status(values["status"])
             _check_required(values, ai=run_id is not None)
             self._check_vocab(values)
-            latest = self._require_dfd(slug)
+            latest = self._require_model(slug)
             _check_elements(values["elements"], latest)
             risks = ledger.read_rows(self.conn, slug, "risks").values()
             dup = _possible_duplicate(risks, values["category"], values["elements"])
@@ -603,7 +1000,7 @@ class Registry:
             at = db.now()
             ledger.write_row(self.conn, slug, "risks", risk_id, {
                 **values, "review_state": "pending", "drafted_by": actor,
-                "possible_duplicate_of": dup, "dfd_approval_id": latest["id"],
+                "possible_duplicate_of": dup, "model_approval_id": latest["id"],
                 "detail_complete": 1, "created_at": at, "updated_at": at,
             }, op="add", actor=actor)
         self._write_register(slug, risk_id)
@@ -623,6 +1020,7 @@ class Registry:
                 raise RegistryError("rejected risks are not edited; add a new risk")
             if cur["status"] == "retired":
                 raise RegistryError("retired risks are not edited; add a new risk")
+            basis, latest = self._edit_basis(slug, actor)
             values = _clean(fields)
             if "status" in values:
                 if values["status"] is None:
@@ -635,7 +1033,6 @@ class Registry:
                                     "category; add a new risk instead")
             self._check_vocab(values)
             merged = {**cur, **values}
-            latest = self._require_dfd(slug)
             _check_elements(merged["elements"], latest)
             _check_required(merged, ai=(cur["drafted_by"] or "").startswith("ai:"))
             update = {k: v for k, v in values.items() if cur.get(k) != v}
@@ -650,9 +1047,10 @@ class Registry:
                 elif _detail_now_complete(merged):
                     update["detail_complete"] = 1  # the owner filled an imported one-liner
             if not keeps_approval or "elements" in update:
-                # An owner edit that keeps the approval moves the DFD basis only when it changes
-                # the elements; otherwise "the DFD has moved on" must keep showing.
-                update["dfd_approval_id"] = latest["id"]
+                # An owner edit that keeps the approval moves the basis (model_approval_id, or
+                # dfd_approval_id before adoption) only when it changes the elements; otherwise
+                # "the model has moved on" must keep showing (D1).
+                update[basis] = latest["id"]
             update["updated_at"] = db.now()
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op="edit", actor=actor,
                              note=note)
@@ -705,7 +1103,7 @@ class Registry:
                 update = {"review_state": "rejected", **self._review_fields(session, note)}
                 op, log_note = "reject", ""
             else:  # a re-review: put back what the last human approval covered
-                update = {f: snap[f] for f in SNAPSHOT_FIELDS}
+                update = {f: snap.get(f) for f in SNAPSHOT_FIELDS}  # older snapshots lack newer fields
                 update.update(review_state="approved", last_approved=None)
                 op, log_note = "revert", note
             ledger.write_row(self.conn, slug, "risks", risk_id, update, op=op,
@@ -785,15 +1183,22 @@ class Registry:
         return path, rows, commit
 
     def _import_prepare(self, slug, path, rows):
-        """Checks that read the register and DFD: returns (latest approval, [(row, category)])."""
+        """Checks that read the register and the model: returns (latest model approval,
+        [(row, category, elements)]). The catalog cites old DFD IDs; each maps through the
+        latest model's tm.was to the items claiming it (spec section 7.6)."""
         if ledger.read_rows(self.conn, slug, "risks"):
             raise RegistryError("import-legacy runs once, into an empty register")
-        latest = self._require_dfd(slug)
+        latest = self._require_model(slug)
         if not rows:
             raise RegistryError(f"{path} has no catalog rows to import")
+        was = c4.was_map(latest["model"])
         prepared = []
         for r in rows:
-            _check_elements(r.elements, latest)
+            elements: list[str] = []
+            for old in r.elements:  # every catalog ID must be claimed, even one that looks new
+                if old not in was:
+                    raise RegistryError(f"{r.id}: {old} is not claimed by any item's tm.was")
+                elements += [e for e in was[old] if e not in elements]
             try:
                 category = _category(r.category)
             except RegistryError as e:
@@ -801,7 +1206,7 @@ class Registry:
             valid = STRIDE if r.id.startswith("T-") else LINDDUN
             if category not in valid:
                 raise RegistryError(f"{r.id}: category {r.category!r} does not fit its ID")
-            prepared.append((r, category))
+            prepared.append((r, category, elements))
         return latest, prepared
 
     def import_preview(self, slug) -> dict:
@@ -820,24 +1225,24 @@ class Registry:
             actor = f"human:{session.name}"
             note = f"Imported from the guide's reference catalog at commit {commit}"
             top = {"T": 0, "PT": 0}
-            for r, category in prepared:
+            for r, category, elements in prepared:
                 prefix, num = r.id.rsplit("-", 1)
                 top[prefix] = max(top[prefix], int(num))
                 ledger.write_row(self.conn, slug, "risks", r.id, {
                     "title": catalog.title_for(r.text), "description": r.text,
-                    "elements": r.elements or None, "category": category,
+                    "elements": elements or None, "category": category,
                     "method": "stride-per-element" if r.id.startswith("T-") else "linddun",
                     "origin": "threat-model", "origin_ref": "reference catalog",
                     "status": "open", "review_state": "approved",
                     "drafted_by": "human:catalog-import", "detail_complete": 0,
-                    "dfd_approval_id": latest["id"], "reviewed_by": session.name,
+                    "model_approval_id": latest["id"], "reviewed_by": session.name,
                     "reviewed_at": at, "review_note": note, "created_at": at, "updated_at": at,
                 }, op="import", actor=actor)
             seq = db.table(slug, "sequences")
             for prefix, n in top.items():
                 self.conn.execute(f"UPDATE {seq} SET next = ? WHERE prefix = ?", (n + 1, prefix))
-        self._write_register(slug, ", ".join(r.id for r, _ in prepared))
-        return [r.id for r, _ in prepared]
+        self._write_register(slug, ", ".join(r.id for r, _, _ in prepared))
+        return [r.id for r, _, _ in prepared]
 
     # ---- verification -----------------------------------------------------------------------
 
@@ -892,20 +1297,30 @@ class Registry:
         return problems
 
     def _verify_sequences(self, slug: str, tables: dict, logged: dict) -> list[str]:
-        top = {"T": 0, "PT": 0, "DFD": 0}
+        top = {"T": 0, "PT": 0, "DFD": 0, "MODEL": 0}
         topid: dict[str, str] = {}
-        ids = [(t, k) for t in ("risks", "dfd_approvals") for k in tables[t]] + list(logged)
+        approval_res = {"dfd_approvals": ("DFD", _DFD_APPROVAL_RE),
+                        "model_approvals": ("MODEL", _MODEL_APPROVAL_RE)}
+        ids = [(t, k) for t in ("risks", "dfd_approvals", "model_approvals") for k in tables[t]] + list(logged)
         for tbl, key in ids:
-            m = (_RISK_ID_RE if tbl == "risks" else _DFD_APPROVAL_RE).fullmatch(key) if isinstance(key, str) else None
-            if m is None or tbl == "runs":
+            if tbl == "risks":
+                m = _RISK_ID_RE.fullmatch(key) if isinstance(key, str) else None
+                prefix, n = (m.group(1), int(m.group(2))) if m else (None, 0)
+            elif tbl in approval_res:
+                prefix, rx = approval_res[tbl]
+                m = rx.fullmatch(key) if isinstance(key, str) else None
+                n = int(m.group(1)) if m else 0
+                prefix = prefix if m else None
+            else:
                 continue
-            prefix, n = (m.group(1), int(m.group(2))) if tbl == "risks" else ("DFD", int(m.group(1)))
+            if prefix is None:
+                continue
             if prefix not in topid or n > top[prefix]:
                 top[prefix], topid[prefix] = n, key
         problems = []
         seqs = {r["prefix"]: r["next"] for r in
                 self.conn.execute(f"SELECT prefix, next FROM {db.table(slug, 'sequences')}")}
-        for prefix in ("T", "PT", "DFD"):
+        for prefix in ("T", "PT", "DFD", "MODEL"):
             nxt = seqs.get(prefix)
             if prefix not in seqs:
                 problems.append(f"sequence {prefix} is missing")

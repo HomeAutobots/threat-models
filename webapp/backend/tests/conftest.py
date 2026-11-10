@@ -19,14 +19,16 @@ BASE = "http://127.0.0.1:8765"
 
 
 SPA_CATCH_ALL = "/{full_path:path}"
-NON_API_ROUTES = {"/signin", "/favicon.svg", SPA_CATCH_ALL}
+DIAGRAMS_ROUTE = "/diagrams/{reg}/{slug}/{sha256}/{path:path}"
+NON_API_ROUTES = {"/signin", "/favicon.svg", DIAGRAMS_ROUTE, SPA_CATCH_ALL}
 
 
 def all_routes(app) -> list:
     """Every route, with included routers unwrapped (FastAPI 0.162 lists them as lazy wrappers in
     app.routes; recurse through original_router). Strict: anything that is not an APIRoute fails,
     except the /assets Mount, and an APIRoute outside /api fails unless it is /signin, the
-    favicon, or the SPA catch-all. A new route kind or an unlocked path cannot slip past."""
+    favicon, the diagrams route (behind its own lock), or the SPA catch-all. A new route kind or an
+    unlocked path cannot slip past."""
     found = []
 
     def walk(routes):

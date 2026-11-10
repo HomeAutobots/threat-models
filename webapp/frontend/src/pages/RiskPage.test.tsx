@@ -33,7 +33,7 @@ function renderPage(reg = 'main', metaFails = false) {
             : {
                 risk,
                 elements: {},
-                dfd: { state: 'current', latest_id: 'D', written_against: 'D', error: null },
+                model: { state: 'current', latest_id: 'MODEL-1', written_against: 'MODEL-1', moved_on: false, changed: [], basis: 'model' },
                 editors_since_approval: [],
                 duplicate: null,
               }
